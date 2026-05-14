@@ -12,10 +12,55 @@ struct FSNode: Identifiable, Hashable {
     let size: Int64?
     let modified: Date?
     let tags: [Tag]
+    var gitStatus: GitFileState? = nil
 
     var id: URL { url }
     var name: String { url.lastPathComponent }
     var ext: String { url.pathExtension }
+}
+
+enum GitFileState: String, Hashable {
+    case modified
+    case added
+    case deleted
+    case untracked
+    case renamed
+    case conflicted
+    case ignored
+
+    var color: Color {
+        switch self {
+        case .modified, .renamed: return .orange
+        case .added, .untracked:  return .green
+        case .deleted:            return .red
+        case .conflicted:         return .red
+        case .ignored:            return .gray
+        }
+    }
+
+    var letter: String {
+        switch self {
+        case .modified:   return "M"
+        case .added:      return "A"
+        case .deleted:    return "D"
+        case .untracked:  return "U"
+        case .renamed:    return "R"
+        case .conflicted: return "C"
+        case .ignored:    return "I"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .modified:   return "Modified"
+        case .added:      return "Added"
+        case .deleted:    return "Deleted"
+        case .untracked:  return "Untracked"
+        case .renamed:    return "Renamed"
+        case .conflicted: return "Conflicted"
+        case .ignored:    return "Ignored"
+        }
+    }
 }
 
 // MARK: - Enums
@@ -142,7 +187,10 @@ final class TabState: ObservableObject, Identifiable {
         self.url = url
         watcher.onChange = { [weak self] in
             guard let self else { return }
-            Task { @MainActor in await self.refresh() }
+            Task { @MainActor in
+                await GitStatusService.shared.invalidate(forDirectory: self.url)
+                await self.refresh()
+            }
         }
         restartWatching()
         Task { await self.refresh() }
@@ -268,7 +316,8 @@ final class TabState: ObservableObject, Identifiable {
                         isDirectory: v?.isDirectory ?? false,
                         size: v?.fileSize.map(Int64.init),
                         modified: v?.contentModificationDate,
-                        tags: TagStore.tags(for: u)
+                        tags: TagStore.tags(for: u),
+                        gitStatus: nil
                     )
                 }
                 return .success(mapped)
@@ -281,9 +330,24 @@ final class TabState: ObservableObject, Identifiable {
         case .success(let list):
             self.nodes = sorted(list)
             self.loadError = nil
+            await decorateWithGitStatus()
         case .failure(let err):
             self.nodes = []
             self.loadError = err.localizedDescription
+        }
+    }
+
+    private func decorateWithGitStatus() async {
+        let dir = url
+        let statuses = await GitStatusService.shared.statuses(in: dir)
+        guard !statuses.isEmpty else { return }
+        // ensure the current listing still corresponds to the directory we queried
+        guard url == dir else { return }
+        nodes = nodes.map { node in
+            guard let state = statuses[node.url.standardizedFileURL] else { return node }
+            var copy = node
+            copy.gitStatus = state
+            return copy
         }
     }
 

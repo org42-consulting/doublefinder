@@ -98,8 +98,8 @@ struct NSTableListView: NSViewRepresentable {
         coord.table = table
 
         // sync selection from SwiftUI side if it changed externally
-        if coord.lastDataVersion != tab.nodes.map(\.url) {
-            coord.lastDataVersion = tab.nodes.map(\.url)
+        if coord.lastNodes != tab.nodes {
+            coord.lastNodes = tab.nodes
             table.reloadData()
         }
         let desiredIndexes = IndexSet(tab.nodes.enumerated().compactMap { idx, node in
@@ -134,7 +134,7 @@ struct NSTableListView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var parent: NSTableListView
         weak var table: NSTableView?
-        var lastDataVersion: [URL] = []
+        var lastNodes: [FSNode] = []
 
         init(parent: NSTableListView) {
             self.parent = parent
@@ -435,6 +435,7 @@ private final class TextCell: NSTableCellView {
 private final class NameCell: NSTableCellView, NSTextFieldDelegate {
     private let icon = NSImageView()
     private let name = NSTextField()
+    private let gitBadge = GitBadgeView()
     private var onCommit: ((String) -> Void)?
 
     override init(frame frameRect: NSRect) {
@@ -448,6 +449,7 @@ private final class NameCell: NSTableCellView, NSTextFieldDelegate {
     private func setup() {
         icon.translatesAutoresizingMaskIntoConstraints = false
         name.translatesAutoresizingMaskIntoConstraints = false
+        gitBadge.translatesAutoresizingMaskIntoConstraints = false
         name.isBordered = false
         name.drawsBackground = false
         name.isEditable = false
@@ -459,14 +461,19 @@ private final class NameCell: NSTableCellView, NSTextFieldDelegate {
         name.action = #selector(commit)
         addSubview(icon)
         addSubview(name)
+        addSubview(gitBadge)
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 16),
             icon.heightAnchor.constraint(equalToConstant: 16),
             name.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
-            name.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            name.centerYAnchor.constraint(equalTo: centerYAnchor)
+            name.centerYAnchor.constraint(equalTo: centerYAnchor),
+            gitBadge.leadingAnchor.constraint(equalTo: name.trailingAnchor, constant: 6),
+            gitBadge.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
+            gitBadge.centerYAnchor.constraint(equalTo: centerYAnchor),
+            gitBadge.widthAnchor.constraint(equalToConstant: 14),
+            gitBadge.heightAnchor.constraint(equalToConstant: 14)
         ])
         // NSTableCellView.textField — lets NSTableView do its built-in things
         self.textField = name
@@ -476,6 +483,7 @@ private final class NameCell: NSTableCellView, NSTextFieldDelegate {
         self.onCommit = onCommit
         name.stringValue = node.name
         icon.image = NSWorkspace.shared.icon(forFile: node.url.path)
+        gitBadge.state = node.gitStatus
     }
 
     /// Programmatic entry to inline-edit mode (used by the Rename action bar button).
@@ -538,6 +546,53 @@ private final class TagsCell: NSTableCellView {
             dot.color = NSColor(tag.color.swiftUI)
             stack.addArrangedSubview(dot)
         }
+    }
+}
+
+private final class GitBadgeView: NSView {
+    var state: GitFileState? {
+        didSet {
+            label.stringValue = state?.letter ?? ""
+            needsDisplay = true
+            isHidden = state == nil
+            toolTip = state.map { "Git: \($0.help)" }
+        }
+    }
+    private let label = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+    private func setup() {
+        wantsLayer = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .monospacedSystemFont(ofSize: 9, weight: .bold)
+        label.textColor = .white
+        label.alignment = .center
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+        isHidden = true
+    }
+    override var intrinsicContentSize: NSSize { NSSize(width: 14, height: 14) }
+    override func draw(_ dirtyRect: NSRect) {
+        guard let state else { return }
+        let color: NSColor
+        switch state {
+        case .modified, .renamed: color = .systemOrange
+        case .added, .untracked:  color = .systemGreen
+        case .deleted, .conflicted: color = .systemRed
+        case .ignored:            color = .systemGray
+        }
+        color.setFill()
+        NSBezierPath(ovalIn: bounds).fill()
     }
 }
 

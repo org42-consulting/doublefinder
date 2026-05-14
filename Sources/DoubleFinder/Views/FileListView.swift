@@ -20,6 +20,7 @@ struct FileListView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     TagDots(tags: node.tags)
+                    GitStatusBadge(state: node.gitStatus)
                 }
             }
             .width(min: 160, ideal: 260)

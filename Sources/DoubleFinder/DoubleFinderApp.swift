@@ -28,10 +28,27 @@ struct DoubleFinderApp: App {
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])
             }
             CommandMenu("Go") {
+                Button("Enclosing Folder") {
+                    NotificationCenter.default.post(name: .parentFolderRequested, object: nil)
+                }
+                .keyboardShortcut(.upArrow, modifiers: [.command])
+
+                Button("Open Selection") {
+                    NotificationCenter.default.post(name: .openSelectionRequested, object: nil)
+                }
+                .keyboardShortcut(.downArrow, modifiers: [.command])
+
+                Divider()
+
                 Button("Go to Folder…") {
                     NotificationCenter.default.post(name: .goToFolderRequested, object: nil)
                 }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
+
+                Button("Open in Terminal") {
+                    NotificationCenter.default.post(name: .openTerminalRequested, object: nil)
+                }
+                .keyboardShortcut("t", modifiers: [.command, .control])
 
                 Divider()
 

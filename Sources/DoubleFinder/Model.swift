@@ -70,6 +70,9 @@ extension Notification.Name {
     static let goToFolderRequested = Notification.Name("doublefinder.goToFolder")
     static let emptyTrashRequested = Notification.Name("doublefinder.emptyTrash")
     static let getInfoRequested = Notification.Name("doublefinder.getInfo")
+    static let parentFolderRequested = Notification.Name("doublefinder.parentFolder")
+    static let openSelectionRequested = Notification.Name("doublefinder.openSelection")
+    static let openTerminalRequested = Notification.Name("doublefinder.openTerminal")
 }
 
 // MARK: - TabState
@@ -81,8 +84,8 @@ final class TabState: ObservableObject, Identifiable {
     @Published var viewMode: ViewMode = .list
     @Published var selection: Set<FSNode.ID> = []
     @Published var nodes: [FSNode] = []
-    @Published var sortKey: SortKey = .name
-    @Published var sortAscending: Bool = true
+    @Published var sortKey: SortKey = .name { didSet { nodes = sorted(nodes) } }
+    @Published var sortAscending: Bool = true { didSet { nodes = sorted(nodes) } }
     @Published var loadError: String?
     @Published var searchText: String = ""
     @Published var isSearching: Bool = false
@@ -404,6 +407,40 @@ final class WindowState: ObservableObject {
                 }
                 self.getInfoPrompt = GetInfoPrompt(url: node.url) { [weak tab] in
                     Task { @MainActor in await tab?.refresh() }
+                }
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .parentFolderRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                let parent = tab.url.deletingLastPathComponent()
+                if parent.path != tab.url.path {
+                    tab.navigate(to: parent)
+                }
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .openSelectionRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                guard let id = tab.selection.first,
+                      let node = tab.nodes.first(where: { $0.id == id }) else { return }
+                if node.isDirectory {
+                    tab.navigate(to: node.url)
+                } else {
+                    NSWorkspace.shared.open(node.url)
+                }
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .openTerminalRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let url = self.focusedPane.activeTab.url
+                let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+                let config = NSWorkspace.OpenConfiguration()
+                NSWorkspace.shared.open([url], withApplicationAt: terminalURL, configuration: config) { _, error in
+                    if error != nil { DispatchQueue.main.async { NSSound.beep() } }
                 }
             }
         })

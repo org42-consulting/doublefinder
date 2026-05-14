@@ -158,6 +158,7 @@ struct TabBarView: View {
     @ObservedObject var pane: PaneState
     let side: PaneSide
     @EnvironmentObject var state: WindowState
+    @State private var settingsShown: Bool = false
 
     var body: some View {
         GlassEffectContainer(spacing: 4) {
@@ -167,6 +168,7 @@ struct TabBarView: View {
                 }
                 newTabButton
                 Spacer()
+                settingsButton
             }
         }
     }
@@ -183,7 +185,25 @@ struct TabBarView: View {
         }
         .buttonStyle(.plain)
         .glassEffect(in: Circle())
-        .help("New tab in this pane (⌘T)")
+        .help("New tab in this pane")
+    }
+
+    private var settingsButton: some View {
+        Button {
+            state.focus = side
+            settingsShown.toggle()
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(in: Circle())
+        .help("Sort & view options")
+        .popover(isPresented: $settingsShown, arrowEdge: .top) {
+            PaneSettingsPopover(tab: pane.activeTab)
+        }
     }
 
     @ViewBuilder

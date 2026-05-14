@@ -16,17 +16,8 @@ struct SidebarSection: Identifiable {
 struct SidebarView: View {
     @EnvironmentObject var state: WindowState
 
-    private var sections: [SidebarSection] {
+    private var staticSections: [SidebarSection] {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let favourites: [SidebarItem] = [
-            .init(title: "AirDrop", systemImage: "dot.radiowaves.left.and.right", url: home),
-            .init(title: "Recents", systemImage: "clock", url: home),
-            .init(title: "Applications", systemImage: "square.stack.3d.up", url: URL(fileURLWithPath: "/Applications")),
-            .init(title: "Desktop", systemImage: "menubar.dock.rectangle", url: home.appendingPathComponent("Desktop")),
-            .init(title: "Documents", systemImage: "doc", url: home.appendingPathComponent("Documents")),
-            .init(title: "Downloads", systemImage: "arrow.down.circle", url: home.appendingPathComponent("Downloads")),
-            .init(title: "Home", systemImage: "house", url: home),
-        ]
         let icloud: [SidebarItem] = [
             .init(title: "iCloud Drive", systemImage: "cloud", url: home),
         ]
@@ -38,23 +29,35 @@ struct SidebarView: View {
             .init(title: "Trash", systemImage: "trash", url: trashURL),
         ]
         let tags: [SidebarItem] = [
-            .init(title: "Red", systemImage: "circle.fill", url: home),
+            .init(title: "Red",    systemImage: "circle.fill", url: home),
             .init(title: "Orange", systemImage: "circle.fill", url: home),
             .init(title: "Yellow", systemImage: "circle.fill", url: home),
-            .init(title: "Green", systemImage: "circle.fill", url: home),
-            .init(title: "Blue", systemImage: "circle.fill", url: home),
+            .init(title: "Green",  systemImage: "circle.fill", url: home),
+            .init(title: "Blue",   systemImage: "circle.fill", url: home),
         ]
         return [
-            .init(title: "Favourites", items: favourites),
-            .init(title: "iCloud", items: icloud),
+            .init(title: "iCloud",    items: icloud),
             .init(title: "Locations", items: locations),
-            .init(title: "Tags", items: tags),
+            .init(title: "Tags",      items: tags),
         ]
     }
 
     var body: some View {
         List {
-            ForEach(sections) { section in
+            // Reorderable Favourites
+            Section("Favourites") {
+                ForEach($state.favourites) { $fav in
+                    favouriteRow(fav)
+                }
+                .onMove { from, to in
+                    state.favourites.move(fromOffsets: from, toOffset: to)
+                }
+                .onDelete { offsets in
+                    state.favourites.remove(atOffsets: offsets)
+                }
+            }
+            // Static sections
+            ForEach(staticSections) { section in
                 Section(section.title) {
                     ForEach(section.items) { item in
                         row(for: item, in: section.title)
@@ -63,6 +66,38 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+    }
+
+    @ViewBuilder
+    private func favouriteRow(_ fav: SidebarFavourite) -> some View {
+        let isCurrent = state.focusedPane.activeTab.url.standardizedFileURL == fav.url.standardizedFileURL
+        Button {
+            state.focusedPane.activeTab.navigate(to: fav.url)
+        } label: {
+            Label {
+                Text(fav.title)
+            } icon: {
+                Image(systemName: fav.systemImage)
+                    .foregroundStyle(Color.accentColor)
+            }
+            .foregroundStyle(isCurrent ? Color.accentColor : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Open in active pane") {
+                state.focusedPane.activeTab.navigate(to: fav.url)
+            }
+            Button("Open in other pane") {
+                state.otherPane.activeTab.navigate(to: fav.url)
+            }
+            Button("Open in new tab (active pane)") {
+                state.focusedPane.addTab(url: fav.url)
+            }
+            Divider()
+            Button("Remove from Sidebar", role: .destructive) {
+                state.favourites.removeAll { $0.id == fav.id }
+            }
+        }
     }
 
     @ViewBuilder
@@ -96,12 +131,12 @@ struct SidebarView: View {
     private func tintFor(section: String, title: String) -> Color {
         guard section == "Tags" else { return .accentColor }
         switch title {
-        case "Red": return .red
+        case "Red":    return .red
         case "Orange": return .orange
         case "Yellow": return .yellow
-        case "Green": return .green
-        case "Blue": return .blue
-        default: return .gray
+        case "Green":  return .green
+        case "Blue":   return .blue
+        default:       return .gray
         }
     }
 }

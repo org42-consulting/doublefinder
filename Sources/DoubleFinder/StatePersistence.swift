@@ -16,6 +16,7 @@ enum StatePersistence {
         let left: Pane
         let right: Pane
         let focus: String                   // "left" | "right"
+        let favourites: [SidebarFavourite]? // nil for old snapshots
     }
 
     private static var stateURL: URL {

@@ -65,6 +65,36 @@ struct BatchRenamePrompt: Identifiable {
     let onCommit: ([(URL, String)]) -> Void
 }
 
+// MARK: - Sidebar favourites (drag-to-reorder, persisted)
+
+struct SidebarFavourite: Identifiable, Hashable, Codable {
+    var id: UUID
+    var title: String
+    var systemImage: String
+    var path: String                                  // tilde-prefixed paths are expanded on access
+
+    init(id: UUID = UUID(), title: String, systemImage: String, path: String) {
+        self.id = id
+        self.title = title
+        self.systemImage = systemImage
+        self.path = path
+    }
+
+    var url: URL {
+        URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+    }
+
+    static let defaults: [SidebarFavourite] = [
+        .init(title: "AirDrop",      systemImage: "dot.radiowaves.left.and.right", path: "~"),
+        .init(title: "Recents",      systemImage: "clock",                          path: "~"),
+        .init(title: "Applications", systemImage: "square.stack.3d.up",             path: "/Applications"),
+        .init(title: "Desktop",      systemImage: "menubar.dock.rectangle",         path: "~/Desktop"),
+        .init(title: "Documents",    systemImage: "doc",                            path: "~/Documents"),
+        .init(title: "Downloads",    systemImage: "arrow.down.circle",              path: "~/Downloads"),
+        .init(title: "Home",         systemImage: "house",                          path: "~"),
+    ]
+}
+
 extension Notification.Name {
     static let toggleHiddenFilesRequested = Notification.Name("doublefinder.toggleHiddenFiles")
     static let goToFolderRequested = Notification.Name("doublefinder.goToFolder")
@@ -330,6 +360,7 @@ final class WindowState: ObservableObject {
     @Published var goToPrompt: GoToFolderPrompt?
     @Published var getInfoPrompt: GetInfoPrompt?
     @Published var batchRenamePrompt: BatchRenamePrompt?
+    @Published var favourites: [SidebarFavourite] = SidebarFavourite.defaults
 
     private var observerTokens: [NSObjectProtocol] = []
 
@@ -338,6 +369,9 @@ final class WindowState: ObservableObject {
             self.left = PaneState(from: snap.left)
             self.right = PaneState(from: snap.right)
             self.focus = snap.focus == "right" ? .right : .left
+            if let favs = snap.favourites, !favs.isEmpty {
+                self.favourites = favs
+            }
         } else {
             let home = FileManager.default.homeDirectoryForCurrentUser
             let docs = home.appendingPathComponent("Documents")
@@ -353,7 +387,8 @@ final class WindowState: ObservableObject {
         .init(
             left: left.snapshot(),
             right: right.snapshot(),
-            focus: focus == .right ? "right" : "left"
+            focus: focus == .right ? "right" : "left",
+            favourites: favourites
         )
     }
 

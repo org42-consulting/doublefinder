@@ -111,6 +111,7 @@ extension Notification.Name {
     static let parentFolderRequested = Notification.Name("doublefinder.parentFolder")
     static let openSelectionRequested = Notification.Name("doublefinder.openSelection")
     static let openTerminalRequested = Notification.Name("doublefinder.openTerminal")
+    static let addToSidebarRequested = Notification.Name("doublefinder.addToSidebar")
 }
 
 // MARK: - TabState
@@ -487,6 +488,21 @@ final class WindowState: ObservableObject {
                 }
             }
         })
+        observerTokens.append(nc.addObserver(forName: .addToSidebarRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.addFocusedURLToSidebar()
+            }
+        })
+    }
+
+    func addFocusedURLToSidebar() {
+        let url = focusedPane.activeTab.url.standardizedFileURL
+        if favourites.contains(where: { $0.url.standardizedFileURL == url }) {
+            NSSound.beep()
+            return
+        }
+        let title = url.lastPathComponent.isEmpty ? "/" : url.lastPathComponent
+        favourites.append(SidebarFavourite(title: title, systemImage: "folder", path: url.path))
     }
 
     static func emptyTrashWithConfirmation() {

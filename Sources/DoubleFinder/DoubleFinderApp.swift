@@ -50,6 +50,11 @@ struct DoubleFinderApp: App {
                 }
                 .keyboardShortcut("t", modifiers: [.command, .control])
 
+                Button("Add to Sidebar") {
+                    NotificationCenter.default.post(name: .addToSidebarRequested, object: nil)
+                }
+                .keyboardShortcut("s", modifiers: [.command, .control])
+
                 Divider()
 
                 Button("Toggle Hidden Files") {

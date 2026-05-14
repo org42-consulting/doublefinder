@@ -75,7 +75,9 @@ struct ColumnView: NSViewRepresentable {
             cell.title = child.lastPathComponent
             let isDir = (try? child.resourceValues(forKeys: Set([URLResourceKey.isDirectoryKey])))?.isDirectory ?? false
             cell.isLeaf = !isDir
-            cell.image = NSWorkspace.shared.icon(forFile: child.path)
+            let icon = NSWorkspace.shared.icon(forFile: child.path)
+            icon.size = NSSize(width: 16, height: 16)
+            cell.image = icon
         }
 
         // MARK: actions

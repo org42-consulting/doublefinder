@@ -140,6 +140,17 @@ struct WindowView: View {
                 .environmentObject(state)
         }
 
+        ToolbarItem(id: "inspector", placement: .primaryAction) {
+            Button {
+                state.showInspector.toggle()
+            } label: {
+                Image(systemName: state.showInspector ? "sidebar.trailing" : "sidebar.right")
+                    .foregroundStyle(state.showInspector ? Color.accentColor : Color.primary)
+            }
+            .help(state.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+            .keyboardShortcut("i", modifiers: [.command, .option])
+        }
+
         ToolbarItem(id: "search", placement: .primaryAction) {
             TextField("Search", text: Binding(
                 get: { tab.searchText },

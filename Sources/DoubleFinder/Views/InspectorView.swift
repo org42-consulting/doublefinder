@@ -5,13 +5,16 @@ struct InspectorView: View {
     @EnvironmentObject var state: WindowState
 
     var body: some View {
-        InspectorContent(tab: state.focusedPane.activeTab)
-            .id(state.focus)        // re-mount when focus side changes
+        InspectorContent(tab: state.focusedPane.activeTab, onClose: {
+            state.showInspector = false
+        })
+        .id(state.focus)        // re-mount when focus side changes
     }
 }
 
 private struct InspectorContent: View {
     @ObservedObject var tab: TabState
+    let onClose: () -> Void
     @State private var thumbnail: NSImage?
     @State private var attrs: [URLResourceKey: Any] = [:]
     @State private var tags: [Tag] = []
@@ -46,14 +49,22 @@ private struct InspectorContent: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 8) {
             Text("Inspector")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
             Spacer()
-            Text(tab.selection.count > 1 ? "\(tab.selection.count) selected" : "")
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
+            if tab.selection.count > 1 {
+                Text("\(tab.selection.count) selected")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Button(action: onClose) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Hide Inspector")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

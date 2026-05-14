@@ -21,115 +21,117 @@ struct WindowView: View {
 
     @ToolbarContentBuilder
     private var toolbarItems: some CustomizableToolbarContent {
-        navigationGroup
-        trailingGroup
+        leadingClusters
+        trailingItems
     }
 
+    // MARK: - Leading: two separate capsule clusters
+
     @ToolbarContentBuilder
-    private var navigationGroup: some CustomizableToolbarContent {
+    private var leadingClusters: some CustomizableToolbarContent {
+        ToolbarItem(id: "navigation-cluster", placement: .navigation) {
+            navigationCluster
+        }
+        ToolbarItem(id: "action-cluster", placement: .navigation) {
+            actionCluster
+        }
+    }
+
+    private var navigationCluster: some View {
+        let tab = state.focusedPane.activeTab
+        return HStack(spacing: 2) {
+            clusterButton(systemImage: "chevron.left", help: "Back",
+                          enabled: tab.canBack) {
+                tab.back()
+            }
+            clusterButton(systemImage: "chevron.right", help: "Forward",
+                          enabled: tab.canForward) {
+                tab.forward()
+            }
+            clusterDivider
+            clusterButton(systemImage: state.focus == .left
+                          ? "rectangle.lefthalf.inset.filled"
+                          : "rectangle.righthalf.inset.filled",
+                          help: "Active pane: \(state.focus == .left ? "left" : "right") (⇥)",
+                          key: .tab, modifiers: []) {
+                state.toggleFocus()
+            }
+        }
+        .padding(2)
+        .background(.regularMaterial, in: Capsule())
+    }
+
+    private var actionCluster: some View {
         let tab = state.focusedPane.activeTab
         let otherTab = state.otherPane.activeTab
         let hasSelection = !tab.selection.isEmpty
-        let singleSelection = tab.selection.count == 1
         let arrow = state.focus == .left ? "→" : "←"
         let destName = otherTab.url.lastPathComponent.isEmpty ? "/" : otherTab.url.lastPathComponent
-
-        // Navigation
-        ToolbarItem(id: "back", placement: .navigation) {
-            Button {
-                tab.back()
-            } label: {
-                Image(systemName: "chevron.left")
-            }
-            .disabled(!tab.canBack)
-            .help("Back")
-        }
-
-        ToolbarItem(id: "forward", placement: .navigation) {
-            Button {
-                tab.forward()
-            } label: {
-                Image(systemName: "chevron.right")
-            }
-            .disabled(!tab.canForward)
-            .help("Forward")
-        }
-
-        // Active-pane focus toggle (now in the same nav placement as the action buttons)
-        ToolbarItem(id: "focus", placement: .navigation) {
-            Button {
-                state.toggleFocus()
-            } label: {
-                Image(systemName: state.focus == .left
-                      ? "rectangle.lefthalf.inset.filled"
-                      : "rectangle.righthalf.inset.filled")
-            }
-            .help("Active pane: \(state.focus == .left ? "left" : "right") — press ⇥ to swap")
-            .keyboardShortcut(.tab, modifiers: [])
-        }
-
-        // File operations
-        ToolbarItem(id: "copy", placement: .navigation) {
-            Button {
+        return HStack(spacing: 2) {
+            clusterButton(systemImage: "doc.on.doc", help: "Copy \(arrow) to \(destName) (⌥⌘C)",
+                          enabled: hasSelection,
+                          key: "c", modifiers: [.command, .option]) {
                 copyFocusedToOther()
-            } label: {
-                Image(systemName: "doc.on.doc")
             }
-            .disabled(!hasSelection)
-            .keyboardShortcut("c", modifiers: [.command, .option])
-            .help("Copy \(arrow) to \(destName) (⌥⌘C)")
-        }
-
-        ToolbarItem(id: "move", placement: .navigation) {
-            Button {
+            clusterButton(systemImage: "arrow.right.doc.on.clipboard",
+                          help: "Move \(arrow) to \(destName) (⌥⌘M)",
+                          enabled: hasSelection,
+                          key: "m", modifiers: [.command, .option]) {
                 moveFocusedToOther()
-            } label: {
-                Image(systemName: "arrow.right.doc.on.clipboard")
             }
-            .disabled(!hasSelection)
-            .keyboardShortcut("m", modifiers: [.command, .option])
-            .help("Move \(arrow) to \(destName) (⌥⌘M)")
-        }
-
-        ToolbarItem(id: "rename", placement: .navigation) {
-            Button {
+            clusterButton(systemImage: "character.cursor.ibeam",
+                          help: hasSelection && tab.selection.count > 1 ? "Batch Rename" : "Rename (⌘⏎)",
+                          enabled: hasSelection,
+                          key: .return, modifiers: [.command]) {
                 renameFocused()
-            } label: {
-                Image(systemName: "character.cursor.ibeam")
             }
-            .disabled(!hasSelection)
-            .keyboardShortcut(.return, modifiers: [.command])
-            .help(singleSelection ? "Rename (⌘⏎)" : "Batch Rename \(tab.selection.count) items (⌘⏎)")
-        }
-
-        ToolbarItem(id: "newfolder", placement: .navigation) {
-            Button {
+            clusterDivider
+            clusterButton(systemImage: "folder.badge.plus", help: "New Folder (⇧⌘N)",
+                          key: "n", modifiers: [.command, .shift]) {
                 newFolder()
-            } label: {
-                Image(systemName: "folder.badge.plus")
             }
-            .keyboardShortcut("n", modifiers: [.command, .shift])
-            .help("New Folder (⇧⌘N)")
-        }
-
-        ToolbarItem(id: "delete", placement: .navigation) {
-            Button(role: .destructive) {
+            clusterButton(systemImage: "trash", help: "Move to Trash (⌘⌫)",
+                          enabled: hasSelection, role: .destructive,
+                          key: .delete, modifiers: [.command]) {
                 trashFocused()
-            } label: {
-                Image(systemName: "trash")
             }
-            .disabled(!hasSelection)
-            .keyboardShortcut(.delete, modifiers: [.command])
-            .help("Move to Trash (⌘⌫)")
         }
+        .padding(2)
+        .background(.regularMaterial, in: Capsule())
     }
 
+    private func clusterButton(systemImage: String,
+                                help: String,
+                                enabled: Bool = true,
+                                role: ButtonRole? = nil,
+                                key: KeyEquivalent? = nil,
+                                modifiers: EventModifiers = .command,
+                                action: @escaping () -> Void) -> some View {
+        Button(role: role, action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13))
+                .frame(width: 28, height: 22)
+                .foregroundStyle(enabled ? (role == .destructive ? Color.red.opacity(0.8) : Color.primary) : Color.secondary.opacity(0.4))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .help(help)
+        .modifier(OptionalKeyShortcut(key: key, modifiers: modifiers))
+    }
+
+    private var clusterDivider: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.12))
+            .frame(width: 1, height: 16)
+            .padding(.horizontal, 2)
+    }
+
+    // MARK: - Trailing items (still individually customizable)
+
     @ToolbarContentBuilder
-    private var trailingGroup: some CustomizableToolbarContent {
+    private var trailingItems: some CustomizableToolbarContent {
         let tab = state.focusedPane.activeTab
 
-        // Centre: view mode picker (explicit buttons — SwiftUI's segmented Picker
-        // doesn't reliably fire its binding setter inside a customizable toolbar)
         ToolbarItem(id: "view-mode", placement: .principal) {
             HStack(spacing: 1) {
                 viewModeButton(.icon,    systemImage: "square.grid.2x2",       help: "Icon view")
@@ -141,7 +143,6 @@ struct WindowView: View {
             .background(.regularMaterial, in: Capsule())
         }
 
-        // Trailing
         ToolbarItem(id: "transfer", placement: .primaryAction) {
             TransferQueueButton()
                 .environmentObject(state)
@@ -160,7 +161,7 @@ struct WindowView: View {
         }
     }
 
-    // MARK: - View-mode button
+    // MARK: - View-mode button (inside the view-mode cluster)
 
     private func viewModeButton(_ mode: ViewMode, systemImage: String, help: String) -> some View {
         let tab = state.focusedPane.activeTab
@@ -275,5 +276,17 @@ struct WindowView: View {
             work: { progress in try await FileOps.trash(urls, progress: progress) },
             completion: { Task { @MainActor in await src.refresh() } }
         )
+    }
+}
+
+private struct OptionalKeyShortcut: ViewModifier {
+    let key: KeyEquivalent?
+    let modifiers: EventModifiers
+    func body(content: Content) -> some View {
+        if let key {
+            content.keyboardShortcut(key, modifiers: modifiers)
+        } else {
+            content
+        }
     }
 }

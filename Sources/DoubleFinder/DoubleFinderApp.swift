@@ -4,11 +4,13 @@ import AppKit
 @main
 struct DoubleFinderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    @AppStorage(SettingsKey.forceDarkMode) private var forceDarkMode: Bool = false
 
     var body: some Scene {
         WindowGroup("DoubleFinder") {
             WindowView()
                 .frame(minWidth: 1100, minHeight: 640)
+                .preferredColorScheme(forceDarkMode ? .dark : nil)
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
@@ -67,6 +69,11 @@ struct DoubleFinderApp: App {
                 }
                 .keyboardShortcut(".", modifiers: [.command, .shift])
             }
+        }
+
+        Settings {
+            SettingsView()
+                .preferredColorScheme(forceDarkMode ? .dark : nil)
         }
     }
 }

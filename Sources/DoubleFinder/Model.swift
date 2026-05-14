@@ -376,7 +376,12 @@ final class WindowState: ObservableObject {
     private var observerTokens: [NSObjectProtocol] = []
 
     init() {
-        if let snap = StatePersistence.load() {
+        let defaults = UserDefaults.standard
+        let restoreOnStartup = defaults.object(forKey: SettingsKey.restoreOnStartup) as? Bool ?? true
+        let startingPath = defaults.string(forKey: SettingsKey.startingDirectoryPath)
+            ?? FileManager.default.homeDirectoryForCurrentUser.path
+
+        if restoreOnStartup, let snap = StatePersistence.load() {
             self.left = PaneState(from: snap.left)
             self.right = PaneState(from: snap.right)
             self.focus = snap.focus == "right" ? .right : .left
@@ -384,11 +389,12 @@ final class WindowState: ObservableObject {
                 self.favourites = favs
             }
         } else {
-            let home = FileManager.default.homeDirectoryForCurrentUser
-            let docs = home.appendingPathComponent("Documents")
-            let downloads = home.appendingPathComponent("Downloads")
-            self.left = PaneState(url: docs)
-            self.right = PaneState(url: downloads)
+            let startURL = URL(fileURLWithPath: (startingPath as NSString).expandingTildeInPath)
+            let safe = FileManager.default.fileExists(atPath: startURL.path)
+                ? startURL
+                : FileManager.default.homeDirectoryForCurrentUser
+            self.left = PaneState(url: safe)
+            self.right = PaneState(url: safe)
         }
         registerCommandObservers()
         registerPersistenceHook()

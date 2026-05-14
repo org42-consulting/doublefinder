@@ -14,15 +14,27 @@ struct WindowView: View {
             DualPaneArea()
                 .environmentObject(state)
                 .navigationTitle(state.focusedPane.activeTab.url.lastPathComponent)
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    HeaderBar(state: state,
-                              navigationCluster: navigationCluster,
-                              actionCluster: actionCluster,
-                              viewModeCluster: viewModeCluster)
-                }
-                .toolbar { trailingItems }
+                .toolbar(id: "df-main") { toolbarItems }
         }
         .navigationSplitViewStyle(.balanced)
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarItems: some CustomizableToolbarContent {
+        leadingClusters
+        trailingItems
+    }
+
+    // MARK: - Leading: two separate capsule clusters
+
+    @ToolbarContentBuilder
+    private var leadingClusters: some CustomizableToolbarContent {
+        ToolbarItem(id: "navigation-cluster", placement: .navigation) {
+            navigationCluster
+        }
+        ToolbarItem(id: "action-cluster", placement: .navigation) {
+            actionCluster
+        }
     }
 
     private var navigationCluster: some View {
@@ -45,6 +57,8 @@ struct WindowView: View {
                 state.toggleFocus()
             }
         }
+        .padding(2)
+        .background(.regularMaterial, in: Capsule())
     }
 
     private var actionCluster: some View {
@@ -82,6 +96,8 @@ struct WindowView: View {
                 trashFocused()
             }
         }
+        .padding(2)
+        .background(.regularMaterial, in: Capsule())
     }
 
     private func clusterButton(systemImage: String,
@@ -110,27 +126,29 @@ struct WindowView: View {
             .padding(.horizontal, 2)
     }
 
-    private var viewModeCluster: some View {
-        HStack(spacing: 2) {
-            viewModeButton(.icon,    systemImage: "square.grid.2x2",     help: "Icon view")
-            viewModeButton(.list,    systemImage: "list.bullet",         help: "List view")
-            viewModeButton(.column,  systemImage: "rectangle.split.3x1", help: "Column view")
-            viewModeButton(.gallery, systemImage: "photo.on.rectangle",  help: "Gallery view")
-        }
-    }
-
     // MARK: - Trailing items (still individually customizable)
 
     @ToolbarContentBuilder
-    private var trailingItems: some ToolbarContent {
+    private var trailingItems: some CustomizableToolbarContent {
         let tab = state.focusedPane.activeTab
 
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItem(id: "view-mode", placement: .principal) {
+            HStack(spacing: 1) {
+                viewModeButton(.icon,    systemImage: "square.grid.2x2",       help: "Icon view")
+                viewModeButton(.list,    systemImage: "list.bullet",           help: "List view")
+                viewModeButton(.column,  systemImage: "rectangle.split.3x1",   help: "Column view")
+                viewModeButton(.gallery, systemImage: "photo.on.rectangle",    help: "Gallery view")
+            }
+            .padding(2)
+            .background(.regularMaterial, in: Capsule())
+        }
+
+        ToolbarItem(id: "transfer", placement: .primaryAction) {
             TransferQueueButton()
                 .environmentObject(state)
         }
 
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItem(id: "search", placement: .primaryAction) {
             TextField("Search", text: Binding(
                 get: { tab.searchText },
                 set: { newValue in

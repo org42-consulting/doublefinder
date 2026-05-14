@@ -74,6 +74,10 @@ struct DoubleFinderApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        if let url = Bundle.module.url(forResource: "DoubleFinder", withExtension: "icns"),
+           let image = NSImage(contentsOf: url) {
+            NSApp.applicationIconImage = image
+        }
         NSApp.activate(ignoringOtherApps: true)
     }
 

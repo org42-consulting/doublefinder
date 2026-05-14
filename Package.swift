@@ -8,6 +8,9 @@ let package = Package(
         .executableTarget(
             name: "DoubleFinder",
             path: "Sources/DoubleFinder",
+            resources: [
+                .copy("Resources/DoubleFinder.icns")
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v5)
             ]

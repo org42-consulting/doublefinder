@@ -18,7 +18,8 @@ struct PaneView: View {
                 .padding(.bottom, 4)
 
             ZStack {
-                fileArea
+                FileAreaView(tab: pane.activeTab, side: side)
+                    .environmentObject(state)
                     .overlay(alignment: .leading) {
                         Rectangle()
                             .fill(isActive ? Color.accentColor : Color.clear)
@@ -57,39 +58,6 @@ struct PaneView: View {
         }
     }
 
-    @ViewBuilder
-    private var fileArea: some View {
-        switch pane.activeTab.viewMode {
-        case .list:
-            NSTableListView(
-                tab: pane.activeTab,
-                side: side,
-                onActivate: { state.focus = side },
-                onTrash: { urls in trashURLs(urls) },
-                onCopyToOther: { urls in CopyMoveCoordinator.copy(urls, to: state.otherPane.activeTab, from: pane.activeTab, via: state) },
-                onMoveToOther: { urls in CopyMoveCoordinator.move(urls, to: state.otherPane.activeTab, from: pane.activeTab, via: state) },
-                onQuickLook: { urls in
-                    QuickLookCoordinator.shared.show(pane.activeTab.nodes.map(\.url), startAt: urls.first)
-                }
-            )
-        case .icon:
-            IconView(tab: pane.activeTab, side: side)
-        case .column:
-            ColumnView(tab: pane.activeTab, side: side, onActivate: { state.focus = side })
-        case .gallery:
-            GalleryView(tab: pane.activeTab, side: side)
-        }
-    }
-
-    private func trashURLs(_ urls: [URL]) {
-        TransferQueue.shared.enqueue(
-            kind: "Trash",
-            summary: "Move \(urls.count) item\(urls.count == 1 ? "" : "s") to Trash",
-            unitCount: Int64(urls.count),
-            work: { progress in try await FileOps.trash(urls, progress: progress) },
-            completion: { Task { @MainActor in await pane.activeTab.refresh() } }
-        )
-    }
 
     private var dropIndicator: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)

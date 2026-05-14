@@ -118,6 +118,7 @@ struct SidebarView: View {
             .foregroundStyle(isCurrent ? Color.accentColor : Color.primary)
         }
         .buttonStyle(.plain)
+        .draggable(fav)
         .contextMenu {
             Button("Open in active pane") {
                 state.focusedPane.activeTab.navigate(to: fav.url)

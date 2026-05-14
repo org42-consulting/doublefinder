@@ -1,6 +1,8 @@
 import Foundation
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
+import CoreTransferable
 
 // MARK: - FSNode
 
@@ -93,6 +95,12 @@ struct SidebarFavourite: Identifiable, Hashable, Codable {
         .init(title: "Downloads",    systemImage: "arrow.down.circle",              path: "~/Downloads"),
         .init(title: "Home",         systemImage: "house",                          path: "~"),
     ]
+}
+
+extension SidebarFavourite: Transferable {
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .json)
+    }
 }
 
 extension Notification.Name {

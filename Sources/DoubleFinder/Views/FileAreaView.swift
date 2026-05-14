@@ -10,6 +10,21 @@ struct FileAreaView: View {
     @EnvironmentObject var state: WindowState
 
     var body: some View {
+        ZStack {
+            content
+            if showEmptyState {
+                ContentUnavailableView {
+                    Label("No results", systemImage: "magnifyingglass")
+                } description: {
+                    Text("No items matching \"\(tab.searchText)\" in \(scopeDescription)")
+                }
+                .allowsHitTesting(false)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch tab.viewMode {
         case .list:
             NSTableListView(
@@ -25,6 +40,22 @@ struct FileAreaView: View {
                 },
                 onQuickLook: { urls in
                     QuickLookCoordinator.shared.show(tab.nodes.map(\.url), startAt: urls.first)
+                },
+                onMenuNeeded: { menu, urls, dir in
+                    if urls.isEmpty {
+                        FileContextMenu.populateBackground(menu, directory: dir, tab: tab, state: state)
+                    } else {
+                        FileContextMenu.populate(
+                            menu,
+                            urls: urls,
+                            directory: dir,
+                            tab: tab,
+                            state: state,
+                            onQuickLook: { qlUrls in
+                                QuickLookCoordinator.shared.show(qlUrls, startAt: qlUrls.first)
+                            }
+                        )
+                    }
                 }
             )
         case .icon:
@@ -33,6 +64,20 @@ struct FileAreaView: View {
             ColumnView(tab: tab, side: side, onActivate: { state.focus = side })
         case .gallery:
             GalleryView(tab: tab, side: side)
+        }
+    }
+
+    private var showEmptyState: Bool {
+        tab.isSearching && tab.nodes.isEmpty && tab.loadError == nil && !tab.searchText.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private var scopeDescription: String {
+        switch tab.searchScope {
+        case .folder:
+            let name = tab.url.lastPathComponent
+            return name.isEmpty ? "/" : name
+        case .home:     return "your Home folder"
+        case .computer: return "this Mac"
         }
     }
 

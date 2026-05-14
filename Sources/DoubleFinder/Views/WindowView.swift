@@ -152,15 +152,7 @@ struct WindowView: View {
         }
 
         ToolbarItem(id: "search", placement: .primaryAction) {
-            TextField("Search", text: Binding(
-                get: { tab.searchText },
-                set: { newValue in
-                    tab.searchText = newValue
-                    tab.runSearch(newValue)
-                }
-            ), prompt: Text("Search in \(tab.url.lastPathComponent)"))
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 200)
+            SearchToolbarItem(tab: tab)
         }
     }
 
@@ -279,5 +271,73 @@ struct WindowView: View {
             work: { progress in try await FileOps.trash(urls, progress: progress) },
             completion: { Task { @MainActor in await src.refresh() } }
         )
+    }
+}
+
+// MARK: - Search toolbar item
+
+private struct SearchToolbarItem: View {
+    @ObservedObject var tab: TabState
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Menu {
+                ForEach(SearchScope.allCases) { scope in
+                    Button {
+                        tab.searchScope = scope
+                    } label: {
+                        Label(scope.displayName, systemImage: scope.systemImage)
+                    }
+                }
+            } label: {
+                Image(systemName: tab.searchScope.systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Search scope: \(tab.searchScope.displayName)")
+
+            ZStack(alignment: .trailing) {
+                TextField("Search", text: Binding(
+                    get: { tab.searchText },
+                    set: { newValue in
+                        tab.searchText = newValue
+                        tab.runSearch(newValue)
+                    }
+                ), prompt: Text(prompt))
+                    .textFieldStyle(.roundedBorder)
+                    .onKeyPress(.escape) {
+                        guard !tab.searchText.isEmpty else { return .ignored }
+                        tab.searchText = ""
+                        tab.runSearch("")
+                        return .handled
+                    }
+                    .frame(width: 220)
+
+                if !tab.searchText.isEmpty {
+                    Button {
+                        tab.searchText = ""
+                        tab.runSearch("")
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 6)
+                    .help("Clear search")
+                }
+            }
+        }
+    }
+
+    private var prompt: String {
+        switch tab.searchScope {
+        case .folder:
+            let name = tab.url.lastPathComponent
+            return "Search in \(name.isEmpty ? "/" : name)"
+        case .home:     return "Search in Home"
+        case .computer: return "Search this Mac"
+        }
     }
 }

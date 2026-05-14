@@ -6,7 +6,7 @@ final class SearchEngine {
     private var observer: NSObjectProtocol?
     private var continuation: AsyncStream<[URL]>.Continuation?
 
-    func stream(for text: String, scope: URL) -> AsyncStream<[URL]> {
+    func stream(for text: String, scopes: [Any], kind: SearchKind = .byName) -> AsyncStream<[URL]> {
         cancel()
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return AsyncStream { $0.finish() } }
@@ -15,8 +15,13 @@ final class SearchEngine {
             self.continuation = continuation
 
             let q = NSMetadataQuery()
-            q.predicate = NSPredicate(format: "kMDItemDisplayName LIKE[cd] %@", "*\(trimmed)*")
-            q.searchScopes = [scope]
+            switch kind {
+            case .byName:
+                q.predicate = NSPredicate(format: "kMDItemDisplayName LIKE[cd] %@", "*\(trimmed)*")
+            case .byTag:
+                q.predicate = NSPredicate(format: "kMDItemUserTags ==[c] %@", trimmed)
+            }
+            q.searchScopes = scopes
             q.notificationBatchingInterval = 0.25
 
             let nc = NotificationCenter.default

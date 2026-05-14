@@ -16,12 +16,26 @@ struct SidebarSection: Identifiable {
 struct SidebarView: View {
     @EnvironmentObject var state: WindowState
     @State private var isDropTargeted: Bool = false
+    @AppStorage("df.sidebar.favouritesExpanded") private var favouritesExpanded = true
+    @AppStorage("df.sidebar.iCloudExpanded") private var iCloudExpanded = true
+    @AppStorage("df.sidebar.locationsExpanded") private var locationsExpanded = true
+    @AppStorage("df.sidebar.tagsExpanded") private var tagsExpanded = true
+
+    private func binding(for sectionTitle: String) -> Binding<Bool> {
+        switch sectionTitle {
+        case "iCloud":    return $iCloudExpanded
+        case "Locations": return $locationsExpanded
+        case "Tags":      return $tagsExpanded
+        default:          return $favouritesExpanded
+        }
+    }
 
     private var staticSections: [SidebarSection] {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let icloud: [SidebarItem] = [
-            .init(title: "iCloud Drive", systemImage: "cloud", url: home),
-        ]
+        let icloudURL = home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
+        let icloud: [SidebarItem] = FileManager.default.fileExists(atPath: icloudURL.path)
+            ? [.init(title: "iCloud Drive", systemImage: "cloud", url: icloudURL)]
+            : []
         let trashURL = (try? FileManager.default.url(for: .trashDirectory, in: .userDomainMask, appropriateFor: nil, create: false))
             ?? home.appendingPathComponent(".Trash")
         let locations: [SidebarItem] = [
@@ -40,13 +54,13 @@ struct SidebarView: View {
             .init(title: "iCloud",    items: icloud),
             .init(title: "Locations", items: locations),
             .init(title: "Tags",      items: tags),
-        ]
+        ].filter { !$0.items.isEmpty }
     }
 
     var body: some View {
         List {
             // Reorderable Favourites
-            Section {
+            Section(isExpanded: $favouritesExpanded) {
                 ForEach($state.favourites) { $fav in
                     favouriteRow(fav)
                 }
@@ -69,10 +83,12 @@ struct SidebarView: View {
 
             // Static sections
             ForEach(staticSections) { section in
-                Section(section.title) {
+                Section(isExpanded: binding(for: section.title)) {
                     ForEach(section.items) { item in
                         row(for: item, in: section.title)
                     }
+                } header: {
+                    Text(section.title)
                 }
             }
         }
@@ -105,17 +121,16 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func favouriteRow(_ fav: SidebarFavourite) -> some View {
-        let isCurrent = state.focusedPane.activeTab.url.standardizedFileURL == fav.url.standardizedFileURL
         Button {
             state.focusedPane.activeTab.navigate(to: fav.url)
         } label: {
             Label {
                 Text(fav.title)
+                    .foregroundStyle(Color.primary)
             } icon: {
                 Image(systemName: fav.systemImage)
                     .foregroundStyle(Color.accentColor)
             }
-            .foregroundStyle(isCurrent ? Color.accentColor : Color.primary)
         }
         .buttonStyle(.plain)
         .draggable(fav)
@@ -138,28 +153,40 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func row(for item: SidebarItem, in sectionTitle: String) -> some View {
-        let isCurrent = state.focusedPane.activeTab.url.standardizedFileURL == item.url.standardizedFileURL
         Button {
-            state.focusedPane.activeTab.navigate(to: item.url)
+            if sectionTitle == "Tags" {
+                state.focusedPane.activeTab.filterByTag(name: item.title)
+            } else {
+                state.focusedPane.activeTab.navigate(to: item.url)
+            }
         } label: {
             Label {
                 Text(item.title)
+                    .foregroundStyle(Color.primary)
             } icon: {
                 Image(systemName: item.systemImage)
                     .foregroundStyle(tintFor(section: sectionTitle, title: item.title))
             }
-            .foregroundStyle(isCurrent ? Color.accentColor : Color.primary)
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button("Open in active pane") {
-                state.focusedPane.activeTab.navigate(to: item.url)
-            }
-            Button("Open in other pane") {
-                state.otherPane.activeTab.navigate(to: item.url)
-            }
-            Button("Open in new tab (active pane)") {
-                state.focusedPane.addTab(url: item.url)
+            if sectionTitle == "Tags" {
+                Button("Show tag in active pane") {
+                    state.focusedPane.activeTab.filterByTag(name: item.title)
+                }
+                Button("Show tag in other pane") {
+                    state.otherPane.activeTab.filterByTag(name: item.title)
+                }
+            } else {
+                Button("Open in active pane") {
+                    state.focusedPane.activeTab.navigate(to: item.url)
+                }
+                Button("Open in other pane") {
+                    state.otherPane.activeTab.navigate(to: item.url)
+                }
+                Button("Open in new tab (active pane)") {
+                    state.focusedPane.addTab(url: item.url)
+                }
             }
         }
     }

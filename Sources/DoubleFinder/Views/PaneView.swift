@@ -20,10 +20,10 @@ struct PaneView: View {
             ZStack {
                 FileAreaView(tab: pane.activeTab, side: side)
                     .environmentObject(state)
-                    .overlay(alignment: .leading) {
+                    .overlay(alignment: .top) {
                         Rectangle()
                             .fill(isActive ? Color.accentColor : Color.clear)
-                            .frame(width: 2)
+                            .frame(height: 2)
                             .animation(.easeInOut(duration: 0.15), value: isActive)
                     }
 

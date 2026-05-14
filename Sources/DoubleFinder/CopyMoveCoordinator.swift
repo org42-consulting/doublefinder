@@ -30,9 +30,25 @@ enum CopyMoveCoordinator {
         }
     }
 
+    /// Copy into an arbitrary directory URL (no destination `TabState` to refresh).
+    /// Used by the column-view drop handler, where the drop target is a folder cell
+    /// that isn't necessarily the active directory of any pane.
+    static func copy(_ urls: [URL], toDirectory dest: URL, from src: TabState, via state: WindowState) {
+        let conflicts = FileOps.conflicts(for: urls, in: dest)
+        if conflicts.isEmpty {
+            run(.copy, urls: urls, dest: dest, resolution: .keepBoth, src: src, dst: nil)
+        } else {
+            state.conflict = ConflictPrompt(kind: "Copy", conflicts: conflicts, destination: dest) { resolution in
+                if let resolution {
+                    run(.copy, urls: urls, dest: dest, resolution: resolution, src: src, dst: nil)
+                }
+            }
+        }
+    }
+
     private enum Kind { case copy, move }
 
-    private static func run(_ kind: Kind, urls: [URL], dest: URL, resolution: ConflictResolution, src: TabState, dst: TabState) {
+    private static func run(_ kind: Kind, urls: [URL], dest: URL, resolution: ConflictResolution, src: TabState, dst: TabState?) {
         let label = kind == .copy ? "Copy" : "Move"
         let summary = "\(label) \(urls.count) item\(urls.count == 1 ? "" : "s") → \(dest.lastPathComponent)"
         TransferQueue.shared.enqueue(
@@ -47,7 +63,7 @@ enum CopyMoveCoordinator {
             },
             completion: {
                 Task { @MainActor in
-                    await dst.refresh()
+                    if let dst { await dst.refresh() }
                     if kind == .move { await src.refresh() }
                 }
             }

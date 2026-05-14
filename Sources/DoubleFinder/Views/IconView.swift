@@ -30,6 +30,17 @@ struct IconView: View {
                         },
                         onQuickLook: { quickLook(start: node.url) }
                     )
+                    .contextMenu {
+                        FileContextMenu.items(
+                            for: urlsForMenu(targeting: node),
+                            in: tab.url,
+                            tab: tab,
+                            state: state,
+                            onQuickLook: { urls in
+                                QuickLookCoordinator.shared.show(urls, startAt: urls.first)
+                            }
+                        )
+                    }
                 }
             }
             .padding(16)
@@ -44,6 +55,18 @@ struct IconView: View {
             tab.selection.removeAll()
             state.focus = side
         }
+        .contextMenu {
+            FileContextMenu.backgroundItems(directory: tab.url, tab: tab, state: state)
+        }
+    }
+
+    /// If the right-clicked node is part of the current selection, operate on the whole selection;
+    /// otherwise operate on just the clicked node. Matches Finder's behavior.
+    private func urlsForMenu(targeting node: FSNode) -> [URL] {
+        if tab.selection.contains(node.id), tab.selection.count > 1 {
+            return tab.selection.compactMap { id in tab.nodes.first { $0.id == id }?.url }
+        }
+        return [node.url]
     }
 
     private func quickLook(start: URL?) {
@@ -64,16 +87,14 @@ private struct IconCell: View {
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.accentColor.opacity(0.18))
-                        .frame(width: 84, height: 84)
-                }
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.20) : Color.clear)
                 Image(nsImage: icon ?? NSWorkspace.shared.icon(forFile: node.url.path))
                     .resizable()
                     .interpolation(.high)
                     .frame(width: 64, height: 64)
             }
+            .frame(width: 76, height: 76)
             VStack(spacing: 2) {
                 Text(node.name)
                     .font(.system(size: 11))
@@ -100,13 +121,6 @@ private struct IconCell: View {
             TapGesture(count: 1).onEnded { onSelect(true) }
         )
         .draggable(node.url)
-        .contextMenu {
-            Button("Open") { onOpen() }
-            Button("Quick Look") { onQuickLook() }
-            Button("Open in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([node.url])
-            }
-        }
         .task(id: node.url) {
             icon = NSWorkspace.shared.icon(forFile: node.url.path)
         }

@@ -13,6 +13,7 @@ struct NSTableListView: NSViewRepresentable {
     let onCopyToOther: ([URL]) -> Void
     let onMoveToOther: ([URL]) -> Void
     let onQuickLook: ([URL]) -> Void
+    let onMenuNeeded: (NSMenu, [URL], URL) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -304,71 +305,17 @@ struct NSTableListView: NSViewRepresentable {
 
         func menuNeedsUpdate(_ menu: NSMenu) {
             menu.removeAllItems()
-            guard let table, table.clickedRow >= 0 else { return }
-            let urls = selectedURLs(includingClicked: true)
-
-            menu.addItem(withTitle: "Open", action: #selector(menuOpen(_:)), keyEquivalent: "").target = self
-            menu.addItem(withTitle: "Open in Finder", action: #selector(menuReveal(_:)), keyEquivalent: "").target = self
-            menu.addItem(withTitle: "Quick Look", action: #selector(menuQuickLook(_:)), keyEquivalent: " ").target = self
-            menu.addItem(.separator())
-            menu.addItem(withTitle: "Copy to other pane", action: #selector(menuCopyOther(_:)), keyEquivalent: "").target = self
-            menu.addItem(withTitle: "Move to other pane", action: #selector(menuMoveOther(_:)), keyEquivalent: "").target = self
-
-            let tagsItem = NSMenuItem(title: "Tags", action: nil, keyEquivalent: "")
-            let tagsMenu = NSMenu()
-            for c in Tag.Color.allCases where c != .none {
-                let item = NSMenuItem(title: c.displayName, action: #selector(menuApplyTag(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = c.rawValue
-                tagsMenu.addItem(item)
+            guard let table else { return }
+            let dir = parent.tab.url
+            let clickedRow = table.clickedRow
+            if clickedRow < 0 || clickedRow >= nodes.count {
+                parent.onMenuNeeded(menu, [], dir)
+                return
             }
-            tagsMenu.addItem(.separator())
-            let clear = NSMenuItem(title: "Clear tags", action: #selector(menuClearTags(_:)), keyEquivalent: "")
-            clear.target = self
-            tagsMenu.addItem(clear)
-            tagsItem.submenu = tagsMenu
-            menu.addItem(tagsItem)
-
-            menu.addItem(.separator())
-            menu.addItem(withTitle: "Move to Trash", action: #selector(menuTrash(_:)), keyEquivalent: "").target = self
-            _ = urls
-        }
-
-        @objc private func menuOpen(_ sender: Any?) {
-            let urls = selectedURLs(includingClicked: true)
-            for u in urls {
-                let isDir = (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                if isDir { parent.tab.navigate(to: u); break }
-                else { NSWorkspace.shared.open(u) }
-            }
-        }
-        @objc private func menuReveal(_ sender: Any?) {
-            NSWorkspace.shared.activateFileViewerSelecting(selectedURLs(includingClicked: true))
-        }
-        @objc private func menuQuickLook(_ sender: Any?) {
-            parent.onQuickLook(selectedURLs(includingClicked: true))
-        }
-        @objc private func menuCopyOther(_ sender: Any?) {
-            parent.onCopyToOther(selectedURLs(includingClicked: true))
-        }
-        @objc private func menuMoveOther(_ sender: Any?) {
-            parent.onMoveToOther(selectedURLs(includingClicked: true))
-        }
-        @objc private func menuApplyTag(_ sender: NSMenuItem) {
-            guard let raw = sender.representedObject as? Int, let color = Tag.Color(rawValue: raw) else { return }
-            for u in selectedURLs(includingClicked: true) {
-                TagStore.addTag(Tag(name: color.displayName, color: color), to: u)
-            }
-            Task { @MainActor in await parent.tab.refresh() }
-        }
-        @objc private func menuClearTags(_ sender: Any?) {
-            for u in selectedURLs(includingClicked: true) {
-                TagStore.clear(u)
-            }
-            Task { @MainActor in await parent.tab.refresh() }
-        }
-        @objc private func menuTrash(_ sender: Any?) {
-            parent.onTrash(selectedURLs(includingClicked: true))
+            let clicked = nodes[clickedRow].url
+            let selected = selectedURLs(includingClicked: false)
+            let urls = selected.contains(clicked) ? selected : [clicked]
+            parent.onMenuNeeded(menu, urls, dir)
         }
 
         // MARK: helpers

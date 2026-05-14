@@ -1,6 +1,60 @@
+# SwiftPM / Xcode build output
 .build/
 .swiftpm/
 *.xcodeproj/
-.DS_Store
-build/
+*.xcworkspace/
+DerivedData/
+Package.resolved
 
+# Packaged .app output (from scripts/package.sh)
+build/
+*.app
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad/
+
+# Swift Package Manager
+Packages/
+
+# Generated source / coverage
+*.dSYM/
+*.gcno
+*.gcda
+*.profraw
+*.profdata
+coverage/
+
+# macOS metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Finder / Spotlight / Time Machine
+.Spotlight-V100
+.Trashes
+.fseventsd
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# Logs / temp
+*.log
+*.tmp
+*.bak

@@ -1,90 +1,219 @@
 import SwiftUI
 import AppKit
+import Quartz
 
 struct ColumnView: NSViewRepresentable {
     @ObservedObject var tab: TabState
     let side: PaneSide
     let onActivate: () -> Void
+    @EnvironmentObject var state: WindowState
 
-    func makeCoordinator() -> Coordinator { Coordinator(tab: tab, onActivate: onActivate) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(tab: tab, state: state, onActivate: onActivate)
+    }
 
-    func makeNSView(context: Context) -> NSBrowser {
-        let browser = NSBrowser(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+    func makeNSView(context: Context) -> NSView {
+        let split = NSSplitView(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
+        split.isVertical = true
+        split.dividerStyle = .thin
+        split.autoresizingMask = [.width, .height]
+        split.delegate = context.coordinator
+
+        let browser = NSBrowser()
+        browser.cellPrototype = ColumnBrowserCell()
         browser.delegate = context.coordinator
         browser.allowsMultipleSelection = true
         browser.allowsEmptySelection = true
         browser.allowsBranchSelection = true
         browser.columnResizingType = .userColumnResizing
-        browser.minColumnWidth = 160
+        browser.minColumnWidth = 200
         browser.maxVisibleColumns = 5
         browser.hasHorizontalScroller = true
         browser.target = context.coordinator
         browser.action = #selector(Coordinator.singleClick(_:))
         browser.doubleAction = #selector(Coordinator.doubleClick(_:))
         browser.takesTitleFromPreviousColumn = false
-        browser.autoresizingMask = [.width, .height]
+        browser.registerForDraggedTypes([.fileURL])
+        browser.setDraggingSourceOperationMask([.copy, .move], forLocal: false)
+        browser.setDraggingSourceOperationMask([.copy, .move], forLocal: true)
+
+        let previewHolder = NSView()
+        let preview = QLPreviewView()
+        preview.shouldCloseWithWindow = false
+        preview.autostarts = false
+        preview.translatesAutoresizingMaskIntoConstraints = false
+        previewHolder.addSubview(preview)
+        NSLayoutConstraint.activate([
+            preview.leadingAnchor.constraint(equalTo: previewHolder.leadingAnchor),
+            preview.trailingAnchor.constraint(equalTo: previewHolder.trailingAnchor),
+            preview.topAnchor.constraint(equalTo: previewHolder.topAnchor),
+            preview.bottomAnchor.constraint(equalTo: previewHolder.bottomAnchor),
+        ])
+        previewHolder.isHidden = true
+
+        split.addArrangedSubview(browser)
+        split.addArrangedSubview(previewHolder)
+
         context.coordinator.browser = browser
+        context.coordinator.previewView = preview
+        context.coordinator.previewHolder = previewHolder
+        context.coordinator.splitView = split
         context.coordinator.setRoot(tab.url)
         browser.loadColumnZero()
-        return browser
+        return split
     }
 
-    func updateNSView(_ browser: NSBrowser, context: Context) {
-        context.coordinator.tab = tab
-        if context.coordinator.rootURL.standardizedFileURL != tab.url.standardizedFileURL {
-            context.coordinator.setRoot(tab.url)
-            browser.loadColumnZero()
-        }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.update(tab: tab)
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSBrowserDelegate {
+    final class Coordinator: NSObject, NSBrowserDelegate, NSSplitViewDelegate, NSMenuDelegate {
         var tab: TabState
+        let state: WindowState
         let onActivate: () -> Void
-        weak var browser: NSBrowser?
-        private(set) var rootURL: URL = URL(fileURLWithPath: "/")
-        private var cache: [String: [URL]] = [:]
-        private var pathByColumn: [Int: URL] = [:]
 
-        init(tab: TabState, onActivate: @escaping () -> Void) {
+        weak var browser: NSBrowser?
+        weak var previewView: QLPreviewView?
+        weak var previewHolder: NSView?
+        weak var splitView: NSSplitView?
+
+        private(set) var rootURL: URL = URL(fileURLWithPath: "/")
+        private var cache: [URL: [URL]] = [:]
+        private var gitStatusByParent: [URL: [URL: GitFileState]] = [:]
+
+        private var lastShowHidden: Bool
+        private var lastSortKey: SortKey
+        private var lastSortAscending: Bool
+        private var lastNodesSignature: Int = 0
+
+        init(tab: TabState, state: WindowState, onActivate: @escaping () -> Void) {
             self.tab = tab
+            self.state = state
             self.onActivate = onActivate
             self.rootURL = tab.url
+            self.lastShowHidden = tab.showHidden
+            self.lastSortKey = tab.sortKey
+            self.lastSortAscending = tab.sortAscending
         }
 
         func setRoot(_ url: URL) {
             rootURL = url
             cache.removeAll()
-            pathByColumn.removeAll()
-            pathByColumn[0] = url
+            gitStatusByParent.removeAll()
+            lastNodesSignature = nodesSignature(tab.nodes)
         }
 
-        // MARK: matrix-based NSBrowserDelegate
+        func update(tab newTab: TabState) {
+            self.tab = newTab
+
+            if rootURL.standardizedFileURL != newTab.url.standardizedFileURL {
+                setRoot(newTab.url)
+                browser?.loadColumnZero()
+                setPreviewVisible(false, animate: false)
+                lastShowHidden = newTab.showHidden
+                lastSortKey = newTab.sortKey
+                lastSortAscending = newTab.sortAscending
+                return
+            }
+
+            let settingsChanged =
+                lastShowHidden != newTab.showHidden ||
+                lastSortKey != newTab.sortKey ||
+                lastSortAscending != newTab.sortAscending
+
+            let signature = nodesSignature(newTab.nodes)
+            let nodesChanged = signature != lastNodesSignature
+
+            if settingsChanged || nodesChanged {
+                cache.removeAll()
+                gitStatusByParent.removeAll()
+                browser?.validateVisibleColumns()
+                lastShowHidden = newTab.showHidden
+                lastSortKey = newTab.sortKey
+                lastSortAscending = newTab.sortAscending
+                lastNodesSignature = signature
+            }
+        }
+
+        private func nodesSignature(_ nodes: [FSNode]) -> Int {
+            var hasher = Hasher()
+            hasher.combine(nodes.count)
+            for n in nodes {
+                hasher.combine(n.url)
+                hasher.combine(n.modified)
+                hasher.combine(n.gitStatus)
+            }
+            return hasher.finalize()
+        }
+
+        // MARK: - NSBrowserDelegate
 
         func browser(_ sender: NSBrowser, numberOfRowsInColumn column: Int) -> Int {
             let url = urlForColumn(column, in: sender)
+            ensureGitStatusLoaded(forColumn: column, parent: url, browser: sender)
             return children(of: url).count
         }
 
         func browser(_ sender: NSBrowser, willDisplayCell cell: Any, atRow row: Int, column: Int) {
-            guard let cell = cell as? NSBrowserCell else { return }
+            // Match list view's row metrics (NSTableListView: rowHeight 20 + intercellSpacing 0,2).
+            if row == 0, let matrix = sender.matrix(inColumn: column) {
+                let desired = NSSize(width: matrix.cellSize.width, height: 20)
+                if matrix.cellSize.height != desired.height {
+                    matrix.cellSize = desired
+                    matrix.intercellSpacing = NSSize(width: 0, height: 2)
+                    matrix.sizeToCells()
+                }
+                if matrix.menu == nil {
+                    let m = NSMenu()
+                    m.delegate = self
+                    matrix.menu = m
+                }
+            }
+
+            guard let cell = cell as? ColumnBrowserCell else { return }
             let parent = urlForColumn(column, in: sender)
             let kids = children(of: parent)
             guard row < kids.count else { return }
             let child = kids[row]
             cell.title = child.lastPathComponent
-            let isDir = (try? child.resourceValues(forKeys: Set([URLResourceKey.isDirectoryKey])))?.isDirectory ?? false
+            let isDir = (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
             cell.isLeaf = !isDir
             let icon = NSWorkspace.shared.icon(forFile: child.path)
             icon.size = NSSize(width: 16, height: 16)
             cell.image = icon
+
+            cell.tagColors = TagStore.tags(for: child).map { NSColor($0.color.swiftUI) }
+            if column == 0 {
+                cell.gitState = tab.nodes.first(where: { $0.url == child })?.gitStatus
+            } else {
+                cell.gitState = gitStatusByParent[parent.standardizedFileURL]?[child.standardizedFileURL]
+            }
+            cell.isCurrentColumn = column == sender.selectedColumn
         }
 
-        // MARK: actions
+        // MARK: - Click actions
 
         @objc func singleClick(_ sender: Any?) {
             onActivate()
             updateSelection()
+            refreshCurrentColumnFlags()
+        }
+
+        /// Walks the visible matrices and updates each cell's `isCurrentColumn` flag so
+        /// the rightmost selected column draws the blue highlight and earlier columns
+        /// draw gray. Called whenever the selection moves.
+        private func refreshCurrentColumnFlags() {
+            guard let browser, browser.lastColumn >= 0 else { return }
+            let selected = browser.selectedColumn
+            for col in 0...browser.lastColumn {
+                guard let matrix = browser.matrix(inColumn: col) else { continue }
+                let isCurrent = col == selected
+                for case let cell as ColumnBrowserCell in (matrix.cells) {
+                    cell.isCurrentColumn = isCurrent
+                }
+                matrix.needsDisplay = true
+            }
         }
 
         @objc func doubleClick(_ sender: Any?) {
@@ -97,7 +226,7 @@ struct ColumnView: NSViewRepresentable {
             let kids = children(of: parent)
             guard row < kids.count else { return }
             let target = kids[row]
-            let isDir = (try? target.resourceValues(forKeys: Set([URLResourceKey.isDirectoryKey])))?.isDirectory ?? false
+            let isDir = (try? target.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
             if isDir {
                 tab.navigate(to: target)
             } else {
@@ -109,56 +238,342 @@ struct ColumnView: NSViewRepresentable {
             guard let browser else { return }
             let col = browser.selectedColumn
             guard col >= 0,
-                  let rows = browser.selectedRowIndexes(inColumn: col) else {
+                  let rows = browser.selectedRowIndexes(inColumn: col), !rows.isEmpty else {
                 tab.selection.removeAll()
+                setPreviewVisible(false)
+                previewView?.previewItem = nil
                 return
             }
             let parent = urlForColumn(col, in: browser)
             let kids = children(of: parent)
-            let urls = rows.compactMap { idx -> URL? in
-                guard idx < kids.count else { return nil }
-                return kids[idx]
+            let urls: [URL] = rows.compactMap { idx in
+                idx < kids.count ? kids[idx] : nil
             }
-            // map URLs to FSNode IDs in tab.nodes (when matches)
-            let ids = Set(urls.compactMap { url in tab.nodes.first { $0.url == url }?.id })
-            if !ids.isEmpty {
+
+            // tab.selection only meaningful for column 0 (those URLs live in tab.nodes).
+            // Deeper columns expose selection to the column view itself for preview/DnD,
+            // but toolbar actions (Copy/Move/Trash) operate on tab.selection — keep it empty.
+            if col == 0 {
+                let ids = Set(urls.compactMap { url in tab.nodes.first { $0.url == url }?.id })
                 tab.selection = ids
+            } else {
+                tab.selection.removeAll()
+            }
+
+            if urls.count == 1,
+               let url = urls.first,
+               let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory,
+               !isDir {
+                previewView?.previewItem = url as NSURL
+                setPreviewVisible(true)
+            } else {
+                previewView?.previewItem = nil
+                setPreviewVisible(false)
             }
         }
 
-        // MARK: helpers
+        // MARK: - Context menu
+
+        func menuNeedsUpdate(_ menu: NSMenu) {
+            guard let browser, let event = NSApp.currentEvent else {
+                menu.removeAllItems()
+                return
+            }
+
+            var hitCol = -1
+            var hitRow = -1
+            if browser.lastColumn >= 0 {
+                for col in 0...browser.lastColumn {
+                    guard let matrix = browser.matrix(inColumn: col) else { continue }
+                    let pt = matrix.convert(event.locationInWindow, from: nil)
+                    if matrix.bounds.contains(pt) {
+                        hitCol = col
+                        var r = 0, c = 0
+                        if matrix.getRow(&r, column: &c, for: pt) {
+                            hitRow = r
+                        }
+                        break
+                    }
+                }
+            }
+
+            guard hitCol >= 0 else {
+                menu.removeAllItems()
+                return
+            }
+
+            let parent = urlForColumn(hitCol, in: browser)
+            let kids = children(of: parent)
+
+            if hitRow >= 0 && hitRow < kids.count {
+                let target = kids[hitRow]
+                let selected = browser.selectedRowIndexes(inColumn: hitCol) ?? IndexSet()
+                let operating: [URL] = selected.contains(hitRow)
+                    ? selected.compactMap { idx in idx < kids.count ? kids[idx] : nil }
+                    : [target]
+                FileContextMenu.populate(
+                    menu,
+                    urls: operating,
+                    directory: parent,
+                    tab: tab,
+                    state: state,
+                    onQuickLook: { urls in
+                        QuickLookCoordinator.shared.show(urls, startAt: urls.first)
+                    }
+                )
+            } else {
+                FileContextMenu.populateBackground(menu, directory: parent, tab: tab, state: state)
+            }
+        }
+
+        // MARK: - Preview pane
+
+        func setPreviewVisible(_ visible: Bool, animate: Bool = true) {
+            guard let split = splitView, let holder = previewHolder else { return }
+            if holder.isHidden == !visible { return }
+            holder.isHidden = !visible
+
+            if visible {
+                let width = split.frame.width
+                let target = max(width - 320, 240)
+                let apply = { split.setPosition(target, ofDividerAt: 0) }
+                if animate {
+                    NSAnimationContext.runAnimationGroup { ctx in
+                        ctx.duration = 0.18
+                        ctx.allowsImplicitAnimation = true
+                        apply()
+                    }
+                } else {
+                    apply()
+                }
+            }
+            split.adjustSubviews()
+        }
+
+        // MARK: - Drag (outgoing)
+
+        func browser(_ browser: NSBrowser, canDragRowsWith rowIndexes: IndexSet, inColumn column: Int, with event: NSEvent) -> Bool {
+            !rowIndexes.isEmpty
+        }
+
+        func browser(_ browser: NSBrowser, writeRowsWith rowIndexes: IndexSet, inColumn column: Int, to pasteboard: NSPasteboard) -> Bool {
+            let parent = urlForColumn(column, in: browser)
+            let kids = children(of: parent)
+            let urls: [NSURL] = rowIndexes.compactMap { idx in
+                idx < kids.count ? (kids[idx] as NSURL) : nil
+            }
+            guard !urls.isEmpty else { return false }
+            pasteboard.clearContents()
+            return pasteboard.writeObjects(urls)
+        }
+
+        // MARK: - Drop (incoming, onto folder rows)
+
+        func browser(
+            _ browser: NSBrowser,
+            validateDrop info: NSDraggingInfo,
+            proposedRow row: UnsafeMutablePointer<Int>,
+            column: UnsafeMutablePointer<Int>,
+            dropOperation: UnsafeMutablePointer<NSBrowser.DropOperation>
+        ) -> NSDragOperation {
+            let col = column.pointee
+            guard col >= 0 else { return [] }
+            let r = row.pointee
+            let parent = urlForColumn(col, in: browser)
+            let kids = children(of: parent)
+            guard r >= 0, r < kids.count else { return [] }
+            let candidate = kids[r]
+            let isDir = (try? candidate.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            guard isDir else { return [] }
+            dropOperation.pointee = .on
+            return .copy
+        }
+
+        func browser(
+            _ browser: NSBrowser,
+            acceptDrop info: NSDraggingInfo,
+            atRow row: Int,
+            column: Int,
+            dropOperation: NSBrowser.DropOperation
+        ) -> Bool {
+            guard column >= 0, row >= 0 else { return false }
+            let parent = urlForColumn(column, in: browser)
+            let kids = children(of: parent)
+            guard row < kids.count else { return false }
+            let dest = kids[row]
+            guard let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+                  !urls.isEmpty else { return false }
+            // Don't drop a file onto its own parent (no-op).
+            let filtered = urls.filter { $0.deletingLastPathComponent().standardizedFileURL != dest.standardizedFileURL }
+            guard !filtered.isEmpty else { return false }
+            CopyMoveCoordinator.copy(filtered, toDirectory: dest, from: tab, via: state)
+            return true
+        }
+
+        // MARK: - Helpers
 
         private func urlForColumn(_ column: Int, in browser: NSBrowser) -> URL {
             if column == 0 { return rootURL }
-            if let cached = pathByColumn[column] { return cached }
-            // derive from parent's selection
             let parentCol = column - 1
             let parentURL = urlForColumn(parentCol, in: browser)
-            let row = browser.selectedRow(inColumn: parentCol)
-            guard row >= 0 else { return parentURL }
+            let r = browser.selectedRow(inColumn: parentCol)
+            guard r >= 0 else { return parentURL }
             let kids = children(of: parentURL)
-            guard row < kids.count else { return parentURL }
-            let target = kids[row]
-            pathByColumn[column] = target
-            return target
+            guard r < kids.count else { return parentURL }
+            return kids[r]
         }
 
         private func children(of url: URL) -> [URL] {
-            if let c = cache[url.path] { return c }
+            if let cached = cache[url] { return cached }
+
+            // Column 0 mirrors tab.nodes — already filtered (showHidden) and sorted by TabState.
+            if url.standardizedFileURL == rootURL.standardizedFileURL {
+                let urls = tab.nodes.map(\.url)
+                cache[url] = urls
+                return urls
+            }
+
             let fm = FileManager.default
+            let options: FileManager.DirectoryEnumerationOptions = tab.showHidden ? [] : [.skipsHiddenFiles]
             let contents = (try? fm.contentsOfDirectory(
                 at: url,
-                includingPropertiesForKeys: [URLResourceKey.isDirectoryKey],
-                options: [.skipsHiddenFiles]
+                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey],
+                options: options
             )) ?? []
-            let sorted = contents.sorted { a, b in
-                let aDir = (try? a.resourceValues(forKeys: Set([URLResourceKey.isDirectoryKey])))?.isDirectory ?? false
-                let bDir = (try? b.resourceValues(forKeys: Set([URLResourceKey.isDirectoryKey])))?.isDirectory ?? false
-                if aDir != bDir { return aDir }
-                return a.lastPathComponent.localizedStandardCompare(b.lastPathComponent) == .orderedAscending
+
+            let nodes: [FSNode] = contents.map { u in
+                let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
+                return FSNode(
+                    url: u,
+                    isDirectory: v?.isDirectory ?? false,
+                    size: v?.fileSize.map(Int64.init),
+                    modified: v?.contentModificationDate,
+                    tags: []
+                )
             }
-            cache[url.path] = sorted
-            return sorted
+            let sorted = TabState.sorted(nodes, by: tab.sortKey, ascending: tab.sortAscending)
+            let urls = sorted.map(\.url)
+            cache[url] = urls
+            return urls
         }
+
+        private func ensureGitStatusLoaded(forColumn column: Int, parent: URL, browser: NSBrowser) {
+            if column == 0 { return }       // column 0 uses tab.nodes directly
+            let key = parent.standardizedFileURL
+            if gitStatusByParent[key] != nil { return }
+            gitStatusByParent[key] = [:]    // mark in-progress so we don't re-fire
+            Task { [weak self, weak browser] in
+                let map = await GitStatusService.shared.statuses(in: parent)
+                await MainActor.run {
+                    guard let self, let browser else { return }
+                    guard column <= browser.lastColumn else { return }
+                    let current = self.urlForColumn(column, in: browser)
+                    guard current.standardizedFileURL == key else { return }
+                    self.gitStatusByParent[key] = map
+                    browser.reloadColumn(column)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Custom NSBrowserCell that renders tag dots + git letter
+
+private final class ColumnBrowserCell: NSBrowserCell {
+    var tagColors: [NSColor] = []
+    var gitState: GitFileState?
+    var isCurrentColumn: Bool = false
+
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+        if isHighlighted {
+            let color: NSColor = isCurrentColumn
+                ? .selectedContentBackgroundColor
+                : .unemphasizedSelectedContentBackgroundColor
+            color.setFill()
+            cellFrame.fill()
+        }
+        drawInterior(withFrame: cellFrame, in: controlView)
+    }
+
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        let leftPad: CGFloat = 4
+        let iconSize: CGFloat = 16
+        let iconTextGap: CGFloat = 6
+        let centerY = cellFrame.minY + cellFrame.height / 2
+        let selected = isHighlighted
+        let onActive = selected && isCurrentColumn
+
+        // Right edge — disclosure chevron for non-leaf, then decorations.
+        var rightX = cellFrame.maxX
+
+        if !isLeaf {
+            rightX -= 6
+            let chevSize: CGFloat = 10
+            if let chev = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil) {
+                let cfg = NSImage.SymbolConfiguration(pointSize: chevSize, weight: .semibold)
+                let img = chev.withSymbolConfiguration(cfg) ?? chev
+                let tint: NSColor = onActive ? .alternateSelectedControlTextColor : .secondaryLabelColor
+                let tinted = img.copy() as? NSImage ?? img
+                tinted.isTemplate = true
+                let rect = NSRect(x: rightX - chevSize, y: centerY - chevSize / 2, width: chevSize, height: chevSize)
+                tint.set()
+                tinted.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+            }
+            rightX -= chevSize + 8
+        } else {
+            rightX -= 8
+        }
+
+        if let gitState {
+            let color: NSColor = onActive ? .alternateSelectedControlTextColor : NSColor(gitState.color)
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .bold),
+                .foregroundColor: color
+            ]
+            let text = NSAttributedString(string: gitState.letter, attributes: attrs)
+            let size = text.size()
+            rightX -= size.width
+            text.draw(at: NSPoint(x: rightX, y: centerY - size.height / 2))
+            rightX -= 6
+        }
+
+        if !tagColors.isEmpty {
+            let diameter: CGFloat = 6
+            for color in tagColors.prefix(4).reversed() {
+                rightX -= diameter
+                let rect = NSRect(x: rightX, y: centerY - diameter / 2, width: diameter, height: diameter)
+                color.setFill()
+                NSBezierPath(ovalIn: rect).fill()
+                rightX -= 1
+            }
+            rightX -= 4
+        }
+
+        // Icon.
+        var leftX = cellFrame.minX + leftPad
+        if let image = self.image {
+            let rect = NSRect(x: leftX, y: centerY - iconSize / 2, width: iconSize, height: iconSize)
+            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+            leftX += iconSize + iconTextGap
+        }
+
+        // Title (vertically centered, middle-truncated to fit).
+        let para = NSMutableParagraphStyle()
+        para.lineBreakMode = .byTruncatingMiddle
+        let titleAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: onActive ? NSColor.alternateSelectedControlTextColor : NSColor.controlTextColor,
+            .paragraphStyle: para
+        ]
+        let titleAttr = NSAttributedString(string: self.title, attributes: titleAttrs)
+        let titleSize = titleAttr.size()
+        let titleWidth = max(0, rightX - leftX)
+        let titleRect = NSRect(
+            x: leftX,
+            y: centerY - titleSize.height / 2,
+            width: titleWidth,
+            height: titleSize.height
+        )
+        titleAttr.draw(in: titleRect)
     }
 }

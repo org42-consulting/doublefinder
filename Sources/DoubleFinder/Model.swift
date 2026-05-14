@@ -76,6 +76,33 @@ enum SortKey: String, CaseIterable {
     case name, modified, size, kind
 }
 
+enum SearchScope: String, CaseIterable, Identifiable {
+    case folder, home, computer
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .folder:   return "This Folder"
+        case .home:     return "Home"
+        case .computer: return "This Mac"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .folder:   return "folder"
+        case .home:     return "house"
+        case .computer: return "macbook"
+        }
+    }
+}
+
+enum SearchKind: Hashable {
+    case byName
+    case byTag
+}
+
 // MARK: - Conflict prompt
 
 enum ConflictResolution { case keepBoth, replace, skip }
@@ -132,8 +159,6 @@ struct SidebarFavourite: Identifiable, Hashable, Codable {
     }
 
     static let defaults: [SidebarFavourite] = [
-        .init(title: "AirDrop",      systemImage: "dot.radiowaves.left.and.right", path: "~"),
-        .init(title: "Recents",      systemImage: "clock",                          path: "~"),
         .init(title: "Applications", systemImage: "square.stack.3d.up",             path: "/Applications"),
         .init(title: "Desktop",      systemImage: "menubar.dock.rectangle",         path: "~/Desktop"),
         .init(title: "Documents",    systemImage: "doc",                            path: "~/Documents"),
@@ -175,13 +200,24 @@ final class TabState: ObservableObject, Identifiable {
     @Published var searchText: String = ""
     @Published var isSearching: Bool = false
     @Published var renameRequest: FSNode.ID?
-    @Published var showHidden: Bool = false { didSet { Task { await refresh() } } }
+    @Published var showHidden: Bool = false {
+        didSet {
+            if isSearching { runSearch(searchText) } else { Task { await refresh() } }
+        }
+    }
+    @Published var searchScope: SearchScope = .folder {
+        didSet {
+            if isSearching && searchScope != oldValue { runSearch(searchText) }
+        }
+    }
+    @Published var searchKind: SearchKind = .byName
 
     private var history: [URL] = []
     private var future: [URL] = []
     private let watcher = DirectoryWatcher()
     private let searchEngine = SearchEngine()
     private var searchTask: Task<Void, Never>?
+    private var debounceTask: Task<Void, Never>?
 
     init(url: URL) {
         self.url = url
@@ -223,17 +259,43 @@ final class TabState: ObservableObject, Identifiable {
     }
 
     func runSearch(_ text: String) {
+        debounceTask?.cancel()
         searchTask?.cancel()
         searchEngine.cancel()
+
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty {
             isSearching = false
+            searchKind = .byName
             Task { await refresh() }
             return
         }
         isSearching = true
-        let scope = url
-        let stream = searchEngine.stream(for: trimmed, scope: scope)
+
+        let scopes = currentScopeValues()
+        let kind = searchKind
+        debounceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            self?.startSearchStream(trimmed, scopes: scopes, kind: kind)
+        }
+    }
+
+    /// Pivot the active tab to a tag-filtered Spotlight search across Home.
+    func filterByTag(name: String) {
+        debounceTask?.cancel()
+        searchTask?.cancel()
+        searchEngine.cancel()
+        searchKind = .byTag
+        searchScope = .home
+        searchText = name
+        isSearching = true
+        let scopes = currentScopeValues()
+        startSearchStream(name, scopes: scopes, kind: .byTag)
+    }
+
+    private func startSearchStream(_ trimmed: String, scopes: [Any], kind: SearchKind) {
+        let stream = searchEngine.stream(for: trimmed, scopes: scopes, kind: kind)
         searchTask = Task { [weak self] in
             for await urls in stream {
                 guard let self else { return }
@@ -242,9 +304,19 @@ final class TabState: ObservableObject, Identifiable {
         }
     }
 
+    private func currentScopeValues() -> [Any] {
+        switch searchScope {
+        case .folder:   return [url]
+        case .home:     return [NSMetadataQueryUserHomeScope]
+        case .computer: return [NSMetadataQueryLocalComputerScope]
+        }
+    }
+
     private func applySearchResults(_ urls: [URL]) async {
         let fm = FileManager.default
+        let hidden = showHidden
         let mapped: [FSNode] = urls.compactMap { u in
+            if !hidden && u.lastPathComponent.hasPrefix(".") { return nil }
             let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
             guard fm.fileExists(atPath: u.path) else { return nil }
             return FSNode(
@@ -255,8 +327,9 @@ final class TabState: ObservableObject, Identifiable {
                 tags: TagStore.tags(for: u)
             )
         }
-        self.nodes = mapped.sorted { a, b in
-            a.name.localizedStandardCompare(b.name) == .orderedAscending
+        self.nodes = sorted(mapped)
+        if searchScope == .folder {
+            await decorateWithGitStatus()
         }
     }
 
@@ -352,6 +425,10 @@ final class TabState: ObservableObject, Identifiable {
     }
 
     private func sorted(_ list: [FSNode]) -> [FSNode] {
+        TabState.sorted(list, by: sortKey, ascending: sortAscending)
+    }
+
+    static func sorted(_ list: [FSNode], by sortKey: SortKey, ascending: Bool) -> [FSNode] {
         list.sorted { a, b in
             if a.isDirectory != b.isDirectory { return a.isDirectory }
             let asc: Bool
@@ -365,7 +442,7 @@ final class TabState: ObservableObject, Identifiable {
             case .kind:
                 asc = a.ext.localizedStandardCompare(b.ext) == .orderedAscending
             }
-            return sortAscending ? asc : !asc
+            return ascending ? asc : !asc
         }
     }
 }
@@ -450,7 +527,14 @@ final class WindowState: ObservableObject {
             self.right = PaneState(from: snap.right)
             self.focus = snap.focus == "right" ? .right : .left
             if let favs = snap.favourites, !favs.isEmpty {
-                self.favourites = favs
+                // Strip legacy placeholders (AirDrop / Recents pointing at ~) — they were
+                // dead links and have been removed from the defaults.
+                let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+                self.favourites = favs.filter { fav in
+                    let isHome = fav.url.standardizedFileURL == home
+                    let legacy = isHome && (fav.title == "AirDrop" || fav.title == "Recents")
+                    return !legacy
+                }
             }
         } else {
             let startURL = URL(fileURLWithPath: (startingPath as NSString).expandingTildeInPath)

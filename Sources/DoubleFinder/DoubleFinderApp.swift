@@ -14,6 +14,19 @@ struct DoubleFinderApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             ToolbarCommands()
+            CommandMenu("Go") {
+                Button("Go to Folder…") {
+                    NotificationCenter.default.post(name: .goToFolderRequested, object: nil)
+                }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Toggle Hidden Files") {
+                    NotificationCenter.default.post(name: .toggleHiddenFilesRequested, object: nil)
+                }
+                .keyboardShortcut(".", modifiers: [.command, .shift])
+            }
         }
     }
 }

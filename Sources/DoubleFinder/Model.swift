@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AppKit
 
 // MARK: - FSNode
 
@@ -46,6 +47,17 @@ struct RenamePromptModel: Identifiable {
     let onCommit: (String) -> Void
 }
 
+struct GoToFolderPrompt: Identifiable {
+    let id = UUID()
+    let initialPath: String
+    let onCommit: (URL) -> Void
+}
+
+extension Notification.Name {
+    static let toggleHiddenFilesRequested = Notification.Name("doublefinder.toggleHiddenFiles")
+    static let goToFolderRequested = Notification.Name("doublefinder.goToFolder")
+}
+
 // MARK: - TabState
 
 @MainActor
@@ -61,6 +73,7 @@ final class TabState: ObservableObject, Identifiable {
     @Published var searchText: String = ""
     @Published var isSearching: Bool = false
     @Published var renameRequest: FSNode.ID?
+    @Published var showHidden: Bool = false { didSet { Task { await refresh() } } }
 
     private var history: [URL] = []
     private var future: [URL] = []
@@ -76,6 +89,28 @@ final class TabState: ObservableObject, Identifiable {
         }
         restartWatching()
         Task { await self.refresh() }
+    }
+
+    convenience init(from persisted: StatePersistence.Snapshot.Pane.Tab) {
+        let url = URL(fileURLWithPath: persisted.path)
+        let fallback = FileManager.default.fileExists(atPath: url.path)
+            ? url
+            : FileManager.default.homeDirectoryForCurrentUser
+        self.init(url: fallback)
+        self.viewMode = ViewMode(rawValue: persisted.viewMode) ?? .list
+        self.sortKey = SortKey(rawValue: persisted.sortKey) ?? .name
+        self.sortAscending = persisted.sortAscending
+        self.showHidden = persisted.showHidden
+    }
+
+    func snapshot() -> StatePersistence.Snapshot.Pane.Tab {
+        .init(
+            path: url.path,
+            viewMode: viewMode.rawValue,
+            sortKey: sortKey.rawValue,
+            sortAscending: sortAscending,
+            showHidden: showHidden
+        )
     }
 
     private func restartWatching() {
@@ -160,13 +195,14 @@ final class TabState: ObservableObject, Identifiable {
 
     func refresh() async {
         let target = url
+        let options: FileManager.DirectoryEnumerationOptions = showHidden ? [] : [.skipsHiddenFiles]
         let result: Result<[FSNode], Error> = await Task.detached(priority: .userInitiated) {
             let fm = FileManager.default
             do {
                 let contents = try fm.contentsOfDirectory(
                     at: target,
                     includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey],
-                    options: [.skipsHiddenFiles]
+                    options: options
                 )
                 let mapped: [FSNode] = contents.map { u in
                     let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
@@ -227,6 +263,23 @@ final class PaneState: ObservableObject, Identifiable {
         self.activeTabID = t.id
     }
 
+    convenience init(from persisted: StatePersistence.Snapshot.Pane) {
+        let tabs = persisted.tabs.map { TabState(from: $0) }
+        let safeTabs = tabs.isEmpty ? [TabState(url: FileManager.default.homeDirectoryForCurrentUser)] : tabs
+        let idx = max(0, min(persisted.activeIndex, safeTabs.count - 1))
+        self.init(url: safeTabs[idx].url)
+        self.tabs = safeTabs
+        self.activeTabID = safeTabs[idx].id
+    }
+
+    func snapshot() -> StatePersistence.Snapshot.Pane {
+        let activeIndex = tabs.firstIndex(where: { $0.id == activeTabID }) ?? 0
+        return .init(
+            tabs: tabs.map { $0.snapshot() },
+            activeIndex: activeIndex
+        )
+    }
+
     var activeTab: TabState {
         tabs.first { $0.id == activeTabID } ?? tabs[0]
     }
@@ -257,13 +310,70 @@ final class WindowState: ObservableObject {
     @Published var focus: PaneSide = .left
     @Published var conflict: ConflictPrompt?
     @Published var renamePrompt: RenamePromptModel?
+    @Published var goToPrompt: GoToFolderPrompt?
+
+    private var observerTokens: [NSObjectProtocol] = []
 
     init() {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let docs = home.appendingPathComponent("Documents")
-        let downloads = home.appendingPathComponent("Downloads")
-        self.left = PaneState(url: docs)
-        self.right = PaneState(url: downloads)
+        if let snap = StatePersistence.load() {
+            self.left = PaneState(from: snap.left)
+            self.right = PaneState(from: snap.right)
+            self.focus = snap.focus == "right" ? .right : .left
+        } else {
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            let docs = home.appendingPathComponent("Documents")
+            let downloads = home.appendingPathComponent("Downloads")
+            self.left = PaneState(url: docs)
+            self.right = PaneState(url: downloads)
+        }
+        registerCommandObservers()
+        registerPersistenceHook()
+    }
+
+    func snapshot() -> StatePersistence.Snapshot {
+        .init(
+            left: left.snapshot(),
+            right: right.snapshot(),
+            focus: focus == .right ? "right" : "left"
+        )
+    }
+
+    private func registerPersistenceHook() {
+        observerTokens.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                StatePersistence.save(self.snapshot())
+            }
+        })
+    }
+
+    deinit {
+        for token in observerTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
+
+    private func registerCommandObservers() {
+        let nc = NotificationCenter.default
+        observerTokens.append(nc.addObserver(forName: .toggleHiddenFilesRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.focusedPane.activeTab.showHidden.toggle()
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .goToFolderRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                self.goToPrompt = GoToFolderPrompt(initialPath: tab.url.path) { url in
+                    self.focusedPane.activeTab.navigate(to: url)
+                }
+            }
+        })
     }
 
     var focusedPane: PaneState { focus == .left ? left : right }

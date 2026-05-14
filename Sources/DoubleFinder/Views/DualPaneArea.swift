@@ -18,5 +18,8 @@ struct DualPaneArea: View {
         .sheet(item: $state.renamePrompt) { prompt in
             RenameSheet(prompt: prompt)
         }
+        .sheet(item: $state.goToPrompt) { prompt in
+            GoToFolderSheet(prompt: prompt)
+        }
     }
 }

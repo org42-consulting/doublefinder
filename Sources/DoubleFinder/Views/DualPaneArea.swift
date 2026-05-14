@@ -5,31 +5,30 @@ struct DualPaneArea: View {
     @State private var favouriteDropTargeted: Bool = false
 
     var body: some View {
-        ZStack(alignment: .top) {
-            HSplitView {
-                PaneView(side: .left)
+        HSplitView {
+            PaneView(side: .left)
+                .environmentObject(state)
+                .frame(minWidth: 380)
+            PaneView(side: .right)
+                .environmentObject(state)
+                .frame(minWidth: 380)
+            if state.showInspector {
+                InspectorView()
                     .environmentObject(state)
-                    .frame(minWidth: 380)
-                PaneView(side: .right)
-                    .environmentObject(state)
-                    .frame(minWidth: 380)
-                if state.showInspector {
-                    InspectorView()
-                        .environmentObject(state)
-                        .frame(minWidth: 220, idealWidth: 260, maxWidth: 360)
-                }
+                    .frame(minWidth: 220, idealWidth: 260, maxWidth: 360)
             }
-            .dropDestination(for: SidebarFavourite.self) { favs, _ in
-                for fav in favs {
-                    state.favourites.removeAll { $0.id == fav.id }
-                }
-                return true
-            } isTargeted: { targeted in
-                withAnimation(.easeInOut(duration: 0.12)) {
-                    favouriteDropTargeted = targeted
-                }
+        }
+        .dropDestination(for: SidebarFavourite.self) { favs, _ in
+            for fav in favs {
+                state.favourites.removeAll { $0.id == fav.id }
             }
-
+            return true
+        } isTargeted: { targeted in
+            withAnimation(.easeInOut(duration: 0.12)) {
+                favouriteDropTargeted = targeted
+            }
+        }
+        .overlay(alignment: .top) {
             if favouriteDropTargeted {
                 Label("Drop here to remove from sidebar", systemImage: "trash")
                     .font(.system(size: 12, weight: .semibold))
@@ -40,6 +39,28 @@ struct DualPaneArea: View {
                     .padding(.top, 14)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                     .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if !state.showInspector {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        state.showInspector = true
+                    }
+                } label: {
+                    Label("Show Inspector", systemImage: "sidebar.right")
+                        .labelStyle(.titleAndIcon)
+                        .font(.system(size: 12, weight: .medium))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                }
+                .buttonStyle(.plain)
+                .glassEffect(in: Capsule())
+                .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                .padding(.top, 10)
+                .padding(.trailing, 12)
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                .help("Open the inspector (⌥⌘I)")
             }
         }
         .sheet(item: $state.conflict) { prompt in

@@ -14,6 +14,19 @@ struct DoubleFinderApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             ToolbarCommands()
+            CommandGroup(after: .pasteboard) {
+                Button("Get Info") {
+                    NotificationCenter.default.post(name: .getInfoRequested, object: nil)
+                }
+                .keyboardShortcut("i", modifiers: [.command])
+
+                Divider()
+
+                Button("Empty Trash…") {
+                    NotificationCenter.default.post(name: .emptyTrashRequested, object: nil)
+                }
+                .keyboardShortcut(.delete, modifiers: [.command, .shift])
+            }
             CommandMenu("Go") {
                 Button("Go to Folder…") {
                     NotificationCenter.default.post(name: .goToFolderRequested, object: nil)

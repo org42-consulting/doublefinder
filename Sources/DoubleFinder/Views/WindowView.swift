@@ -97,9 +97,9 @@ struct WindowView: View {
             } label: {
                 Image(systemName: "character.cursor.ibeam")
             }
-            .disabled(!singleSelection)
+            .disabled(!hasSelection)
             .keyboardShortcut(.return, modifiers: [.command])
-            .help("Rename (⌘⏎)")
+            .help(singleSelection ? "Rename (⌘⏎)" : "Batch Rename \(tab.selection.count) items (⌘⏎)")
         }
 
         ToolbarItem(id: "newfolder", placement: .navigation) {
@@ -128,19 +128,17 @@ struct WindowView: View {
     private var trailingGroup: some CustomizableToolbarContent {
         let tab = state.focusedPane.activeTab
 
-        // Centre: view mode picker
+        // Centre: view mode picker (explicit buttons — SwiftUI's segmented Picker
+        // doesn't reliably fire its binding setter inside a customizable toolbar)
         ToolbarItem(id: "view-mode", placement: .principal) {
-            Picker("", selection: Binding(
-                get: { tab.viewMode },
-                set: { tab.viewMode = $0 }
-            )) {
-                Image(systemName: "square.grid.2x2").tag(ViewMode.icon)
-                Image(systemName: "list.bullet").tag(ViewMode.list)
-                Image(systemName: "rectangle.split.3x1").tag(ViewMode.column)
-                Image(systemName: "photo.on.rectangle").tag(ViewMode.gallery)
+            HStack(spacing: 1) {
+                viewModeButton(.icon,    systemImage: "square.grid.2x2",       help: "Icon view")
+                viewModeButton(.list,    systemImage: "list.bullet",           help: "List view")
+                viewModeButton(.column,  systemImage: "rectangle.split.3x1",   help: "Column view")
+                viewModeButton(.gallery, systemImage: "photo.on.rectangle",    help: "Gallery view")
             }
-            .pickerStyle(.segmented)
-            .help("View mode")
+            .padding(2)
+            .background(.regularMaterial, in: Capsule())
         }
 
         // Trailing
@@ -160,6 +158,27 @@ struct WindowView: View {
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 200)
         }
+    }
+
+    // MARK: - View-mode button
+
+    private func viewModeButton(_ mode: ViewMode, systemImage: String, help: String) -> some View {
+        let tab = state.focusedPane.activeTab
+        let isActive = tab.viewMode == mode
+        return Button {
+            tab.viewMode = mode
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 13))
+                .frame(width: 28, height: 22)
+                .background(
+                    isActive ? Color.accentColor.opacity(0.22) : Color.clear,
+                    in: Capsule()
+                )
+                .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     // MARK: - Actions
@@ -186,8 +205,17 @@ struct WindowView: View {
 
     private func renameFocused() {
         let tab = state.focusedPane.activeTab
-        guard tab.selection.count == 1,
-              let id = tab.selection.first,
+        guard !tab.selection.isEmpty else { return }
+
+        if tab.selection.count > 1 {
+            let urls = selectedURLs(in: tab)
+            state.batchRenamePrompt = BatchRenamePrompt(urls: urls) { pairs in
+                applyBatchRename(pairs, in: tab)
+            }
+            return
+        }
+
+        guard let id = tab.selection.first,
               let node = tab.nodes.first(where: { $0.id == id }) else { return }
 
         if tab.viewMode == .list {
@@ -205,6 +233,25 @@ struct WindowView: View {
                 }
             }
         }
+    }
+
+    private func applyBatchRename(_ pairs: [(URL, String)], in tab: TabState) {
+        let actionable = pairs.filter { $0.1 != $0.0.lastPathComponent && !$0.1.isEmpty }
+        TransferQueue.shared.enqueue(
+            kind: "Rename",
+            summary: "Rename \(actionable.count) item\(actionable.count == 1 ? "" : "s")",
+            unitCount: Int64(actionable.count),
+            work: { progress in
+                let fm = FileManager.default
+                for (src, newName) in actionable {
+                    if progress.isCancelled { return }
+                    let dst = src.deletingLastPathComponent().appendingPathComponent(newName)
+                    try? fm.moveItem(at: src, to: dst)
+                    await MainActor.run { progress.completedUnitCount += 1 }
+                }
+            },
+            completion: { Task { @MainActor in await tab.refresh() } }
+        )
     }
 
     private func newFolder() {

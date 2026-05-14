@@ -254,6 +254,10 @@ struct PathBarView: View {
     let url: URL
     let onNavigate: (URL) -> Void
 
+    @State private var editing: Bool = false
+    @State private var draft: String = ""
+    @FocusState private var fieldFocused: Bool
+
     private var crumbs: [(name: String, url: URL)] {
         var parts: [(String, URL)] = []
         var current = url.standardizedFileURL
@@ -267,6 +271,35 @@ struct PathBarView: View {
     }
 
     var body: some View {
+        HStack(spacing: 6) {
+            if editing {
+                TextField("/path/to/folder (use ~ for home)", text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+                    .focused($fieldFocused)
+                    .onSubmit { commit() }
+                    .onExitCommand { cancel() }
+            } else {
+                crumbsView
+            }
+            Button {
+                if editing { cancel() } else { startEditing() }
+            } label: {
+                Image(systemName: editing ? "xmark.circle.fill" : "pencil")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(editing ? "Cancel (Esc)" : "Edit path")
+        }
+        .padding(.horizontal, 12)
+        .onChange(of: url) { _, _ in
+            // changes to the underlying path bail out of edit mode
+            if editing { editing = false }
+        }
+    }
+
+    private var crumbsView: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
                 ForEach(Array(crumbs.enumerated()), id: \.offset) { idx, item in
@@ -289,7 +322,28 @@ struct PathBarView: View {
                 }
                 Spacer()
             }
-            .padding(.horizontal, 12)
+        }
+    }
+
+    private func startEditing() {
+        draft = (url.path as NSString).abbreviatingWithTildeInPath
+        editing = true
+        DispatchQueue.main.async { fieldFocused = true }
+    }
+
+    private func cancel() {
+        editing = false
+    }
+
+    private func commit() {
+        let expanded = (draft as NSString).expandingTildeInPath
+        let newURL = URL(fileURLWithPath: expanded)
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: newURL.path, isDirectory: &isDir), isDir.boolValue {
+            editing = false
+            onNavigate(newURL)
+        } else {
+            NSSound.beep()
         }
     }
 }

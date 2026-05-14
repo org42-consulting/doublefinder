@@ -30,9 +30,12 @@ struct SidebarView: View {
         let icloud: [SidebarItem] = [
             .init(title: "iCloud Drive", systemImage: "cloud", url: home),
         ]
+        let trashURL = (try? FileManager.default.url(for: .trashDirectory, in: .userDomainMask, appropriateFor: nil, create: false))
+            ?? home.appendingPathComponent(".Trash")
         let locations: [SidebarItem] = [
             .init(title: "Macintosh HD", systemImage: "internaldrive", url: URL(fileURLWithPath: "/")),
             .init(title: "Network", systemImage: "network", url: URL(fileURLWithPath: "/Volumes")),
+            .init(title: "Trash", systemImage: "trash", url: trashURL),
         ]
         let tags: [SidebarItem] = [
             .init(title: "Red", systemImage: "circle.fill", url: home),

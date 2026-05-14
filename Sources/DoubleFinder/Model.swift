@@ -53,9 +53,23 @@ struct GoToFolderPrompt: Identifiable {
     let onCommit: (URL) -> Void
 }
 
+struct GetInfoPrompt: Identifiable {
+    let id = UUID()
+    let url: URL
+    let onTagsChanged: () -> Void
+}
+
+struct BatchRenamePrompt: Identifiable {
+    let id = UUID()
+    let urls: [URL]
+    let onCommit: ([(URL, String)]) -> Void
+}
+
 extension Notification.Name {
     static let toggleHiddenFilesRequested = Notification.Name("doublefinder.toggleHiddenFiles")
     static let goToFolderRequested = Notification.Name("doublefinder.goToFolder")
+    static let emptyTrashRequested = Notification.Name("doublefinder.emptyTrash")
+    static let getInfoRequested = Notification.Name("doublefinder.getInfo")
 }
 
 // MARK: - TabState
@@ -311,6 +325,8 @@ final class WindowState: ObservableObject {
     @Published var conflict: ConflictPrompt?
     @Published var renamePrompt: RenamePromptModel?
     @Published var goToPrompt: GoToFolderPrompt?
+    @Published var getInfoPrompt: GetInfoPrompt?
+    @Published var batchRenamePrompt: BatchRenamePrompt?
 
     private var observerTokens: [NSObjectProtocol] = []
 
@@ -374,6 +390,53 @@ final class WindowState: ObservableObject {
                 }
             }
         })
+        observerTokens.append(nc.addObserver(forName: .emptyTrashRequested, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { WindowState.emptyTrashWithConfirmation() }
+        })
+        observerTokens.append(nc.addObserver(forName: .getInfoRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                guard let id = tab.selection.first,
+                      let node = tab.nodes.first(where: { $0.id == id }) else {
+                    NSSound.beep()
+                    return
+                }
+                self.getInfoPrompt = GetInfoPrompt(url: node.url) { [weak tab] in
+                    Task { @MainActor in await tab?.refresh() }
+                }
+            }
+        })
+    }
+
+    static func emptyTrashWithConfirmation() {
+        let trashURL: URL
+        do {
+            trashURL = try FileManager.default.url(for: .trashDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+        } catch {
+            NSSound.beep()
+            return
+        }
+        let items = (try? FileManager.default.contentsOfDirectory(at: trashURL, includingPropertiesForKeys: nil)) ?? []
+        guard !items.isEmpty else {
+            let alert = NSAlert()
+            alert.messageText = "Trash is already empty"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Are you sure you want to permanently erase the items in the Trash?"
+        alert.informativeText = "\(items.count) item\(items.count == 1 ? "" : "s") will be removed permanently."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Empty Trash")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            for item in items {
+                try? FileManager.default.removeItem(at: item)
+            }
+        }
     }
 
     var focusedPane: PaneState { focus == .left ? left : right }

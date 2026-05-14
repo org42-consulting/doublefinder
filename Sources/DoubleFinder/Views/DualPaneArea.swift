@@ -21,5 +21,11 @@ struct DualPaneArea: View {
         .sheet(item: $state.goToPrompt) { prompt in
             GoToFolderSheet(prompt: prompt)
         }
+        .sheet(item: $state.getInfoPrompt) { prompt in
+            GetInfoSheet(prompt: prompt)
+        }
+        .sheet(item: $state.batchRenamePrompt) { prompt in
+            BatchRenameSheet(prompt: prompt)
+        }
     }
 }

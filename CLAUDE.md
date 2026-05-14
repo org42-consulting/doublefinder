@@ -36,8 +36,14 @@ When something needs to act on "the current pane/tab", read `state.focusedPane.a
 
 ### Cross-cutting services (singletons)
 - `GitStatusService.shared` (actor) — shells out to `git status --porcelain`, caches per repo root. `TabState.refresh()` calls `decorateWithGitStatus()` after listing a directory; descendant changes bubble up so a mixed folder shows as `M`. `DirectoryWatcher.onChange` invalidates the cache for the watched repo before triggering a refresh.
-- `TransferQueue.shared` (`@MainActor`) — all copy/move/trash/rename work goes through `TransferQueue.enqueue(...)` with a `Progress`. UI binds to `TransferQueue.shared.ops` via `TransferQueueButton`. Don't run file ops directly from views; route them through `CopyMoveCoordinator` (which handles conflict prompts) or enqueue them here.
+- `TransferQueue.shared` (`@MainActor`) — all copy/move/trash/rename work goes through `TransferQueue.enqueue(...)` with a `Progress`. `TransferQueue.shared.ops` is `[TransferOp]`; each `TransferOp` carries `kind`, `summary`, `progress`, `started`, and `error` — that's what `TransferQueueButton` binds to. Don't run file ops directly from views; route them through `CopyMoveCoordinator` (which handles conflict prompts) or enqueue them here.
 - `ThumbnailService`, `TagStore`, `QuickLookCoordinator` — same pattern; one shared instance, called from views.
+
+### Conflict resolution flow
+`FileOps.conflicts(for:in:)` checks for name collisions before a copy/move starts. When conflicts are found, `CopyMoveCoordinator` sets `WindowState.conflict` to a `ConflictPrompt` value — a struct that bundles the source/destination URLs and an `onResolve: (ConflictResolution?) -> Void` callback. The sheet reads from that prompt and calls `onResolve` with a `ConflictResolution` case (replace, keep both, skip) or `nil` to cancel. After resolution the coordinator re-enqueues the operation via `TransferQueue`.
+
+### Search
+`SearchEngine.stream(for:scopes:kind:)` returns an `AsyncStream<[URL]>` backed by `NSMetadataQuery`. The predicate switches between a filename match (`.byName`) and a tag match (`.byTag`) depending on `kind`. Results arrive in batches via `NSMetadataQueryDidUpdate` notifications; the stream debounces before forwarding. `TabState` drives the engine and routes results through `applySearchResults`, which filters hidden files, applies the shared sort, and calls `decorateWithGitStatus()` when scope is `.folder`.
 
 ### Menu commands ↔ state
 Top-level `App.commands` in `DoubleFinderApp.swift` post `Notification.Name`s (defined in `Model.swift`, e.g. `.getInfoRequested`, `.parentFolderRequested`, `.toggleInspectorRequested`). `WindowState.registerCommandObservers()` is the only place that handles them. When adding a new global shortcut, add it in **both** places.

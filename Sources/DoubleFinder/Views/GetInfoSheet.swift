@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct GetInfoSheet: View {
     let prompt: GetInfoPrompt
@@ -64,7 +65,7 @@ struct GetInfoSheet: View {
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(2)
                     .truncationMode(.middle)
-                Text(prompt.url.path)
+                Text((prompt.url.path as NSString).abbreviatingWithTildeInPath)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -133,7 +134,10 @@ struct GetInfoSheet: View {
 
     private var kind: String {
         if isDir { return "Folder" }
-        if let typeID = attrs[.typeIdentifierKey] as? String { return typeID }
+        if let typeID = attrs[.typeIdentifierKey] as? String,
+           let desc = UTType(typeID)?.localizedDescription {
+            return desc
+        }
         let ext = prompt.url.pathExtension
         return ext.isEmpty ? "Document" : "\(ext.uppercased()) Document"
     }
@@ -149,12 +153,16 @@ struct GetInfoSheet: View {
         (prompt.url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
     }
 
-    private func dateString(_ key: URLResourceKey) -> String {
-        guard let d = attrs[key] as? Date else { return "—" }
+    private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .medium
         f.timeStyle = .short
-        return f.string(from: d)
+        return f
+    }()
+
+    private func dateString(_ key: URLResourceKey) -> String {
+        guard let d = attrs[key] as? Date else { return "—" }
+        return Self.dateFormatter.string(from: d)
     }
 }
 

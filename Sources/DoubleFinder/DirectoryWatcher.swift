@@ -22,7 +22,6 @@ final class DirectoryWatcher {
         }
         let flags = UInt32(
             kFSEventStreamCreateFlagFileEvents
-            | kFSEventStreamCreateFlagNoDefer
             | kFSEventStreamCreateFlagUseCFTypes
             | kFSEventStreamCreateFlagIgnoreSelf
         )

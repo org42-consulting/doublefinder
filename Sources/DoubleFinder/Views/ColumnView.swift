@@ -29,6 +29,9 @@ struct ColumnView: NSViewRepresentable {
         browser.minColumnWidth = 200
         browser.maxVisibleColumns = 5
         browser.hasHorizontalScroller = true
+        let colMenu = NSMenu()
+        colMenu.delegate = context.coordinator
+        browser.menu = colMenu
         browser.target = context.coordinator
         browser.action = #selector(Coordinator.singleClick(_:))
         browser.doubleAction = #selector(Coordinator.doubleClick(_:))
@@ -51,7 +54,19 @@ struct ColumnView: NSViewRepresentable {
         ])
         previewHolder.isHidden = true
 
-        split.addArrangedSubview(browser)
+        // Wrap browser in a container that provides 4pt top inset so the
+        // first row isn't flush against the pane border.
+        let browserWrapper = NSView()
+        browser.translatesAutoresizingMaskIntoConstraints = false
+        browserWrapper.addSubview(browser)
+        NSLayoutConstraint.activate([
+            browser.leadingAnchor.constraint(equalTo: browserWrapper.leadingAnchor),
+            browser.trailingAnchor.constraint(equalTo: browserWrapper.trailingAnchor),
+            browser.topAnchor.constraint(equalTo: browserWrapper.topAnchor, constant: 4),
+            browser.bottomAnchor.constraint(equalTo: browserWrapper.bottomAnchor),
+        ])
+
+        split.addArrangedSubview(browserWrapper)
         split.addArrangedSubview(previewHolder)
 
         context.coordinator.browser = browser
@@ -86,6 +101,7 @@ struct ColumnView: NSViewRepresentable {
         private var lastSortKey: SortKey
         private var lastSortAscending: Bool
         private var lastNodesSignature: Int = 0
+        private var lastSelectedColumn: Int = -1
 
         init(tab: TabState, state: WindowState, onActivate: @escaping () -> Void) {
             self.tab = tab
@@ -155,22 +171,9 @@ struct ColumnView: NSViewRepresentable {
             return children(of: url).count
         }
 
-        func browser(_ sender: NSBrowser, willDisplayCell cell: Any, atRow row: Int, column: Int) {
-            // Match list view's row metrics (NSTableListView: rowHeight 20 + intercellSpacing 0,2).
-            if row == 0, let matrix = sender.matrix(inColumn: column) {
-                let desired = NSSize(width: matrix.cellSize.width, height: 20)
-                if matrix.cellSize.height != desired.height {
-                    matrix.cellSize = desired
-                    matrix.intercellSpacing = NSSize(width: 0, height: 2)
-                    matrix.sizeToCells()
-                }
-                if matrix.menu == nil {
-                    let m = NSMenu()
-                    m.delegate = self
-                    matrix.menu = m
-                }
-            }
+        func browser(_ sender: NSBrowser, heightOfRow row: Int, inColumn columnIndex: Int) -> CGFloat { 20 }
 
+        func browser(_ sender: NSBrowser, willDisplayCell cell: Any, atRow row: Int, column: Int) {
             guard let cell = cell as? ColumnBrowserCell else { return }
             let parent = urlForColumn(column, in: sender)
             let kids = children(of: parent)
@@ -200,20 +203,16 @@ struct ColumnView: NSViewRepresentable {
             refreshCurrentColumnFlags()
         }
 
-        /// Walks the visible matrices and updates each cell's `isCurrentColumn` flag so
-        /// the rightmost selected column draws the blue highlight and earlier columns
-        /// draw gray. Called whenever the selection moves.
+        /// Updates `isCurrentColumn` on visible cells by reloading only the columns
+        /// whose "current" state changed. Called whenever the selection moves.
         private func refreshCurrentColumnFlags() {
-            guard let browser, browser.lastColumn >= 0 else { return }
-            let selected = browser.selectedColumn
-            for col in 0...browser.lastColumn {
-                guard let matrix = browser.matrix(inColumn: col) else { continue }
-                let isCurrent = col == selected
-                for case let cell as ColumnBrowserCell in (matrix.cells) {
-                    cell.isCurrentColumn = isCurrent
-                }
-                matrix.needsDisplay = true
-            }
+            guard let browser else { return }
+            let sel = browser.selectedColumn
+            guard sel != lastSelectedColumn else { return }
+            let old = lastSelectedColumn
+            lastSelectedColumn = sel
+            if old >= 0 && old <= browser.lastColumn { browser.reloadColumn(old) }
+            if sel >= 0 && sel <= browser.lastColumn { browser.reloadColumn(sel) }
         }
 
         @objc func doubleClick(_ sender: Any?) {
@@ -226,7 +225,9 @@ struct ColumnView: NSViewRepresentable {
             let kids = children(of: parent)
             guard row < kids.count else { return }
             let target = kids[row]
-            let isDir = (try? target.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            var isDirFlag: ObjCBool = false
+            FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirFlag)
+            let isDir = isDirFlag.boolValue
             if isDir {
                 tab.navigate(to: target)
             } else {
@@ -275,51 +276,17 @@ struct ColumnView: NSViewRepresentable {
         // MARK: - Context menu
 
         func menuNeedsUpdate(_ menu: NSMenu) {
-            guard let browser, let event = NSApp.currentEvent else {
-                menu.removeAllItems()
-                return
-            }
-
-            var hitCol = -1
-            var hitRow = -1
-            if browser.lastColumn >= 0 {
-                for col in 0...browser.lastColumn {
-                    guard let matrix = browser.matrix(inColumn: col) else { continue }
-                    let pt = matrix.convert(event.locationInWindow, from: nil)
-                    if matrix.bounds.contains(pt) {
-                        hitCol = col
-                        var r = 0, c = 0
-                        if matrix.getRow(&r, column: &c, for: pt) {
-                            hitRow = r
-                        }
-                        break
-                    }
-                }
-            }
-
-            guard hitCol >= 0 else {
-                menu.removeAllItems()
-                return
-            }
-
-            let parent = urlForColumn(hitCol, in: browser)
+            menu.removeAllItems()
+            guard let browser else { return }
+            let col = browser.selectedColumn
+            guard col >= 0 else { return }
+            let parent = urlForColumn(col, in: browser)
             let kids = children(of: parent)
-
-            if hitRow >= 0 && hitRow < kids.count {
-                let target = kids[hitRow]
-                let selected = browser.selectedRowIndexes(inColumn: hitCol) ?? IndexSet()
-                let operating: [URL] = selected.contains(hitRow)
-                    ? selected.compactMap { idx in idx < kids.count ? kids[idx] : nil }
-                    : [target]
+            if let rows = browser.selectedRowIndexes(inColumn: col), !rows.isEmpty {
+                let urls: [URL] = rows.compactMap { idx in idx < kids.count ? kids[idx] : nil }
                 FileContextMenu.populate(
-                    menu,
-                    urls: operating,
-                    directory: parent,
-                    tab: tab,
-                    state: state,
-                    onQuickLook: { urls in
-                        QuickLookCoordinator.shared.show(urls, startAt: urls.first)
-                    }
+                    menu, urls: urls, directory: parent, tab: tab, state: state,
+                    onQuickLook: { urls in QuickLookCoordinator.shared.show(urls, startAt: urls.first) }
                 )
             } else {
                 FileContextMenu.populateBackground(menu, directory: parent, tab: tab, state: state)
@@ -577,3 +544,4 @@ private final class ColumnBrowserCell: NSBrowserCell {
         titleAttr.draw(in: titleRect)
     }
 }
+

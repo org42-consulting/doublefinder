@@ -43,13 +43,9 @@ struct SidebarView: View {
             .init(title: "Network", systemImage: "network", url: URL(fileURLWithPath: "/Volumes")),
             .init(title: "Trash", systemImage: "trash", url: trashURL),
         ]
-        let tags: [SidebarItem] = [
-            .init(title: "Red",    systemImage: "circle.fill", url: home),
-            .init(title: "Orange", systemImage: "circle.fill", url: home),
-            .init(title: "Yellow", systemImage: "circle.fill", url: home),
-            .init(title: "Green",  systemImage: "circle.fill", url: home),
-            .init(title: "Blue",   systemImage: "circle.fill", url: home),
-        ]
+        let tags: [SidebarItem] = Tag.Color.allCases
+            .filter { $0 != .none }
+            .map { .init(title: $0.displayName, systemImage: "circle.fill", url: home) }
         return [
             .init(title: "iCloud",    items: icloud),
             .init(title: "Locations", items: locations),
@@ -193,13 +189,8 @@ struct SidebarView: View {
 
     private func tintFor(section: String, title: String) -> Color {
         guard section == "Tags" else { return .accentColor }
-        switch title {
-        case "Red":    return .red
-        case "Orange": return .orange
-        case "Yellow": return .yellow
-        case "Green":  return .green
-        case "Blue":   return .blue
-        default:       return .gray
-        }
+        return Tag.Color.allCases
+            .first { $0.displayName == title }?
+            .swiftUI ?? .gray
     }
 }

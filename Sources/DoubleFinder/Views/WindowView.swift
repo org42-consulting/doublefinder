@@ -13,7 +13,7 @@ struct WindowView: View {
         } detail: {
             DualPaneArea()
                 .environmentObject(state)
-                .navigationTitle(state.focusedPane.activeTab.url.lastPathComponent)
+                .background(NavTitleRelay(tab: state.focusedPane.activeTab))
                 .toolbar(id: "df-main") { toolbarItems }
         }
         .navigationSplitViewStyle(.balanced)
@@ -242,7 +242,7 @@ struct WindowView: View {
                 for (src, newName) in actionable {
                     if progress.isCancelled { return }
                     let dst = src.deletingLastPathComponent().appendingPathComponent(newName)
-                    try? fm.moveItem(at: src, to: dst)
+                    try fm.moveItem(at: src, to: dst)
                     await MainActor.run { progress.completedUnitCount += 1 }
                 }
             },
@@ -271,6 +271,17 @@ struct WindowView: View {
             work: { progress in try await FileOps.trash(urls, progress: progress) },
             completion: { Task { @MainActor in await src.refresh() } }
         )
+    }
+}
+
+// MARK: - Reactive navigation title
+
+private struct NavTitleRelay: View {
+    @ObservedObject var tab: TabState
+    var body: some View {
+        let name = tab.url.lastPathComponent
+        Color.clear
+            .navigationTitle(name.isEmpty ? "/" : name)
     }
 }
 

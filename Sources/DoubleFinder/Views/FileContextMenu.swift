@@ -3,11 +3,12 @@ import SwiftUI
 
 /// Holds a closure as a `target` for an `NSMenuItem`. NSMenuItem stores its target weakly,
 /// so the `MenuAction` must be retained — we park it in `representedObject` on the same item.
-@MainActor
+/// The action method is named `invoke:` (not `perform:`) to avoid colliding with NSObject's
+/// own `perform:` selector, which causes the ObjC runtime to resolve the wrong IMP.
 final class MenuAction: NSObject {
     let action: () -> Void
     init(_ action: @escaping () -> Void) { self.action = action }
-    @objc func perform(_ sender: Any?) { action() }
+    @objc func invoke(_ sender: Any?) { action() }
 }
 
 @MainActor
@@ -39,6 +40,10 @@ enum FileContextMenu {
             }
         }
 
+        let owItem = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+        owItem.submenu = makeOpenWithSubmenu(urls: urls)
+        menu.addItem(owItem)
+
         if isDir, !multiple, let url = urls.first {
             addItem(menu, "Open in Other Pane") {
                 state.otherPane.activeTab.navigate(to: url)
@@ -48,6 +53,12 @@ enum FileContextMenu {
             }
         }
 
+        if isDir, !multiple, let url = urls.first {
+            addItem(menu, "Open in Terminal") {
+                let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+                NSWorkspace.shared.open([url], withApplicationAt: terminalURL, configuration: .init()) { _, _ in }
+            }
+        }
         addItem(menu, "Open in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting(urls)
         }
@@ -98,6 +109,11 @@ enum FileContextMenu {
             pb.clearContents()
             pb.writeObjects(urls.map { $0 as NSURL })
         }
+        addItem(menu, multiple ? "Copy \(urls.count) Paths" : "Copy Path") {
+            let paths = urls.map(\.path).joined(separator: "\n")
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(paths, forType: .string)
+        }
 
         menu.addItem(.separator())
 
@@ -109,9 +125,7 @@ enum FileContextMenu {
 
         menu.addItem(.separator())
 
-        let trash = NSMenuItem(title: multiple ? "Move \(urls.count) Items to Trash" : "Move to Trash", action: nil, keyEquivalent: String(UnicodeScalar(NSDeleteCharacter)!))
-        trash.keyEquivalentModifierMask = [.command]
-        let trashAction = MenuAction {
+        addItem(menu, multiple ? "Move \(urls.count) Items to Trash" : "Move to Trash") {
             TransferQueue.shared.enqueue(
                 kind: "Trash",
                 summary: "Move \(urls.count) item\(multiple ? "s" : "") to Trash",
@@ -120,10 +134,6 @@ enum FileContextMenu {
                 completion: { Task { @MainActor in await tab.refresh() } }
             )
         }
-        trash.target = trashAction
-        trash.action = #selector(MenuAction.perform(_:))
-        trash.representedObject = trashAction
-        menu.addItem(trash)
     }
 
     /// Populate `menu` for a right-click on the background (no item under the cursor).
@@ -153,7 +163,7 @@ enum FileContextMenu {
         showHidden.state = tab.showHidden ? .on : .off
         let toggleAction = MenuAction { tab.showHidden.toggle() }
         showHidden.target = toggleAction
-        showHidden.action = #selector(MenuAction.perform(_:))
+        showHidden.action = #selector(MenuAction.invoke(_:))
         showHidden.representedObject = toggleAction
         menu.addItem(showHidden)
 
@@ -171,7 +181,7 @@ enum FileContextMenu {
                 CopyMoveCoordinator.copy(pasted, toDirectory: directory, from: tab, via: state)
             }
             pasteItem.target = action
-            pasteItem.action = #selector(MenuAction.perform(_:))
+            pasteItem.action = #selector(MenuAction.invoke(_:))
             pasteItem.representedObject = action
         }
         menu.addItem(pasteItem)
@@ -206,9 +216,25 @@ enum FileContextMenu {
                     NSWorkspace.shared.open(u)
                 }
             }
+            let (defApp, otherApps) = openWithApps(for: urls[0])
+            Menu("Open With") {
+                if let def = defApp {
+                    Button(def.deletingPathExtension().lastPathComponent) { openWith(urls, app: def) }
+                    Divider()
+                }
+                ForEach(Array(otherApps.enumerated()), id: \.offset) { _, appURL in
+                    Button(appURL.deletingPathExtension().lastPathComponent) { openWith(urls, app: appURL) }
+                }
+                if defApp != nil || !otherApps.isEmpty { Divider() }
+                Button("Other…") { chooseApp(for: urls) }
+            }
             if allDirs, !multiple, let url = urls.first {
                 Button("Open in Other Pane") { state.otherPane.activeTab.navigate(to: url) }
                 Button("Open in New Tab") { state.focusedPane.addTab(url: url) }
+                Button("Open in Terminal") {
+                    let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+                    NSWorkspace.shared.open([url], withApplicationAt: terminalURL, configuration: .init()) { _, _ in }
+                }
             }
             Button("Open in Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
             Button(multiple ? "Quick Look" : "Quick Look \u{201C}\(firstName)\u{201D}") { onQuickLook(urls) }
@@ -253,6 +279,11 @@ enum FileContextMenu {
                 let pb = NSPasteboard.general
                 pb.clearContents()
                 pb.writeObjects(urls.map { $0 as NSURL })
+            }
+            Button(multiple ? "Copy \(urls.count) Paths" : "Copy Path") {
+                let paths = urls.map(\.path).joined(separator: "\n")
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(paths, forType: .string)
             }
 
             Divider()
@@ -329,7 +360,7 @@ enum FileContextMenu {
     // MARK: - Item builders
 
     private static func addItem(_ menu: NSMenu, _ title: String, key: String = "", _ action: @escaping () -> Void) {
-        let item = NSMenuItem(title: title, action: #selector(MenuAction.perform(_:)), keyEquivalent: key)
+        let item = NSMenuItem(title: title, action: #selector(MenuAction.invoke(_:)), keyEquivalent: key)
         let target = MenuAction(action)
         item.target = target
         item.representedObject = target
@@ -342,7 +373,7 @@ enum FileContextMenu {
     private static func makeTagsSubmenu(urls: [URL], refresh: @escaping () -> Void) -> NSMenu {
         let sub = NSMenu()
         for color in Tag.Color.allCases where color != .none {
-            let item = NSMenuItem(title: color.displayName, action: #selector(MenuAction.perform(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: color.displayName, action: #selector(MenuAction.invoke(_:)), keyEquivalent: "")
             let action = MenuAction {
                 for u in urls {
                     TagStore.addTag(Tag(name: color.displayName, color: color), to: u)
@@ -354,7 +385,7 @@ enum FileContextMenu {
             sub.addItem(item)
         }
         sub.addItem(.separator())
-        let clear = NSMenuItem(title: "Clear Tags", action: #selector(MenuAction.perform(_:)), keyEquivalent: "")
+        let clear = NSMenuItem(title: "Clear Tags", action: #selector(MenuAction.invoke(_:)), keyEquivalent: "")
         let clearAction = MenuAction {
             for u in urls { TagStore.clear(u) }
             refresh()
@@ -404,6 +435,11 @@ enum FileContextMenu {
                     task.arguments = ["-qr", output.lastPathComponent] + urls.map { $0.lastPathComponent }
                     try task.run()
                     task.waitUntilExit()
+                    guard task.terminationStatus == 0 else {
+                        throw CocoaError(.fileWriteUnknown, userInfo: [
+                            NSLocalizedDescriptionKey: "zip exited with status \(task.terminationStatus)"
+                        ])
+                    }
                 }.value
                 await MainActor.run { progress.completedUnitCount = 1 }
             },
@@ -423,12 +459,80 @@ enum FileContextMenu {
                 for (src, newName) in actionable {
                     if progress.isCancelled { return }
                     let dst = src.deletingLastPathComponent().appendingPathComponent(newName)
-                    try? fm.moveItem(at: src, to: dst)
+                    try fm.moveItem(at: src, to: dst)
                     await MainActor.run { progress.completedUnitCount += 1 }
                 }
             },
             completion: { refresh() }
         )
+    }
+
+    // MARK: - Open With
+
+    private static func openWithApps(for url: URL) -> (default: URL?, others: [URL]) {
+        let def = NSWorkspace.shared.urlForApplication(toOpen: url)
+        let all = NSWorkspace.shared.urlsForApplications(toOpen: url)
+        var seen = Set<String>()
+        let deduped = all.compactMap { appURL -> URL? in
+            let key = Bundle(url: appURL)?.bundleIdentifier ?? appURL.path
+            return seen.insert(key).inserted ? appURL : nil
+        }
+        let others = deduped
+            .filter { $0.standardizedFileURL != def?.standardizedFileURL }
+            .sorted { $0.deletingPathExtension().lastPathComponent
+                        .localizedStandardCompare($1.deletingPathExtension().lastPathComponent) == .orderedAscending }
+        return (def, Array(others.prefix(15)))
+    }
+
+    private static func openWith(_ urls: [URL], app: URL) {
+        NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: .init()) { _, _ in }
+    }
+
+    private static func chooseApp(for urls: [URL]) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.prompt = "Open"
+        panel.begin { result in
+            guard result == .OK, let appURL = panel.url else { return }
+            openWith(urls, app: appURL)
+        }
+    }
+
+    private static func makeOpenWithSubmenu(urls: [URL]) -> NSMenu {
+        let sub = NSMenu()
+        guard let first = urls.first else { return sub }
+        let (def, others) = openWithApps(for: first)
+
+        if let def {
+            addAppItem(sub, appURL: def, urls: urls)
+            if !others.isEmpty { sub.addItem(.separator()) }
+        }
+        for appURL in others {
+            addAppItem(sub, appURL: appURL, urls: urls)
+        }
+        if def != nil || !others.isEmpty { sub.addItem(.separator()) }
+
+        let otherItem = NSMenuItem(title: "Other…", action: #selector(MenuAction.invoke(_:)), keyEquivalent: "")
+        let otherAction = MenuAction { chooseApp(for: urls) }
+        otherItem.target = otherAction
+        otherItem.representedObject = otherAction
+        sub.addItem(otherItem)
+        return sub
+    }
+
+    private static func addAppItem(_ menu: NSMenu, appURL: URL, urls: [URL]) {
+        let name = appURL.deletingPathExtension().lastPathComponent
+        let item = NSMenuItem(title: name, action: #selector(MenuAction.invoke(_:)), keyEquivalent: "")
+        let icon = NSWorkspace.shared.icon(forFile: appURL.path)
+        icon.size = NSSize(width: 16, height: 16)
+        item.image = icon
+        let action = MenuAction { openWith(urls, app: appURL) }
+        item.target = action
+        item.representedObject = action
+        menu.addItem(item)
     }
 
     private static func uniqueURL(named name: String, in dir: URL) -> URL {

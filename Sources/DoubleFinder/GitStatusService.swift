@@ -5,6 +5,7 @@ import Foundation
 /// isn't inside a git repository.
 actor GitStatusService {
     static let shared = GitStatusService()
+    static let gitStatusCacheDidInvalidate = Notification.Name("gitStatusCacheDidInvalidate")
 
     private var cache: [URL: [URL: GitFileState]] = [:]    // repoRoot -> [absURL: state]
 
@@ -35,7 +36,13 @@ actor GitStatusService {
 
     func invalidate(forDirectory directory: URL) async {
         if let repo = findRepoRoot(directory) {
-            cache.removeValue(forKey: repo.standardizedFileURL)
+            let repoURL = repo.standardizedFileURL
+            cache.removeValue(forKey: repoURL)
+            NotificationCenter.default.post(
+                name: GitStatusService.gitStatusCacheDidInvalidate,
+                object: nil,
+                userInfo: ["repoRoot": repoURL]
+            )
         }
     }
 
@@ -76,8 +83,11 @@ actor GitStatusService {
         process.standardError = stderr
         do {
             try process.run()
+            let killWork = DispatchWorkItem { process.terminate() }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: killWork)
             process.waitUntilExit()
-            guard process.terminationStatus == 0 else { return nil }
+            killWork.cancel()
+            guard process.terminationReason == .exit, process.terminationStatus == 0 else { return nil }
             let data = stdout.fileHandleForReading.readDataToEndOfFile()
             return String(data: data, encoding: .utf8)
         } catch {

@@ -6,6 +6,13 @@ struct GalleryView: View {
     let side: PaneSide
     @EnvironmentObject var state: WindowState
 
+    private func urlsForMenu(targeting node: FSNode) -> [URL] {
+        if tab.selection.contains(node.id), tab.selection.count > 1 {
+            return tab.selection.compactMap { id in tab.nodes.first { $0.id == id }?.url }
+        }
+        return [node.url]
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             mainPreview
@@ -21,6 +28,9 @@ struct GalleryView: View {
                 QuickLookCoordinator.shared.show(tab.nodes.map(\.url), startAt: node.url)
             }
             return .handled
+        }
+        .contextMenu {
+            FileContextMenu.backgroundItems(directory: tab.url, tab: tab, state: state)
         }
     }
 
@@ -51,6 +61,20 @@ struct GalleryView: View {
                     .glassEffect(in: Capsule())
                     .padding(.bottom, 12)
                 }
+                .contextMenu {
+                    FileContextMenu.items(
+                        for: urlsForMenu(targeting: node),
+                        in: tab.url,
+                        tab: tab,
+                        state: state,
+                        onQuickLook: { urls in
+                            QuickLookCoordinator.shared.show(urls, startAt: urls.first)
+                        }
+                    )
+                }
+        } else if tab.nodes.isEmpty {
+            ContentUnavailableView("Folder is empty", systemImage: "folder")
+                .foregroundStyle(.secondary)
         } else {
             ContentUnavailableView("No selection", systemImage: "photo.on.rectangle.angled")
                 .foregroundStyle(.secondary)
@@ -76,6 +100,17 @@ struct GalleryView: View {
                             }
                         }
                     )
+                    .contextMenu {
+                        FileContextMenu.items(
+                            for: urlsForMenu(targeting: node),
+                            in: tab.url,
+                            tab: tab,
+                            state: state,
+                            onQuickLook: { urls in
+                                QuickLookCoordinator.shared.show(urls, startAt: urls.first)
+                            }
+                        )
+                    }
                 }
             }
             .padding(.horizontal, 12)

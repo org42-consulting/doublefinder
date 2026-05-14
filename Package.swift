@@ -9,7 +9,8 @@ let package = Package(
             name: "DoubleFinder",
             path: "Sources/DoubleFinder",
             resources: [
-                .copy("Resources/DoubleFinder.icns")
+                .copy("Resources/DoubleFinder.icns"),
+                .copy("Resources/doublefinder.png")
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v5)

@@ -98,10 +98,40 @@ struct NSTableListView: NSViewRepresentable {
         coord.parent = self
         coord.table = table
 
-        // sync selection from SwiftUI side if it changed externally
+        // sync sort indicator arrows with the current tab sort state
+        let expectedKey: String
+        switch tab.sortKey {
+        case .name:     expectedKey = ColumnID.name.rawValue
+        case .modified: expectedKey = ColumnID.date.rawValue
+        case .size:     expectedKey = ColumnID.size.rawValue
+        case .kind:     expectedKey = ColumnID.kind.rawValue
+        }
+        let currentDesc = table.sortDescriptors.first
+        if currentDesc?.key != expectedKey || currentDesc?.ascending != tab.sortAscending {
+            coord.isSyncingSort = true
+            table.sortDescriptors = [NSSortDescriptor(key: expectedKey, ascending: tab.sortAscending)]
+            coord.isSyncingSort = false
+        }
+
+        // sync node changes — use granular reload when only cell data changed
         if coord.lastNodes != tab.nodes {
-            coord.lastNodes = tab.nodes
-            table.reloadData()
+            let old = coord.lastNodes
+            let new = tab.nodes
+            coord.lastNodes = new
+            if old.map(\.id) == new.map(\.id) {
+                // same rows, same order — reload only cells whose data changed
+                let changedIndexes = IndexSet(
+                    zip(old, new).enumerated().compactMap { idx, pair in
+                        pair.0 != pair.1 ? idx : nil
+                    }
+                )
+                if !changedIndexes.isEmpty {
+                    table.reloadData(forRowIndexes: changedIndexes,
+                                     columnIndexes: IndexSet(0..<table.numberOfColumns))
+                }
+            } else {
+                table.reloadData()
+            }
         }
         let desiredIndexes = IndexSet(tab.nodes.enumerated().compactMap { idx, node in
             tab.selection.contains(node.id) ? idx : nil
@@ -136,6 +166,7 @@ struct NSTableListView: NSViewRepresentable {
         var parent: NSTableListView
         weak var table: NSTableView?
         var lastNodes: [FSNode] = []
+        var isSyncingSort = false
 
         init(parent: NSTableListView) {
             self.parent = parent
@@ -209,6 +240,7 @@ struct NSTableListView: NSViewRepresentable {
         // MARK: sort
 
         func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+            guard !isSyncingSort else { return }
             guard let desc = tableView.sortDescriptors.first, let key = ColumnID(rawValue: desc.key ?? "") else { return }
             let mapped: SortKey
             switch key {
@@ -220,7 +252,7 @@ struct NSTableListView: NSViewRepresentable {
             }
             parent.tab.sortKey = mapped
             parent.tab.sortAscending = desc.ascending
-            Task { @MainActor in await parent.tab.refresh() }
+            parent.tab.reSort()
         }
 
         // MARK: clicks

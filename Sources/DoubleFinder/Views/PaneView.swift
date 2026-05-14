@@ -38,12 +38,7 @@ struct PaneView: View {
 
             Divider().opacity(0.5)
 
-            PathBarView(url: pane.activeTab.url) { url in
-                pane.activeTab.navigate(to: url)
-            }
-            .frame(height: 24)
-
-            statusBar
+            PaneFooter(tab: pane.activeTab)
         }
         .background(
             isActive ? Color.accentColor.opacity(0.025) : Color.clear
@@ -82,33 +77,48 @@ struct PaneView: View {
         CopyMoveCoordinator.copy(urls, to: dst, from: src, via: state)
     }
 
-    @ViewBuilder
-    private var statusBar: some View {
-        HStack(spacing: 6) {
-            if let err = pane.activeTab.loadError {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                Text(err)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            } else {
-                if pane.activeTab.isSearching {
-                    Image(systemName: "magnifyingglass")
-                    Text("Searching \"\(pane.activeTab.searchText)\" — \(pane.activeTab.nodes.count) result\(pane.activeTab.nodes.count == 1 ? "" : "s")")
-                } else {
-                    Text("\(pane.activeTab.nodes.count) item\(pane.activeTab.nodes.count == 1 ? "" : "s")")
-                }
-                if !pane.activeTab.selection.isEmpty {
-                    Text("· \(pane.activeTab.selection.count) selected")
-                }
+}
+
+// MARK: - Footer (path bar + status bar) — observes tab directly so it stays live
+
+private struct PaneFooter: View {
+    @ObservedObject var tab: TabState
+
+    var body: some View {
+        VStack(spacing: 0) {
+            PathBarView(url: tab.url) { url in
+                tab.navigate(to: url)
             }
-            Spacer()
-            Text(volumeAvailable(for: pane.activeTab.url))
+            .frame(height: 24)
+
+            HStack(spacing: 6) {
+                if let err = tab.loadError {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(err)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else {
+                    if tab.isSearching {
+                        Image(systemName: tab.searchKind == .byTag ? "tag" : "magnifyingglass")
+                        Text(tab.searchKind == .byTag
+                             ? "Tag: \"\(tab.searchText)\" — \(tab.nodes.count) result\(tab.nodes.count == 1 ? "" : "s")"
+                             : "Searching \"\(tab.searchText)\" — \(tab.nodes.count) result\(tab.nodes.count == 1 ? "" : "s")")
+                    } else {
+                        Text("\(tab.nodes.count) item\(tab.nodes.count == 1 ? "" : "s")")
+                    }
+                    if !tab.selection.isEmpty {
+                        Text("· \(tab.selection.count) selected")
+                    }
+                }
+                Spacer()
+                Text(volumeAvailable(for: tab.url))
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
         }
-        .font(.system(size: 11))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
     }
 
     private func volumeAvailable(for url: URL) -> String {

@@ -30,9 +30,8 @@ final class ThumbnailService {
             cache.setObject(image, forKey: key)
             return image
         } catch {
-            let icon = NSWorkspace.shared.icon(forFile: url.path)
-            cache.setObject(icon, forKey: key)
-            return icon
+            // Don't cache the fallback — lets subsequent calls retry QL when the file changes
+            return NSWorkspace.shared.icon(forFile: url.path)
         }
     }
 }

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct InspectorView: View {
     @EnvironmentObject var state: WindowState
@@ -189,7 +190,10 @@ private struct InspectorContent: View {
     private func kind(of node: FSNode) -> String {
         let isDir = (attrs[.isDirectoryKey] as? Bool) ?? node.isDirectory
         if isDir { return "Folder" }
-        if let typeID = attrs[.typeIdentifierKey] as? String { return typeID }
+        if let typeID = attrs[.typeIdentifierKey] as? String,
+           let desc = UTType(typeID)?.localizedDescription {
+            return desc
+        }
         let ext = node.ext
         return ext.isEmpty ? "Document" : "\(ext.uppercased()) Document"
     }
@@ -202,11 +206,15 @@ private struct InspectorContent: View {
         return ByteCountFormatter.string(fromByteCount: Int64(s), countStyle: .file)
     }
 
-    private func dateText(_ key: URLResourceKey) -> String {
-        guard let d = attrs[key] as? Date else { return "—" }
+    private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .medium
         f.timeStyle = .short
-        return f.string(from: d)
+        return f
+    }()
+
+    private func dateText(_ key: URLResourceKey) -> String {
+        guard let d = attrs[key] as? Date else { return "—" }
+        return Self.dateFormatter.string(from: d)
     }
 }

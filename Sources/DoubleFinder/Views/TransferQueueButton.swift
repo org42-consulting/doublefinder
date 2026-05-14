@@ -93,14 +93,24 @@ private struct TransferRow: View {
             ProgressView(value: fraction)
                 .progressViewStyle(.linear)
             if let err = op.error {
-                Text(err)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.red)
+                HStack {
+                    Text(err)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.red)
+                    Spacer()
+                    if op.retry != nil {
+                        Button("Retry") { op.retry?() }
+                            .font(.system(size: 10))
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
             }
         }
         .padding(8)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
         .onAppear {
+            timer?.invalidate()
             fraction = op.progress.fractionCompleted
             timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { _ in
                 fraction = op.progress.fractionCompleted

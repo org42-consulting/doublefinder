@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AppKit
+import Combine
 import UniformTypeIdentifiers
 import CoreTransferable
 
@@ -194,8 +195,8 @@ final class TabState: ObservableObject, Identifiable {
     @Published var viewMode: ViewMode = .list
     @Published var selection: Set<FSNode.ID> = []
     @Published var nodes: [FSNode] = []
-    @Published var sortKey: SortKey = .name { didSet { nodes = sorted(nodes) } }
-    @Published var sortAscending: Bool = true { didSet { nodes = sorted(nodes) } }
+    @Published var sortKey: SortKey = .name
+    @Published var sortAscending: Bool = true
     @Published var loadError: String?
     @Published var searchText: String = ""
     @Published var isSearching: Bool = false
@@ -218,6 +219,7 @@ final class TabState: ObservableObject, Identifiable {
     private let searchEngine = SearchEngine()
     private var searchTask: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
+    private var gitCacheToken: NSObjectProtocol?
 
     init(url: URL) {
         self.url = url
@@ -228,8 +230,28 @@ final class TabState: ObservableObject, Identifiable {
                 await self.refresh()
             }
         }
+        gitCacheToken = NotificationCenter.default.addObserver(
+            forName: GitStatusService.gitStatusCacheDidInvalidate,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let repoRoot = notification.userInfo?["repoRoot"] as? URL else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let tabPath = self.url.standardizedFileURL.path
+                let repoPath = repoRoot.path
+                guard tabPath == repoPath || tabPath.hasPrefix(repoPath + "/") else { return }
+                await self.decorateWithGitStatus()
+            }
+        }
         restartWatching()
         Task { await self.refresh() }
+    }
+
+    deinit {
+        if let token = gitCacheToken {
+            NotificationCenter.default.removeObserver(token)
+        }
     }
 
     convenience init(from persisted: StatePersistence.Snapshot.Pane.Tab) {
@@ -317,11 +339,12 @@ final class TabState: ObservableObject, Identifiable {
         let hidden = showHidden
         let mapped: [FSNode] = urls.compactMap { u in
             if !hidden && u.lastPathComponent.hasPrefix(".") { return nil }
-            let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
-            guard fm.fileExists(atPath: u.path) else { return nil }
+            let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: u.path, isDirectory: &isDir) else { return nil }
             return FSNode(
                 url: u,
-                isDirectory: v?.isDirectory ?? false,
+                isDirectory: isDir.boolValue,
                 size: v?.fileSize.map(Int64.init),
                 modified: v?.contentModificationDate,
                 tags: TagStore.tags(for: u)
@@ -337,10 +360,11 @@ final class TabState: ObservableObject, Identifiable {
     var canForward: Bool { !future.isEmpty }
 
     func navigate(to newURL: URL) {
-        guard newURL.standardizedFileURL != url.standardizedFileURL else { return }
+        let resolved = newURL.resolvingSymlinksInPath()
+        guard resolved.standardizedFileURL != url.standardizedFileURL else { return }
         history.append(url)
         future.removeAll()
-        url = newURL
+        url = resolved
         selection.removeAll()
         Task { await self.refresh() }
     }
@@ -368,6 +392,10 @@ final class TabState: ObservableObject, Identifiable {
             sortKey = key
             sortAscending = true
         }
+        reSort()
+    }
+
+    func reSort() {
         nodes = sorted(nodes)
     }
 
@@ -379,14 +407,16 @@ final class TabState: ObservableObject, Identifiable {
             do {
                 let contents = try fm.contentsOfDirectory(
                     at: target,
-                    includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey],
+                    includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
                     options: options
                 )
                 let mapped: [FSNode] = contents.map { u in
-                    let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
+                    let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                    var isDir: ObjCBool = false
+                    fm.fileExists(atPath: u.path, isDirectory: &isDir)
                     return FSNode(
                         url: u,
-                        isDirectory: v?.isDirectory ?? false,
+                        isDirectory: isDir.boolValue,
                         size: v?.fileSize.map(Int64.init),
                         modified: v?.contentModificationDate,
                         tags: TagStore.tags(for: u),
@@ -416,12 +446,13 @@ final class TabState: ObservableObject, Identifiable {
         guard !statuses.isEmpty else { return }
         // ensure the current listing still corresponds to the directory we queried
         guard url == dir else { return }
-        nodes = nodes.map { node in
+        let updated = nodes.map { node -> FSNode in
             guard let state = statuses[node.url.standardizedFileURL] else { return node }
             var copy = node
             copy.gitStatus = state
             return copy
         }
+        if updated != nodes { nodes = updated }
     }
 
     private func sorted(_ list: [FSNode]) -> [FSNode] {
@@ -515,6 +546,7 @@ final class WindowState: ObservableObject {
     @Published var showInspector: Bool = false
 
     private var observerTokens: [NSObjectProtocol] = []
+    private var favouritesCancellable: AnyCancellable?
 
     init() {
         let defaults = UserDefaults.standard
@@ -568,6 +600,14 @@ final class WindowState: ObservableObject {
                 StatePersistence.save(self.snapshot())
             }
         })
+
+        favouritesCancellable = $favourites
+            .dropFirst()
+            .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                StatePersistence.save(self.snapshot())
+            }
     }
 
     deinit {

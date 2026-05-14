@@ -16,6 +16,9 @@ final class TransferQueue: ObservableObject {
     ) {
         let progress = Progress(totalUnitCount: max(unitCount, 1))
         let op = TransferOp(kind: kind, summary: summary, progress: progress, started: Date())
+        op.retry = { [weak self] in
+            self?.enqueue(kind: kind, summary: summary, unitCount: unitCount, work: work, completion: completion)
+        }
         ops.append(op)
         Task { [op] in
             do {
@@ -24,7 +27,9 @@ final class TransferQueue: ObservableObject {
                 op.error = error.localizedDescription
             }
             await MainActor.run {
-                progress.completedUnitCount = progress.totalUnitCount
+                if op.error == nil {
+                    progress.completedUnitCount = progress.totalUnitCount
+                }
                 if op.error != nil {
                     // keep error rows around briefly so the user sees them
                     Task {
@@ -57,6 +62,7 @@ final class TransferOp: ObservableObject, Identifiable {
     let progress: Progress
     let started: Date
     @Published var error: String?
+    var retry: (() -> Void)?
 
     init(kind: String, summary: String, progress: Progress, started: Date) {
         self.kind = kind

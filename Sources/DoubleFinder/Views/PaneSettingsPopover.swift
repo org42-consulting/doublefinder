@@ -17,6 +17,7 @@ struct PaneSettingsPopover: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.inline)
+                .onChange(of: tab.sortKey) { tab.reSort() }
             }
 
             Divider()
@@ -33,6 +34,7 @@ struct PaneSettingsPopover: View {
                 .labelsHidden()
                 .pickerStyle(.segmented)
                 .frame(width: 150)
+                .onChange(of: tab.sortAscending) { tab.reSort() }
             }
 
             Divider()

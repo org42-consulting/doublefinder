@@ -95,7 +95,8 @@ enum FileOps {
         let fm = FileManager.default
         let baseName = source.deletingPathExtension().lastPathComponent
         let ext = source.pathExtension
-        var candidate = destDir.appendingPathComponent(source.lastPathComponent)
+        let firstName = ext.isEmpty ? "\(baseName) copy" : "\(baseName) copy.\(ext)"
+        var candidate = destDir.appendingPathComponent(firstName)
         var i = 2
         while fm.fileExists(atPath: candidate.path) {
             let newName = ext.isEmpty ? "\(baseName) copy \(i)" : "\(baseName) copy \(i).\(ext)"

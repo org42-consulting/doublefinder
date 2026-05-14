@@ -8,10 +8,10 @@ struct DualPaneArea: View {
         HSplitView {
             PaneView(side: .left)
                 .environmentObject(state)
-                .frame(minWidth: 380)
+                .frame(minWidth: 240)
             PaneView(side: .right)
                 .environmentObject(state)
-                .frame(minWidth: 380)
+                .frame(minWidth: 240)
             if state.showInspector {
                 InspectorView()
                     .environmentObject(state)

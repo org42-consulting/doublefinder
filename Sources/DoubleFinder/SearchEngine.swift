@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 final class SearchEngine {
     private var query: NSMetadataQuery?
-    private var observer: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
     private var continuation: AsyncStream<[URL]>.Continuation?
 
     func stream(for text: String, scopes: [Any], kind: SearchKind = .byName) -> AsyncStream<[URL]> {
@@ -41,7 +41,7 @@ final class SearchEngine {
 
             let t1 = nc.addObserver(forName: .NSMetadataQueryDidFinishGathering, object: q, queue: .main) { handler($0) }
             let t2 = nc.addObserver(forName: .NSMetadataQueryDidUpdate, object: q, queue: .main) { handler($0) }
-            self.observer = CompositeToken(tokens: [t1, t2])
+            self.observers = [t1, t2]
 
             continuation.onTermination = { [weak self] _ in
                 Task { @MainActor in self?.stopInternal() }
@@ -63,16 +63,9 @@ final class SearchEngine {
             q.stop()
             query = nil
         }
-        if let observer = observer as? CompositeToken {
-            for t in observer.tokens {
-                NotificationCenter.default.removeObserver(t)
-            }
+        for t in observers {
+            NotificationCenter.default.removeObserver(t)
         }
-        observer = nil
+        observers = []
     }
-}
-
-private final class CompositeToken: NSObject {
-    let tokens: [NSObjectProtocol]
-    init(tokens: [NSObjectProtocol]) { self.tokens = tokens }
 }

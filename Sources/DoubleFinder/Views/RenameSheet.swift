@@ -53,7 +53,7 @@ struct RenameSheet: View {
 
     private func commit() {
         guard canCommit else { dismiss(); return }
-        prompt.onCommit(newName)
+        prompt.onCommit(newName.trimmingCharacters(in: .whitespacesAndNewlines))
         dismiss()
     }
 }

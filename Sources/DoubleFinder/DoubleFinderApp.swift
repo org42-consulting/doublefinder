@@ -15,6 +15,11 @@ struct DoubleFinderApp: App {
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About DoubleFinder") {
+                    NSApp.orderFrontStandardAboutPanel(options: aboutPanelOptions())
+                }
+            }
             ToolbarCommands()
             CommandGroup(after: .pasteboard) {
                 Button("Get Info") {
@@ -89,4 +94,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+}
+
+private func aboutPanelOptions() -> [NSApplication.AboutPanelOptionKey: Any] {
+    var options: [NSApplication.AboutPanelOptionKey: Any] = [:]
+
+    if let url = Bundle.module.url(forResource: "doublefinder", withExtension: "png"),
+       let image = NSImage(contentsOf: url) {
+        options[.applicationIcon] = image
+    }
+
+    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    options[.applicationVersion] = version
+
+    let small = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+    let para = NSMutableParagraphStyle()
+    para.alignment = .center
+
+    let credits = NSMutableAttributedString()
+    let baseAttrs: [NSAttributedString.Key: Any] = [
+        .font: small,
+        .foregroundColor: NSColor.secondaryLabelColor,
+        .paragraphStyle: para
+    ]
+    credits.append(NSAttributedString(
+        string: "A native dual-pane file manager for macOS.\n\nBrought to you by ",
+        attributes: baseAttrs
+    ))
+    var linkAttrs = baseAttrs
+    linkAttrs[.link] = URL(string: "https://org42.net")!
+    linkAttrs[.foregroundColor] = NSColor.linkColor
+    credits.append(NSAttributedString(string: "Org42.", attributes: linkAttrs))
+
+    options[.credits] = credits
+    return options
 }

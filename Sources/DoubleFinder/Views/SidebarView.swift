@@ -15,6 +15,7 @@ struct SidebarSection: Identifiable {
 
 struct SidebarView: View {
     @EnvironmentObject var state: WindowState
+    @State private var isDropTargeted: Bool = false
 
     private var staticSections: [SidebarSection] {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -45,7 +46,7 @@ struct SidebarView: View {
     var body: some View {
         List {
             // Reorderable Favourites
-            Section("Favourites") {
+            Section {
                 ForEach($state.favourites) { $fav in
                     favouriteRow(fav)
                 }
@@ -55,7 +56,17 @@ struct SidebarView: View {
                 .onDelete { offsets in
                     state.favourites.remove(atOffsets: offsets)
                 }
+            } header: {
+                HStack(spacing: 4) {
+                    Text("Favourites")
+                    if isDropTargeted {
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundStyle(Color.accentColor)
+                            .transition(.opacity)
+                    }
+                }
             }
+
             // Static sections
             ForEach(staticSections) { section in
                 Section(section.title) {
@@ -66,6 +77,30 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .dropDestination(for: URL.self) { urls, _ in
+            addFavourites(urls)
+            return true
+        } isTargeted: { targeted in
+            withAnimation(.easeInOut(duration: 0.1)) {
+                isDropTargeted = targeted
+            }
+        }
+    }
+
+    private func addFavourites(_ urls: [URL]) {
+        let existing = Set(state.favourites.map { $0.url.standardizedFileURL })
+        for url in urls {
+            let std = url.standardizedFileURL
+            guard !existing.contains(std) else { continue }
+            let isDir = (try? std.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            guard isDir else { continue }
+            let name = std.lastPathComponent.isEmpty ? "/" : std.lastPathComponent
+            state.favourites.append(SidebarFavourite(
+                title: name,
+                systemImage: "folder",
+                path: std.path
+            ))
+        }
     }
 
     @ViewBuilder

@@ -127,7 +127,7 @@ struct WindowView: View {
         let tab = state.focusedPane.activeTab
 
         ToolbarItem(id: "view-mode", placement: .principal) {
-            HStack(spacing: 1) {
+            HStack(spacing: 2) {
                 viewModeButton(.icon,    systemImage: "square.grid.2x2",     help: "Icon view")
                 viewModeButton(.list,    systemImage: "list.bullet",         help: "List view")
                 viewModeButton(.column,  systemImage: "rectangle.split.3x1", help: "Column view")
@@ -173,8 +173,8 @@ struct WindowView: View {
             tab.viewMode = mode
         } label: {
             Image(systemName: systemImage)
-                .font(.system(size: 13))
-                .frame(width: 28, height: 22)
+                .font(.system(size: 15))
+                .frame(width: 36, height: 28)
                 .background(
                     isActive ? Color.accentColor.opacity(0.22) : Color.clear,
                     in: Capsule()

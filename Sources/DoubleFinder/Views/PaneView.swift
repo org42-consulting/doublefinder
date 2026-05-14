@@ -245,6 +245,8 @@ struct PathBarView: View {
     @State private var editing: Bool = false
     @State private var draft: String = ""
     @FocusState private var fieldFocused: Bool
+    @State private var suggestions: [URL] = []
+    @State private var suggestionsShown: Bool = false
 
     private var crumbs: [(name: String, url: URL)] {
         var parts: [(String, URL)] = []
@@ -267,6 +269,12 @@ struct PathBarView: View {
                     .focused($fieldFocused)
                     .onSubmit { commit() }
                     .onExitCommand { cancel() }
+                    .onChange(of: draft) { _, _ in
+                        updateSuggestions()
+                    }
+                    .popover(isPresented: $suggestionsShown, arrowEdge: .top) {
+                        suggestionsList
+                    }
             } else {
                 crumbsView
             }
@@ -283,8 +291,81 @@ struct PathBarView: View {
         .padding(.horizontal, 12)
         .onChange(of: url) { _, _ in
             // changes to the underlying path bail out of edit mode
-            if editing { editing = false }
+            if editing { editing = false; suggestionsShown = false }
         }
+    }
+
+    private var suggestionsList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(suggestions, id: \.self) { candidate in
+                Button {
+                    pick(candidate)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder.fill")
+                            .foregroundStyle(Color.accentColor)
+                        Text((candidate.path as NSString).abbreviatingWithTildeInPath)
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                }
+                .buttonStyle(.plain)
+                .background(Color.clear)
+            }
+        }
+        .frame(width: 320)
+        .padding(.vertical, 4)
+    }
+
+    private func updateSuggestions() {
+        let expanded = (draft as NSString).expandingTildeInPath
+        let fm = FileManager.default
+
+        // Determine the directory to search and the prefix to match
+        let parent: URL
+        let prefix: String
+        if expanded.hasSuffix("/") {
+            parent = URL(fileURLWithPath: expanded)
+            prefix = ""
+        } else {
+            let parentPath = (expanded as NSString).deletingLastPathComponent
+            parent = URL(fileURLWithPath: parentPath.isEmpty ? "/" : parentPath)
+            prefix = (expanded as NSString).lastPathComponent
+        }
+
+        guard let contents = try? fm.contentsOfDirectory(
+            at: parent,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            suggestions = []
+            suggestionsShown = false
+            return
+        }
+
+        let dirs = contents.filter {
+            let isDir = (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            guard isDir else { return false }
+            if prefix.isEmpty { return true }
+            return $0.lastPathComponent.lowercased().hasPrefix(prefix.lowercased())
+        }
+        suggestions = Array(dirs.sorted {
+            $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+        }.prefix(8))
+        suggestionsShown = !suggestions.isEmpty
+    }
+
+    private func pick(_ candidate: URL) {
+        let withTilde = (candidate.path as NSString).abbreviatingWithTildeInPath
+        draft = withTilde + "/"
+        suggestionsShown = false
+        // Re-focus the field so the user can keep typing
+        DispatchQueue.main.async { fieldFocused = true }
     }
 
     private var crumbsView: some View {

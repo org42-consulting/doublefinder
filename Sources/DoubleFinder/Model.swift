@@ -112,6 +112,7 @@ extension Notification.Name {
     static let openSelectionRequested = Notification.Name("doublefinder.openSelection")
     static let openTerminalRequested = Notification.Name("doublefinder.openTerminal")
     static let addToSidebarRequested = Notification.Name("doublefinder.addToSidebar")
+    static let toggleInspectorRequested = Notification.Name("doublefinder.toggleInspector")
 }
 
 // MARK: - TabState
@@ -370,6 +371,7 @@ final class WindowState: ObservableObject {
     @Published var getInfoPrompt: GetInfoPrompt?
     @Published var batchRenamePrompt: BatchRenamePrompt?
     @Published var favourites: [SidebarFavourite] = SidebarFavourite.defaults
+    @Published var showInspector: Bool = false
 
     private var observerTokens: [NSObjectProtocol] = []
 
@@ -491,6 +493,11 @@ final class WindowState: ObservableObject {
         observerTokens.append(nc.addObserver(forName: .addToSidebarRequested, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.addFocusedURLToSidebar()
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .toggleInspectorRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.showInspector.toggle()
             }
         })
     }

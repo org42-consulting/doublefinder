@@ -20,6 +20,11 @@ struct DoubleFinderApp: App {
                 }
                 .keyboardShortcut("i", modifiers: [.command])
 
+                Button("Show Inspector") {
+                    NotificationCenter.default.post(name: .toggleInspectorRequested, object: nil)
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+
                 Divider()
 
                 Button("Empty Trash…") {

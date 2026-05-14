@@ -13,6 +13,11 @@ struct DualPaneArea: View {
                 PaneView(side: .right)
                     .environmentObject(state)
                     .frame(minWidth: 380)
+                if state.showInspector {
+                    InspectorView()
+                        .environmentObject(state)
+                        .frame(minWidth: 220, idealWidth: 260, maxWidth: 360)
+                }
             }
             .dropDestination(for: SidebarFavourite.self) { favs, _ in
                 for fav in favs {

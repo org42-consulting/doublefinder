@@ -41,28 +41,6 @@ struct DualPaneArea: View {
                     .allowsHitTesting(false)
             }
         }
-        .overlay(alignment: .topTrailing) {
-            if !state.showInspector {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        state.showInspector = true
-                    }
-                } label: {
-                    Label("Show Inspector", systemImage: "sidebar.right")
-                        .labelStyle(.titleAndIcon)
-                        .font(.system(size: 12, weight: .medium))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                }
-                .buttonStyle(.plain)
-                .glassEffect(in: Capsule())
-                .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
-                .padding(.top, 10)
-                .padding(.trailing, 12)
-                .transition(.opacity.combined(with: .move(edge: .trailing)))
-                .help("Open the inspector (⌥⌘I)")
-            }
-        }
         .sheet(item: $state.conflict) { prompt in
             ConflictSheet(prompt: prompt)
         }

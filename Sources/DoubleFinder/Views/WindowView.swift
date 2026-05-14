@@ -120,6 +120,17 @@ struct WindowView: View {
             .keyboardShortcut(.delete, modifiers: [.command])
             .help("Move to Trash (⌘⌫)")
         }
+
+        ToolbarItem(id: "inspector", placement: .navigation) {
+            Button {
+                state.showInspector.toggle()
+            } label: {
+                Image(systemName: state.showInspector ? "sidebar.trailing" : "sidebar.right")
+                    .foregroundStyle(state.showInspector ? Color.accentColor : Color.primary)
+            }
+            .help(state.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+            .keyboardShortcut("i", modifiers: [.command, .option])
+        }
     }
 
     @ToolbarContentBuilder
@@ -138,17 +149,6 @@ struct WindowView: View {
         ToolbarItem(id: "transfer", placement: .primaryAction) {
             TransferQueueButton()
                 .environmentObject(state)
-        }
-
-        ToolbarItem(id: "inspector", placement: .primaryAction) {
-            Button {
-                state.showInspector.toggle()
-            } label: {
-                Image(systemName: state.showInspector ? "sidebar.trailing" : "sidebar.right")
-                    .foregroundStyle(state.showInspector ? Color.accentColor : Color.primary)
-            }
-            .help(state.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
-            .keyboardShortcut("i", modifiers: [.command, .option])
         }
 
         ToolbarItem(id: "search", placement: .primaryAction) {

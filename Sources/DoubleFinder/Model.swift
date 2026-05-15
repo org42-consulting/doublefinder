@@ -371,6 +371,13 @@ final class TabState: ObservableObject, Identifiable {
         }
     }
 
+    var transport: any FileTransport {
+        if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
+            return SFTPFileTransport(endpoint: endpoint)
+        }
+        return LocalFileTransport()
+    }
+
     var canBack: Bool { !history.isEmpty }
     var canForward: Bool { !future.isEmpty }
 
@@ -416,42 +423,18 @@ final class TabState: ObservableObject, Identifiable {
 
     func refresh() async {
         let target = url
-        let options: FileManager.DirectoryEnumerationOptions = showHidden ? [] : [.skipsHiddenFiles]
-        let result: Result<[FSNode], Error> = await Task.detached(priority: .userInitiated) {
-            let fm = FileManager.default
-            do {
-                let contents = try fm.contentsOfDirectory(
-                    at: target,
-                    includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
-                    options: options
-                )
-                let mapped: [FSNode] = contents.map { u in
-                    let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-                    var isDir: ObjCBool = false
-                    fm.fileExists(atPath: u.path, isDirectory: &isDir)
-                    return FSNode(
-                        url: u,
-                        isDirectory: isDir.boolValue,
-                        size: v?.fileSize.map(Int64.init),
-                        modified: v?.contentModificationDate,
-                        tags: TagStore.tags(for: u),
-                        gitStatus: nil
-                    )
-                }
-                return .success(mapped)
-            } catch {
-                return .failure(error)
-            }
-        }.value
-
-        switch result {
-        case .success(let list):
-            self.nodes = sorted(list)
+        let useHiddenFilter = !showHidden
+        do {
+            let raw = try await transport.list(target)
+            let filtered = useHiddenFilter ? raw.filter { !$0.name.hasPrefix(".") } : raw
+            self.nodes = sorted(filtered)
             self.loadError = nil
-            await decorateWithGitStatus()
-        case .failure(let err):
+            if !target.isRemoteSFTP {
+                await decorateWithGitStatus()
+            }
+        } catch {
             self.nodes = []
-            self.loadError = err.localizedDescription
+            self.loadError = error.localizedDescription
         }
     }
 

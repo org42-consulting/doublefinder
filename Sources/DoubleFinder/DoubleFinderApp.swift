@@ -1,7 +1,51 @@
 import SwiftUI
 import AppKit
 
-@main
+private enum SmokeRunner {
+    static func runIfRequested() -> Bool {
+        let args = CommandLine.arguments
+        guard args.count >= 2 else { return false }
+        switch args[1] {
+        case "--pty-smoke":
+            ptySmoke()
+            exit(0)
+        default:
+            return false
+        }
+    }
+
+    private static func ptySmoke() {
+        print("[pty-smoke] spawning /bin/cat")
+        let received = NSMutableData()
+        let done = DispatchSemaphore(value: 0)
+        do {
+            let channel = try PtyChannel(
+                executable: "/bin/cat",
+                arguments: ["cat"],
+                onBytes: { data in
+                    received.append(data)
+                    let s = String(data: received as Data, encoding: .utf8) ?? ""
+                    if s.contains("hello\r\n") || s.contains("hello\n") {
+                        done.signal()
+                    }
+                },
+                onExit: { code in print("[pty-smoke] child exited \(code)") }
+            )
+            channel.write(Data("hello\n".utf8))
+            let result = done.wait(timeout: .now() + .seconds(3))
+            channel.terminate()
+            if result == .timedOut {
+                print("[pty-smoke] FAIL: did not see echo within 3s. Buffer: \(String(data: received as Data, encoding: .utf8) ?? "<non-utf8>")")
+                exit(1)
+            }
+            print("[pty-smoke] OK")
+        } catch {
+            print("[pty-smoke] FAIL: \(error)")
+            exit(1)
+        }
+    }
+}
+
 struct DoubleFinderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @AppStorage(SettingsKey.forceDarkMode) private var forceDarkMode: Bool = false
@@ -128,4 +172,12 @@ private func aboutPanelOptions() -> [NSApplication.AboutPanelOptionKey: Any] {
 
     options[.credits] = credits
     return options
+}
+
+@main
+enum AppMain {
+    static func main() {
+        if SmokeRunner.runIfRequested() { return }
+        DoubleFinderApp.main()
+    }
 }

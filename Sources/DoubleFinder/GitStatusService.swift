@@ -12,6 +12,7 @@ actor GitStatusService {
     /// Returns `[absolute child URL : state]` for entries inside `directory`,
     /// aggregating descendant changes onto the directory entries themselves.
     func statuses(in directory: URL) async -> [URL: GitFileState] {
+        guard !directory.isRemoteSFTP else { return [:] }
         let repoMap = await repoStatuses(for: directory)
         guard !repoMap.isEmpty else { return [:] }
         let stdDir = directory.standardizedFileURL.path

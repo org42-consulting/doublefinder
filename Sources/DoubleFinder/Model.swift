@@ -292,6 +292,10 @@ final class TabState: ObservableObject, Identifiable {
     }
 
     private func restartWatching() {
+        guard !url.isRemoteSFTP else {
+            watcher.stop()
+            return
+        }
         watcher.start(at: url)
     }
 

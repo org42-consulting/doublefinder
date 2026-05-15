@@ -68,7 +68,41 @@ struct FileAreaView: View {
         case .column:
             ColumnView(tab: tab, side: side, onActivate: { state.focus = side })
         case .gallery:
-            GalleryView(tab: tab, side: side)
+            if tab.url.isRemoteSFTP {
+                NSTableListView(
+                    tab: tab,
+                    side: side,
+                    onActivate: { state.focus = side },
+                    onTrash: { urls in trashURLs(urls) },
+                    onCopyToOther: { urls in
+                        CopyMoveCoordinator.copy(urls, to: state.otherPane.activeTab, from: tab, via: state)
+                    },
+                    onMoveToOther: { urls in
+                        CopyMoveCoordinator.move(urls, to: state.otherPane.activeTab, from: tab, via: state)
+                    },
+                    onQuickLook: { urls in
+                        QuickLookCoordinator.shared.show(tab.nodes.map(\.url), startAt: urls.first)
+                    },
+                    onMenuNeeded: { menu, urls, dir in
+                        if urls.isEmpty {
+                            FileContextMenu.populateBackground(menu, directory: dir, tab: tab, state: state)
+                        } else {
+                            FileContextMenu.populate(
+                                menu,
+                                urls: urls,
+                                directory: dir,
+                                tab: tab,
+                                state: state,
+                                onQuickLook: { qlUrls in
+                                    QuickLookCoordinator.shared.show(qlUrls, startAt: qlUrls.first)
+                                }
+                            )
+                        }
+                    }
+                )
+            } else {
+                GalleryView(tab: tab, side: side)
+            }
         }
     }
 

@@ -305,7 +305,7 @@ actor SFTPSession {
                 readyContinuation = nil
                 cont.resume(throwing: SessionError.authFailed(reason))
             }
-        case .ready, .closed:
+        case .ready:
             state = .disconnected(reason: reason)
             // Notify subscribers.
             for h in disconnectObservers { h(reason) }
@@ -314,6 +314,8 @@ actor SFTPSession {
             commandInFlight = nil
             commandQueue.removeAll()
             for ctx in all { ctx.continuation.resume(throwing: SessionError.disconnected(reason)) }
+        case .closed:
+            break  // already torn down by close()
         case .authFailed, .disconnected:
             break
         }

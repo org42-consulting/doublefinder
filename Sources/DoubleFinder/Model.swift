@@ -116,6 +116,19 @@ struct ConflictPrompt: Identifiable {
     let onResolve: (ConflictResolution?) -> Void   // nil = cancel
 }
 
+struct RemotePrompt: Identifiable {
+    let id = UUID()
+    let prompt: SFTPPrompt
+    let endpoint: RemoteEndpoint
+    let onResolve: (String?) -> Void   // nil means cancelled
+}
+
+struct ConnectError: Identifiable {
+    let id = UUID()
+    let endpoint: RemoteEndpoint
+    let message: String
+}
+
 struct RenamePromptModel: Identifiable {
     let id = UUID()
     let url: URL
@@ -538,6 +551,8 @@ final class WindowState: ObservableObject {
     @Published var right: PaneState
     @Published var focus: PaneSide = .left
     @Published var conflict: ConflictPrompt?
+    @Published var remotePrompt: RemotePrompt? = nil
+    @Published var connectError: ConnectError? = nil
     @Published var renamePrompt: RenamePromptModel?
     @Published var goToPrompt: GoToFolderPrompt?
     @Published var getInfoPrompt: GetInfoPrompt?
@@ -743,9 +758,18 @@ final class WindowState: ObservableObject {
         focus = (focus == .left) ? .right : .left
     }
 
-    /// Present a remote-auth prompt and await the user's reply. Stub — real implementation in Task 7.3.
     func presentRemotePrompt(_ prompt: SFTPPrompt, endpoint: RemoteEndpoint) async -> String? {
-        print("[stub] presentRemotePrompt called for \(prompt) on \(endpoint.canonicalAccount)")
-        return nil
+        await withCheckedContinuation { cont in
+            // For password prompts, try Keychain first (silent reply).
+            if case .password = prompt,
+               let saved = RemoteServerStore.shared.retrievePassword(for: endpoint) {
+                cont.resume(returning: saved)
+                return
+            }
+            self.remotePrompt = RemotePrompt(prompt: prompt, endpoint: endpoint) { reply in
+                self.remotePrompt = nil
+                cont.resume(returning: reply)
+            }
+        }
     }
 }

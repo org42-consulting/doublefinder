@@ -236,6 +236,8 @@ final class TabState: ObservableObject, Identifiable {
     }
     @Published var searchKind: SearchKind = .byName
 
+    weak var window: WindowState?
+
     private var history: [URL] = []
     private var future: [URL] = []
     private let watcher = DirectoryWatcher()
@@ -474,6 +476,42 @@ final class TabState: ObservableObject, Identifiable {
             self.nodes = []
             self.loadError = error.localizedDescription
         }
+        if target.isRemoteSFTP {
+            await subscribeToSessionDisconnectIfNeeded()
+            if loadError == nil { connectionState = .remoteConnected }
+        }
+    }
+
+    private var disconnectSubscribed: Set<RemoteEndpoint> = []
+
+    private func subscribeToSessionDisconnectIfNeeded() async {
+        guard let endpoint = url.sftpEndpoint else { return }
+        guard !disconnectSubscribed.contains(endpoint) else { return }
+        disconnectSubscribed.insert(endpoint)
+        guard let session = RemoteSessionManager.shared.existingSession(for: endpoint) else { return }
+        await session.onDisconnect { [weak self] reason in
+            Task { @MainActor in self?.handleSessionDisconnect(reason: reason, endpoint: endpoint) }
+        }
+    }
+
+    @MainActor
+    private func handleSessionDisconnect(reason: String, endpoint: RemoteEndpoint) {
+        guard url.sftpEndpoint == endpoint else { return }
+        connectionState = .remoteReconnecting
+        Task { @MainActor in
+            RemoteSessionManager.shared.release(endpoint)
+            guard let window = window else {
+                connectionState = .remoteDisconnected(reason: reason)
+                return
+            }
+            do {
+                _ = try await RemoteSessionManager.shared.acquire(endpoint, in: window)
+                await self.refresh()
+                connectionState = .remoteConnected
+            } catch {
+                connectionState = .remoteDisconnected(reason: error.localizedDescription)
+            }
+        }
     }
 
     private func decorateWithGitStatus() async {
@@ -521,6 +559,7 @@ final class PaneState: ObservableObject, Identifiable {
     let id = UUID()
     @Published var tabs: [TabState]
     @Published var activeTabID: TabState.ID
+    weak var window: WindowState?
 
     init(url: URL) {
         let t = TabState(url: url)
@@ -551,6 +590,7 @@ final class PaneState: ObservableObject, Identifiable {
 
     func addTab(url: URL) {
         let t = TabState(url: url)
+        t.window = window
         tabs.append(t)
         activeTabID = t.id
     }
@@ -614,6 +654,10 @@ final class WindowState: ObservableObject {
             self.left = PaneState(url: safe)
             self.right = PaneState(url: safe)
         }
+        for tab in left.tabs { tab.window = self }
+        for tab in right.tabs { tab.window = self }
+        left.window = self
+        right.window = self
         registerCommandObservers()
         registerPersistenceHook()
     }

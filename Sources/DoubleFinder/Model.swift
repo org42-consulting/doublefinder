@@ -400,18 +400,18 @@ final class TabState: ObservableObject, Identifiable {
     var canForward: Bool { !future.isEmpty }
 
     func navigate(to newURL: URL) {
-        let wasRemote = url.isRemoteSFTP
-        let willBeRemote = newURL.isRemoteSFTP
-        let oldEndpoint = url.sftpEndpoint
-        let newEndpoint = newURL.sftpEndpoint
+        let resolved = newURL.resolvingSymlinksInPath()
+        guard resolved.standardizedFileURL != url.standardizedFileURL else { return }
 
-        // Refcount sessions when crossing remote boundaries (or changing endpoints).
+        // Session refcount: now that we know we're actually navigating, release the old endpoint if different.
+        let wasRemote = url.isRemoteSFTP
+        let willBeRemote = resolved.isRemoteSFTP
+        let oldEndpoint = url.sftpEndpoint
+        let newEndpoint = resolved.sftpEndpoint
         if let oldEndpoint, oldEndpoint != newEndpoint {
             RemoteSessionManager.shared.release(oldEndpoint)
         }
 
-        let resolved = newURL.resolvingSymlinksInPath()
-        guard resolved.standardizedFileURL != url.standardizedFileURL else { return }
         history.append(url)
         future.removeAll()
         url = resolved

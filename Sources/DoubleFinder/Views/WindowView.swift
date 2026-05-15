@@ -306,7 +306,8 @@ private struct SearchToolbarItem: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("Search scope: \(tab.searchScope.displayName)")
+            .disabled(tab.url.isRemoteSFTP)
+            .help(tab.url.isRemoteSFTP ? "Search is not available for remote folders" : "Search scope: \(tab.searchScope.displayName)")
 
             ZStack(alignment: .trailing) {
                 TextField("Search", text: Binding(
@@ -324,6 +325,7 @@ private struct SearchToolbarItem: View {
                         return .handled
                     }
                     .frame(width: 220)
+                    .disabled(tab.url.isRemoteSFTP)
 
                 if !tab.searchText.isEmpty {
                     Button {

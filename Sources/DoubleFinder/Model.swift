@@ -197,6 +197,8 @@ extension Notification.Name {
     static let openTerminalRequested = Notification.Name("doublefinder.openTerminal")
     static let addToSidebarRequested = Notification.Name("doublefinder.addToSidebar")
     static let toggleInspectorRequested = Notification.Name("doublefinder.toggleInspector")
+    static let connectToServerRequested = Notification.Name("df.connectToServerRequested")
+    static let manageConnectionsRequested = Notification.Name("df.manageConnectionsRequested")
 }
 
 // MARK: - TabState

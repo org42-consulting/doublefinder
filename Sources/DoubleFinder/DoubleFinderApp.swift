@@ -108,6 +108,16 @@ struct DoubleFinderApp: App {
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
+            CommandGroup(after: .newItem) {
+                Button("Connect to Server…") {
+                    NotificationCenter.default.post(name: .connectToServerRequested, object: nil)
+                }
+                .keyboardShortcut("k", modifiers: [.command])
+                Button("Manage Connections…") {
+                    NotificationCenter.default.post(name: .manageConnectionsRequested, object: nil)
+                }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
+            }
             CommandGroup(replacing: .appInfo) {
                 Button("About DoubleFinder") {
                     NSApp.orderFrontStandardAboutPanel(options: aboutPanelOptions())

@@ -3,6 +3,7 @@ import SwiftUI
 struct DualPaneArea: View {
     @EnvironmentObject var state: WindowState
     @State private var favouriteDropTargeted: Bool = false
+    @State private var showConnectSheet = false
 
     var body: some View {
         HSplitView {
@@ -95,6 +96,13 @@ struct DualPaneArea: View {
             ConnectErrorSheet(endpoint: err.endpoint, message: err.message) {
                 state.connectError = nil
             }
+        }
+        .sheet(isPresented: $showConnectSheet) {
+            ConnectSheet { showConnectSheet = false }
+                .environmentObject(state)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .connectToServerRequested)) { _ in
+            showConnectSheet = true
         }
     }
 }

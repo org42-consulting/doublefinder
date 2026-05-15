@@ -106,7 +106,11 @@ struct FileListView: View {
         let selectedURLs = self.urls(for: ids)
         let startURL = selectedURLs.first
         let allURLs = tab.nodes.map(\.url)
-        QuickLookCoordinator.shared.show(allURLs, startAt: startURL)
+        if allURLs.contains(where: \.isRemoteSFTP) {
+            Task { @MainActor in await QuickLookCoordinator.shared.showAsync(allURLs, startAt: startURL) }
+        } else {
+            QuickLookCoordinator.shared.show(allURLs, startAt: startURL)
+        }
     }
 
     private func copySelection(_ ids: Set<FSNode.ID>) {

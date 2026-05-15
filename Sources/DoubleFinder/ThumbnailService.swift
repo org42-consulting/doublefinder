@@ -15,6 +15,7 @@ final class ThumbnailService {
     }
 
     func thumbnail(for url: URL, size: CGSize, scale: CGFloat = 2.0) async -> NSImage? {
+        guard !url.isRemoteSFTP else { return nil }
         let key = url as NSURL
         if let img = cache.object(forKey: key) { return img }
 

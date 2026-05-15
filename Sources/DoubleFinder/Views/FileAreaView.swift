@@ -10,16 +10,21 @@ struct FileAreaView: View {
     @EnvironmentObject var state: WindowState
 
     var body: some View {
-        ZStack {
-            content
-            if showEmptyState {
-                ContentUnavailableView {
-                    Label("No results", systemImage: "magnifyingglass")
-                } description: {
-                    Text("No items matching \"\(tab.searchText)\" in \(scopeDescription)")
+        switch tab.connectionState {
+        case .local, .remoteConnected:
+            ZStack {
+                content
+                if showEmptyState {
+                    ContentUnavailableView {
+                        Label("No results", systemImage: "magnifyingglass")
+                    } description: {
+                        Text("No items matching \"\(tab.searchText)\" in \(scopeDescription)")
+                    }
+                    .allowsHitTesting(false)
                 }
-                .allowsHitTesting(false)
             }
+        case .remoteReconnecting, .remoteDisconnected:
+            RemoteDisconnectedPlaceholder(tab: tab)
         }
     }
 
@@ -39,7 +44,12 @@ struct FileAreaView: View {
                     CopyMoveCoordinator.move(urls, to: state.otherPane.activeTab, from: tab, via: state)
                 },
                 onQuickLook: { urls in
-                    QuickLookCoordinator.shared.show(tab.nodes.map(\.url), startAt: urls.first)
+                    let allURLs = tab.nodes.map(\.url)
+                    if allURLs.contains(where: \.isRemoteSFTP) {
+                        Task { @MainActor in await QuickLookCoordinator.shared.showAsync(allURLs, startAt: urls.first) }
+                    } else {
+                        QuickLookCoordinator.shared.show(allURLs, startAt: urls.first)
+                    }
                 },
                 onMenuNeeded: { menu, urls, dir in
                     if urls.isEmpty {
@@ -52,7 +62,11 @@ struct FileAreaView: View {
                             tab: tab,
                             state: state,
                             onQuickLook: { qlUrls in
-                                QuickLookCoordinator.shared.show(qlUrls, startAt: qlUrls.first)
+                                if qlUrls.contains(where: \.isRemoteSFTP) {
+                                    Task { @MainActor in await QuickLookCoordinator.shared.showAsync(qlUrls, startAt: qlUrls.first) }
+                                } else {
+                                    QuickLookCoordinator.shared.show(qlUrls, startAt: qlUrls.first)
+                                }
                             }
                         )
                     }
@@ -63,7 +77,50 @@ struct FileAreaView: View {
         case .column:
             ColumnView(tab: tab, side: side, onActivate: { state.focus = side })
         case .gallery:
-            GalleryView(tab: tab, side: side)
+            if tab.url.isRemoteSFTP {
+                NSTableListView(
+                    tab: tab,
+                    side: side,
+                    onActivate: { state.focus = side },
+                    onTrash: { urls in trashURLs(urls) },
+                    onCopyToOther: { urls in
+                        CopyMoveCoordinator.copy(urls, to: state.otherPane.activeTab, from: tab, via: state)
+                    },
+                    onMoveToOther: { urls in
+                        CopyMoveCoordinator.move(urls, to: state.otherPane.activeTab, from: tab, via: state)
+                    },
+                    onQuickLook: { urls in
+                        let allURLs = tab.nodes.map(\.url)
+                        if allURLs.contains(where: \.isRemoteSFTP) {
+                            Task { @MainActor in await QuickLookCoordinator.shared.showAsync(allURLs, startAt: urls.first) }
+                        } else {
+                            QuickLookCoordinator.shared.show(allURLs, startAt: urls.first)
+                        }
+                    },
+                    onMenuNeeded: { menu, urls, dir in
+                        if urls.isEmpty {
+                            FileContextMenu.populateBackground(menu, directory: dir, tab: tab, state: state)
+                        } else {
+                            FileContextMenu.populate(
+                                menu,
+                                urls: urls,
+                                directory: dir,
+                                tab: tab,
+                                state: state,
+                                onQuickLook: { qlUrls in
+                                    if qlUrls.contains(where: \.isRemoteSFTP) {
+                                        Task { @MainActor in await QuickLookCoordinator.shared.showAsync(qlUrls, startAt: qlUrls.first) }
+                                    } else {
+                                        QuickLookCoordinator.shared.show(qlUrls, startAt: qlUrls.first)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                )
+            } else {
+                GalleryView(tab: tab, side: side)
+            }
         }
     }
 

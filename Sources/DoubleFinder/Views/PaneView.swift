@@ -201,7 +201,7 @@ private struct TabChip: View {
     @State private var hovering: Bool = false
 
     var body: some View {
-        let title = tab.url.lastPathComponent.isEmpty ? "/" : tab.url.lastPathComponent
+        let title = tab.displayTitle
         HStack(spacing: 6) {
             Image(systemName: "folder.fill")
                 .font(.system(size: 10))

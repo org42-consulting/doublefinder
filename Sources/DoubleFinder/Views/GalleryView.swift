@@ -25,7 +25,12 @@ struct GalleryView: View {
         }
         .onKeyPress(.space) {
             if let id = tab.selection.first, let node = tab.nodes.first(where: { $0.id == id }) {
-                QuickLookCoordinator.shared.show(tab.nodes.map(\.url), startAt: node.url)
+                let allURLs = tab.nodes.map(\.url)
+                if allURLs.contains(where: \.isRemoteSFTP) {
+                    Task { @MainActor in await QuickLookCoordinator.shared.showAsync(allURLs, startAt: node.url) }
+                } else {
+                    QuickLookCoordinator.shared.show(allURLs, startAt: node.url)
+                }
             }
             return .handled
         }
@@ -68,7 +73,11 @@ struct GalleryView: View {
                         tab: tab,
                         state: state,
                         onQuickLook: { urls in
-                            QuickLookCoordinator.shared.show(urls, startAt: urls.first)
+                            if urls.contains(where: \.isRemoteSFTP) {
+                                Task { @MainActor in await QuickLookCoordinator.shared.showAsync(urls, startAt: urls.first) }
+                            } else {
+                                QuickLookCoordinator.shared.show(urls, startAt: urls.first)
+                            }
                         }
                     )
                 }
@@ -107,7 +116,11 @@ struct GalleryView: View {
                             tab: tab,
                             state: state,
                             onQuickLook: { urls in
-                                QuickLookCoordinator.shared.show(urls, startAt: urls.first)
+                                if urls.contains(where: \.isRemoteSFTP) {
+                                    Task { @MainActor in await QuickLookCoordinator.shared.showAsync(urls, startAt: urls.first) }
+                                } else {
+                                    QuickLookCoordinator.shared.show(urls, startAt: urls.first)
+                                }
                             }
                         )
                     }

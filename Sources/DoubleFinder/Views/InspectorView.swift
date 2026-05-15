@@ -30,13 +30,19 @@ private struct InspectorContent: View {
             header
             Divider()
             if let node = selectedNode {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        thumbView(for: node)
-                        details(for: node)
-                        tagsRow(for: node)
+                if node.url.isRemoteSFTP {
+                    ScrollView {
+                        RemoteFileInspectorRows(node: node)
                     }
-                    .padding(14)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            thumbView(for: node)
+                            details(for: node)
+                            tagsRow(for: node)
+                        }
+                        .padding(14)
+                    }
                 }
             } else {
                 emptyState
@@ -216,5 +222,28 @@ private struct InspectorContent: View {
     private func dateText(_ key: URLResourceKey) -> String {
         guard let d = attrs[key] as? Date else { return "—" }
         return Self.dateFormatter.string(from: d)
+    }
+}
+
+private struct RemoteFileInspectorRows: View {
+    let node: FSNode
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            row("Name", node.name)
+            if let size = node.size {
+                row("Size", ByteCountFormatter().string(fromByteCount: size))
+            }
+            if let modified = node.modified {
+                row("Modified", modified.formatted())
+            }
+            row("Location", node.url.sftpPath)
+        }
+        .padding()
+    }
+    @ViewBuilder private func row(_ k: String, _ v: String) -> some View {
+        HStack(alignment: .top) {
+            Text(k).foregroundStyle(.secondary).frame(width: 80, alignment: .trailing)
+            Text(v).textSelection(.enabled)
+        }
     }
 }

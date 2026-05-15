@@ -1,0 +1,84 @@
+import Foundation
+
+/// Identifies a remote SFTP location's connection coordinates.
+/// Does NOT include the path on the remote — paths are carried in URLs.
+struct RemoteEndpoint: Codable, Hashable, Sendable {
+    var host: String
+    var user: String
+    var port: Int                  // 22 if unspecified
+    var identityFile: URL?         // optional explicit -i
+    var displayName: String?       // user-chosen label (UI only)
+
+    init(host: String, user: String, port: Int = 22, identityFile: URL? = nil, displayName: String? = nil) {
+        self.host = host
+        self.user = user
+        self.port = port
+        self.identityFile = identityFile
+        self.displayName = displayName
+    }
+
+    /// "user@host" or "user@host:port" when port != 22. Used for Keychain account key, sheet titles.
+    var canonicalAccount: String {
+        port == 22 ? "\(user)@\(host)" : "\(user)@\(host):\(port)"
+    }
+
+    /// What we render in tab titles and bookmark labels by default.
+    var defaultDisplayName: String {
+        displayName ?? canonicalAccount
+    }
+}
+
+extension URL {
+    /// True when this URL refers to an SFTP location.
+    var isRemoteSFTP: Bool { scheme == "sftp" }
+
+    /// Returns the endpoint encoded in this URL, or nil if not an sftp:// URL.
+    /// Note: identityFile and displayName are never carried in URLs.
+    var sftpEndpoint: RemoteEndpoint? {
+        guard scheme == "sftp", let host, let user else { return nil }
+        return RemoteEndpoint(host: host, user: user, port: port ?? 22)
+    }
+
+    /// Path component on the remote side. Always absolute (starts with "/").
+    /// Empty string is returned as "/".
+    var sftpPath: String {
+        guard scheme == "sftp" else { return path }
+        let p = path
+        return p.isEmpty ? "/" : p
+    }
+
+    /// Construct an sftp:// URL from an endpoint and an absolute remote path.
+    static func sftp(endpoint: RemoteEndpoint, path: String) -> URL {
+        var comps = URLComponents()
+        comps.scheme = "sftp"
+        comps.user = endpoint.user
+        comps.host = endpoint.host
+        if endpoint.port != 22 {
+            comps.port = endpoint.port
+        }
+        // URLComponents percent-encodes the path correctly when set as `path`.
+        comps.path = path.hasPrefix("/") ? path : "/" + path
+        return comps.url!
+    }
+
+    /// Returns a new URL with the same endpoint but a different path.
+    func sftpAppending(path component: String) -> URL? {
+        guard let endpoint = sftpEndpoint else { return nil }
+        var newPath = sftpPath
+        if !newPath.hasSuffix("/") { newPath += "/" }
+        newPath += component
+        return .sftp(endpoint: endpoint, path: newPath)
+    }
+
+    /// Parent directory of an sftp:// URL. Returns nil at the root.
+    var sftpParent: URL? {
+        guard let endpoint = sftpEndpoint else { return nil }
+        let p = sftpPath
+        if p == "/" || p.isEmpty { return nil }
+        var parts = p.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard !parts.isEmpty else { return nil }
+        parts.removeLast()
+        let parent = parts.isEmpty ? "/" : "/" + parts.joined(separator: "/")
+        return .sftp(endpoint: endpoint, path: parent)
+    }
+}

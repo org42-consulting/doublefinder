@@ -79,11 +79,21 @@ enum FileOps {
     }
 
     /// Returns source URLs whose `lastPathComponent` already exists at `destDir`.
-    static func conflicts(for sources: [URL], in destDir: URL) -> [URL] {
+    /// Async because a remote `destDir` requires an SFTP `ls -d` to check existence.
+    static func conflicts(for sources: [URL], in destDir: URL) async -> [URL] {
+        if destDir.isRemoteSFTP {
+            guard let endpoint = destDir.sftpEndpoint else { return [] }
+            let transport = await MainActor.run { SFTPFileTransport(endpoint: endpoint) }
+            var collisions: [URL] = []
+            for src in sources {
+                guard let target = destDir.sftpAppending(path: src.lastPathComponent) else { continue }
+                if await transport.exists(target) { collisions.append(src) }
+            }
+            return collisions
+        }
         let fm = FileManager.default
         return sources.filter { src in
             let target = destDir.appendingPathComponent(src.lastPathComponent)
-            // a source dropping into its own parent is a no-op, not a conflict
             if src.deletingLastPathComponent().standardizedFileURL == destDir.standardizedFileURL {
                 return false
             }

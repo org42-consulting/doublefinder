@@ -104,6 +104,13 @@ enum SearchKind: Hashable {
     case byTag
 }
 
+enum ConnectionState: Equatable {
+    case local
+    case remoteConnected
+    case remoteReconnecting
+    case remoteDisconnected(reason: String)
+}
+
 // MARK: - Conflict prompt
 
 enum ConflictResolution { case keepBoth, replace, skip }
@@ -114,6 +121,19 @@ struct ConflictPrompt: Identifiable {
     let conflicts: [URL]      // source URLs whose name already exists at the destination
     let destination: URL
     let onResolve: (ConflictResolution?) -> Void   // nil = cancel
+}
+
+struct RemotePrompt: Identifiable {
+    let id = UUID()
+    let prompt: SFTPPrompt
+    let endpoint: RemoteEndpoint
+    let onResolve: (String?) -> Void   // nil means cancelled
+}
+
+struct ConnectError: Identifiable {
+    let id = UUID()
+    let endpoint: RemoteEndpoint
+    let message: String
 }
 
 struct RenamePromptModel: Identifiable {
@@ -184,6 +204,8 @@ extension Notification.Name {
     static let openTerminalRequested = Notification.Name("doublefinder.openTerminal")
     static let addToSidebarRequested = Notification.Name("doublefinder.addToSidebar")
     static let toggleInspectorRequested = Notification.Name("doublefinder.toggleInspector")
+    static let connectToServerRequested = Notification.Name("df.connectToServerRequested")
+    static let manageConnectionsRequested = Notification.Name("df.manageConnectionsRequested")
 }
 
 // MARK: - TabState
@@ -192,6 +214,7 @@ extension Notification.Name {
 final class TabState: ObservableObject, Identifiable {
     let id = UUID()
     @Published var url: URL { didSet { restartWatching() } }
+    @Published var connectionState: ConnectionState = .local
     @Published var viewMode: ViewMode = .list
     @Published var selection: Set<FSNode.ID> = []
     @Published var nodes: [FSNode] = []
@@ -213,6 +236,8 @@ final class TabState: ObservableObject, Identifiable {
     }
     @Published var searchKind: SearchKind = .byName
 
+    weak var window: WindowState?
+
     private var history: [URL] = []
     private var future: [URL] = []
     private let watcher = DirectoryWatcher()
@@ -220,9 +245,12 @@ final class TabState: ObservableObject, Identifiable {
     private var searchTask: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
     private var gitCacheToken: NSObjectProtocol?
+    /// Mirrors `url.sftpEndpoint` so `deinit` (which is nonisolated) can read it safely.
+    nonisolated(unsafe) private var _currentSFTPEndpoint: RemoteEndpoint?
 
     init(url: URL) {
         self.url = url
+        self._currentSFTPEndpoint = url.sftpEndpoint
         watcher.onChange = { [weak self] in
             guard let self else { return }
             Task { @MainActor in
@@ -252,6 +280,9 @@ final class TabState: ObservableObject, Identifiable {
         if let token = gitCacheToken {
             NotificationCenter.default.removeObserver(token)
         }
+        if let endpoint = _currentSFTPEndpoint {
+            Task { @MainActor in RemoteSessionManager.shared.release(endpoint) }
+        }
     }
 
     convenience init(from persisted: StatePersistence.Snapshot.Pane.Tab) {
@@ -277,6 +308,10 @@ final class TabState: ObservableObject, Identifiable {
     }
 
     private func restartWatching() {
+        guard !url.isRemoteSFTP else {
+            watcher.stop()
+            return
+        }
         watcher.start(at: url)
     }
 
@@ -356,17 +391,53 @@ final class TabState: ObservableObject, Identifiable {
         }
     }
 
+    var transport: any FileTransport {
+        if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
+            return SFTPFileTransport(endpoint: endpoint)
+        }
+        return LocalFileTransport()
+    }
+
+    var displayTitle: String {
+        if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
+            let basename = (url.sftpPath as NSString).lastPathComponent
+            let leaf = basename.isEmpty ? "/" : basename
+            return "\(endpoint.host): \(leaf)"
+        }
+        return url.lastPathComponent.isEmpty ? "/" : url.lastPathComponent
+    }
+
     var canBack: Bool { !history.isEmpty }
     var canForward: Bool { !future.isEmpty }
 
     func navigate(to newURL: URL) {
         let resolved = newURL.resolvingSymlinksInPath()
         guard resolved.standardizedFileURL != url.standardizedFileURL else { return }
+
+        // Session refcount: now that we know we're actually navigating, release the old endpoint if different.
+        let wasRemote = url.isRemoteSFTP
+        let willBeRemote = resolved.isRemoteSFTP
+        let oldEndpoint = url.sftpEndpoint
+        let newEndpoint = resolved.sftpEndpoint
+        if let oldEndpoint, oldEndpoint != newEndpoint {
+            RemoteSessionManager.shared.release(oldEndpoint)
+        }
+
         history.append(url)
         future.removeAll()
         url = resolved
         selection.removeAll()
         Task { await self.refresh() }
+
+        _currentSFTPEndpoint = willBeRemote ? newEndpoint : nil
+
+        if willBeRemote {
+            connectionState = .remoteConnected
+        } else {
+            connectionState = .local
+        }
+        _ = wasRemote
+        _ = newEndpoint
     }
 
     func back() {
@@ -401,42 +472,54 @@ final class TabState: ObservableObject, Identifiable {
 
     func refresh() async {
         let target = url
-        let options: FileManager.DirectoryEnumerationOptions = showHidden ? [] : [.skipsHiddenFiles]
-        let result: Result<[FSNode], Error> = await Task.detached(priority: .userInitiated) {
-            let fm = FileManager.default
-            do {
-                let contents = try fm.contentsOfDirectory(
-                    at: target,
-                    includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
-                    options: options
-                )
-                let mapped: [FSNode] = contents.map { u in
-                    let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-                    var isDir: ObjCBool = false
-                    fm.fileExists(atPath: u.path, isDirectory: &isDir)
-                    return FSNode(
-                        url: u,
-                        isDirectory: isDir.boolValue,
-                        size: v?.fileSize.map(Int64.init),
-                        modified: v?.contentModificationDate,
-                        tags: TagStore.tags(for: u),
-                        gitStatus: nil
-                    )
-                }
-                return .success(mapped)
-            } catch {
-                return .failure(error)
-            }
-        }.value
-
-        switch result {
-        case .success(let list):
-            self.nodes = sorted(list)
+        let useHiddenFilter = !showHidden
+        do {
+            let raw = try await transport.list(target)
+            let filtered = useHiddenFilter ? raw.filter { !$0.name.hasPrefix(".") } : raw
+            self.nodes = sorted(filtered)
             self.loadError = nil
-            await decorateWithGitStatus()
-        case .failure(let err):
+            if !target.isRemoteSFTP {
+                await decorateWithGitStatus()
+            }
+        } catch {
             self.nodes = []
-            self.loadError = err.localizedDescription
+            self.loadError = error.localizedDescription
+        }
+        if target.isRemoteSFTP {
+            await subscribeToSessionDisconnectIfNeeded()
+            if loadError == nil { connectionState = .remoteConnected }
+        }
+    }
+
+    private var disconnectSubscribed: Set<RemoteEndpoint> = []
+
+    private func subscribeToSessionDisconnectIfNeeded() async {
+        guard let endpoint = url.sftpEndpoint else { return }
+        guard !disconnectSubscribed.contains(endpoint) else { return }
+        disconnectSubscribed.insert(endpoint)
+        guard let session = RemoteSessionManager.shared.existingSession(for: endpoint) else { return }
+        await session.onDisconnect { [weak self] reason in
+            Task { @MainActor in self?.handleSessionDisconnect(reason: reason, endpoint: endpoint) }
+        }
+    }
+
+    @MainActor
+    private func handleSessionDisconnect(reason: String, endpoint: RemoteEndpoint) {
+        guard url.sftpEndpoint == endpoint else { return }
+        connectionState = .remoteReconnecting
+        Task { @MainActor in
+            RemoteSessionManager.shared.release(endpoint)
+            guard let window = window else {
+                connectionState = .remoteDisconnected(reason: reason)
+                return
+            }
+            do {
+                _ = try await RemoteSessionManager.shared.acquire(endpoint, in: window)
+                await self.refresh()
+                connectionState = .remoteConnected
+            } catch {
+                connectionState = .remoteDisconnected(reason: error.localizedDescription)
+            }
         }
     }
 
@@ -485,6 +568,7 @@ final class PaneState: ObservableObject, Identifiable {
     let id = UUID()
     @Published var tabs: [TabState]
     @Published var activeTabID: TabState.ID
+    weak var window: WindowState?
 
     init(url: URL) {
         let t = TabState(url: url)
@@ -515,6 +599,7 @@ final class PaneState: ObservableObject, Identifiable {
 
     func addTab(url: URL) {
         let t = TabState(url: url)
+        t.window = window
         tabs.append(t)
         activeTabID = t.id
     }
@@ -538,6 +623,8 @@ final class WindowState: ObservableObject {
     @Published var right: PaneState
     @Published var focus: PaneSide = .left
     @Published var conflict: ConflictPrompt?
+    @Published var remotePrompt: RemotePrompt? = nil
+    @Published var connectError: ConnectError? = nil
     @Published var renamePrompt: RenamePromptModel?
     @Published var goToPrompt: GoToFolderPrompt?
     @Published var getInfoPrompt: GetInfoPrompt?
@@ -576,6 +663,10 @@ final class WindowState: ObservableObject {
             self.left = PaneState(url: safe)
             self.right = PaneState(url: safe)
         }
+        for tab in left.tabs { tab.window = self }
+        for tab in right.tabs { tab.window = self }
+        left.window = self
+        right.window = self
         registerCommandObservers()
         registerPersistenceHook()
     }
@@ -741,5 +832,20 @@ final class WindowState: ObservableObject {
 
     func toggleFocus() {
         focus = (focus == .left) ? .right : .left
+    }
+
+    func presentRemotePrompt(_ prompt: SFTPPrompt, endpoint: RemoteEndpoint) async -> String? {
+        await withCheckedContinuation { cont in
+            // For password prompts, try Keychain first (silent reply).
+            if case .password = prompt,
+               let saved = RemoteServerStore.shared.retrievePassword(for: endpoint) {
+                cont.resume(returning: saved)
+                return
+            }
+            self.remotePrompt = RemotePrompt(prompt: prompt, endpoint: endpoint) { reply in
+                self.remotePrompt = nil
+                cont.resume(returning: reply)
+            }
+        }
     }
 }

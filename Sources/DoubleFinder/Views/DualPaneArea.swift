@@ -3,6 +3,7 @@ import SwiftUI
 struct DualPaneArea: View {
     @EnvironmentObject var state: WindowState
     @State private var favouriteDropTargeted: Bool = false
+    @State private var showConnectSheet = false
 
     var body: some View {
         HSplitView {
@@ -55,6 +56,53 @@ struct DualPaneArea: View {
         }
         .sheet(item: $state.batchRenamePrompt) { prompt in
             BatchRenameSheet(prompt: prompt)
+        }
+        .sheet(item: $state.remotePrompt) { prompt in
+            Group {
+                switch prompt.prompt {
+                case .password(let label):
+                    PasswordSheet(
+                        title: "Password",
+                        prompt: "Enter password for \(label)",
+                        allowSaveToKeychain: true,
+                        onSubmit: { pw, save in
+                            if save { RemoteServerStore.shared.storePassword(pw, for: prompt.endpoint) }
+                            prompt.onResolve(pw)
+                        },
+                        onCancel: { prompt.onResolve(nil) }
+                    )
+                case .passphrase(let keyPath):
+                    PasswordSheet(
+                        title: "Key passphrase",
+                        prompt: "Enter passphrase for \(keyPath)",
+                        allowSaveToKeychain: false,
+                        onSubmit: { pw, _ in prompt.onResolve(pw) },
+                        onCancel: { prompt.onResolve(nil) }
+                    )
+                case .hostKey(let host, let keyType, let fingerprint):
+                    HostKeySheet(
+                        host: host,
+                        keyType: keyType,
+                        fingerprint: fingerprint,
+                        onAccept: { prompt.onResolve("yes") },
+                        onReject: { prompt.onResolve(nil) }
+                    )
+                case .hostKeyMismatch(let host):
+                    HostKeyMismatchSheet(host: host, onDismiss: { prompt.onResolve(nil) })
+                }
+            }
+        }
+        .sheet(item: $state.connectError) { err in
+            ConnectErrorSheet(endpoint: err.endpoint, message: err.message) {
+                state.connectError = nil
+            }
+        }
+        .sheet(isPresented: $showConnectSheet) {
+            ConnectSheet { showConnectSheet = false }
+                .environmentObject(state)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .connectToServerRequested)) { _ in
+            showConnectSheet = true
         }
     }
 }

@@ -41,6 +41,7 @@ enum TagStore {
     private static let attrName = "com.apple.metadata:_kMDItemUserTags"
 
     static func tags(for url: URL) -> [Tag] {
+        guard !url.isRemoteSFTP else { return [] }
         let path = (url.path as NSString).fileSystemRepresentation
         let size = getxattr(path, attrName, nil, 0, 0, 0)
         guard size > 0 else { return [] }

@@ -7,6 +7,9 @@ final class SearchEngine {
     private var continuation: AsyncStream<[URL]>.Continuation?
 
     func stream(for text: String, scopes: [Any], kind: SearchKind = .byName) -> AsyncStream<[URL]> {
+        if scopes.contains(where: { ($0 as? URL)?.isRemoteSFTP == true }) {
+            return AsyncStream { continuation in continuation.finish() }
+        }
         cancel()
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return AsyncStream { $0.finish() } }

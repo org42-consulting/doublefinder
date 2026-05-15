@@ -37,7 +37,11 @@ struct IconView: View {
                             tab: tab,
                             state: state,
                             onQuickLook: { urls in
-                                QuickLookCoordinator.shared.show(urls, startAt: urls.first)
+                                if urls.contains(where: \.isRemoteSFTP) {
+                                    Task { @MainActor in await QuickLookCoordinator.shared.showAsync(urls, startAt: urls.first) }
+                                } else {
+                                    QuickLookCoordinator.shared.show(urls, startAt: urls.first)
+                                }
                             }
                         )
                     }
@@ -71,7 +75,11 @@ struct IconView: View {
 
     private func quickLook(start: URL?) {
         let allURLs = tab.nodes.map(\.url)
-        QuickLookCoordinator.shared.show(allURLs, startAt: start)
+        if allURLs.contains(where: \.isRemoteSFTP) {
+            Task { @MainActor in await QuickLookCoordinator.shared.showAsync(allURLs, startAt: start) }
+        } else {
+            QuickLookCoordinator.shared.show(allURLs, startAt: start)
+        }
     }
 }
 

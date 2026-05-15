@@ -742,4 +742,10 @@ final class WindowState: ObservableObject {
     func toggleFocus() {
         focus = (focus == .left) ? .right : .left
     }
+
+    /// Present a remote-auth prompt and await the user's reply. Stub — real implementation in Task 7.3.
+    func presentRemotePrompt(_ prompt: SFTPPrompt, endpoint: RemoteEndpoint) async -> String? {
+        print("[stub] presentRemotePrompt called for \(prompt) on \(endpoint.canonicalAccount)")
+        return nil
+    }
 }

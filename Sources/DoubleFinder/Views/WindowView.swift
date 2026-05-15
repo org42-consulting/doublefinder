@@ -279,9 +279,8 @@ struct WindowView: View {
 private struct NavTitleRelay: View {
     @ObservedObject var tab: TabState
     var body: some View {
-        let name = tab.url.lastPathComponent
         Color.clear
-            .navigationTitle(name.isEmpty ? "/" : name)
+            .navigationTitle(tab.displayTitle)
     }
 }
 

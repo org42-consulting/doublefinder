@@ -398,6 +398,15 @@ final class TabState: ObservableObject, Identifiable {
         return LocalFileTransport()
     }
 
+    var displayTitle: String {
+        if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
+            let basename = (url.sftpPath as NSString).lastPathComponent
+            let leaf = basename.isEmpty ? "/" : basename
+            return "\(endpoint.host): \(leaf)"
+        }
+        return url.lastPathComponent.isEmpty ? "/" : url.lastPathComponent
+    }
+
     var canBack: Bool { !history.isEmpty }
     var canForward: Bool { !future.isEmpty }
 

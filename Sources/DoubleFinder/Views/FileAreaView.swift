@@ -10,16 +10,21 @@ struct FileAreaView: View {
     @EnvironmentObject var state: WindowState
 
     var body: some View {
-        ZStack {
-            content
-            if showEmptyState {
-                ContentUnavailableView {
-                    Label("No results", systemImage: "magnifyingglass")
-                } description: {
-                    Text("No items matching \"\(tab.searchText)\" in \(scopeDescription)")
+        switch tab.connectionState {
+        case .local, .remoteConnected:
+            ZStack {
+                content
+                if showEmptyState {
+                    ContentUnavailableView {
+                        Label("No results", systemImage: "magnifyingglass")
+                    } description: {
+                        Text("No items matching \"\(tab.searchText)\" in \(scopeDescription)")
+                    }
+                    .allowsHitTesting(false)
                 }
-                .allowsHitTesting(false)
             }
+        case .remoteReconnecting, .remoteDisconnected:
+            RemoteDisconnectedPlaceholder(tab: tab)
         }
     }
 

@@ -87,6 +87,9 @@ struct SidebarView: View {
                     Text(section.title)
                 }
             }
+
+            // Remote servers
+            ServersSidebarSection()
         }
         .listStyle(.sidebar)
         .dropDestination(for: URL.self) { urls, _ in

@@ -115,12 +115,16 @@ enum CopyMoveCoordinator {
             guard let endpoint = dest.sftpEndpoint,
                   let target = dest.sftpAppending(path: src.lastPathComponent) else { return }
             let transport = await MainActor.run { SFTPFileTransport(endpoint: endpoint) }
+            let watcher = interruptWatcher(endpoint: endpoint, progress: progress)
+            defer { watcher.cancel() }
             try await transport.upload(src, to: target, progress: progress)
             if kind == .move { try FileManager.default.removeItem(at: src) }
         case (true, false):
             // Remote → Local: download
             guard let endpoint = src.sftpEndpoint else { return }
             let transport = await MainActor.run { SFTPFileTransport(endpoint: endpoint) }
+            let watcher = interruptWatcher(endpoint: endpoint, progress: progress)
+            defer { watcher.cancel() }
             let target = dest.appendingPathComponent((src.sftpPath as NSString).lastPathComponent)
             try await transport.download(src, to: target, progress: progress)
             if kind == .move { try await transport.remove(src) }
@@ -135,11 +139,31 @@ enum CopyMoveCoordinator {
             } else {
                 // Tunnel through local temp.
                 let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                let dlWatcher = interruptWatcher(endpoint: srcEndpoint, progress: progress)
                 try await srcTransport.download(src, to: temp, progress: progress)
+                dlWatcher.cancel()
                 defer { try? FileManager.default.removeItem(at: temp) }
                 let dstTransport = await MainActor.run { SFTPFileTransport(endpoint: dstEndpoint) }
+                let upWatcher = interruptWatcher(endpoint: dstEndpoint, progress: progress)
+                defer { upWatcher.cancel() }
                 try await dstTransport.upload(temp, to: target, progress: progress)
                 if kind == .move { try await srcTransport.remove(src) }
+            }
+        }
+    }
+
+    /// Returns a Task that polls `progress.isCancelled` and, on cancellation, interrupts the
+    /// in-flight sftp command on the given endpoint. The caller cancels this Task in a defer.
+    private static func interruptWatcher(endpoint: RemoteEndpoint, progress: Progress) -> Task<Void, Never> {
+        Task { @MainActor in
+            while !Task.isCancelled {
+                if progress.isCancelled {
+                    if let s = RemoteSessionManager.shared.existingSession(for: endpoint) {
+                        await s.interruptInFlight()
+                    }
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
             }
         }
     }

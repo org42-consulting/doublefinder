@@ -6,6 +6,9 @@
 DerivedData/
 Package.resolved
 
+# Stray C object files / ad-hoc test executables outside .build/
+*.o
+
 # Packaged .app output (from scripts/package.sh)
 build/
 *.app

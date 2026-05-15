@@ -321,3 +321,69 @@ actor SFTPSession {
         }
     }
 }
+
+// MARK: - Operations
+
+extension SFTPSession {
+
+    /// Resolve the user's home directory by issuing `pwd`. Returns an absolute path.
+    func pwd() async throws -> String {
+        let output = try await send("pwd")
+        // sftp output: "Remote working directory: /home/alice"
+        for line in output.split(separator: "\n") {
+            let s = String(line)
+            if let r = s.range(of: "Remote working directory: ") {
+                return String(s[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        throw SessionError.operationFailed("Could not determine remote home directory.")
+    }
+
+    /// List entries in a directory.
+    func list(path: String) async throws -> [SFTPParser.LSEntry] {
+        let quoted = try SFTPParser.quoteArgument(path)
+        let output = try await send("ls -la \(quoted)")
+        return SFTPParser.parseLSLong(output)
+    }
+
+    /// Does a path exist? (file or directory)
+    func exists(path: String) async -> Bool {
+        do {
+            let quoted = try SFTPParser.quoteArgument(path)
+            _ = try await send("ls -d \(quoted)")
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func mkdir(path: String) async throws {
+        let quoted = try SFTPParser.quoteArgument(path)
+        _ = try await send("mkdir \(quoted)")
+    }
+
+    /// Remove a file or directory (recursive when isDirectory).
+    func remove(path: String, isDirectory: Bool) async throws {
+        let quoted = try SFTPParser.quoteArgument(path)
+        let cmd = isDirectory ? "rm -r \(quoted)" : "rm \(quoted)"
+        _ = try await send(cmd)
+    }
+
+    func rename(from: String, to dest: String) async throws {
+        let qFrom = try SFTPParser.quoteArgument(from)
+        let qTo = try SFTPParser.quoteArgument(dest)
+        _ = try await send("rename \(qFrom) \(qTo)")
+    }
+
+    func download(remote: String, local: URL, progress: Progress) async throws {
+        let qR = try SFTPParser.quoteArgument(remote)
+        let qL = try SFTPParser.quoteArgument(local.path)
+        _ = try await send("get -P \(qR) \(qL)", progress: progress)
+    }
+
+    func upload(local: URL, remote: String, progress: Progress) async throws {
+        let qL = try SFTPParser.quoteArgument(local.path)
+        let qR = try SFTPParser.quoteArgument(remote)
+        _ = try await send("put -P \(qL) \(qR)", progress: progress)
+    }
+}

@@ -104,6 +104,13 @@ enum SearchKind: Hashable {
     case byTag
 }
 
+enum ConnectionState: Equatable {
+    case local
+    case remoteConnected
+    case remoteReconnecting
+    case remoteDisconnected(reason: String)
+}
+
 // MARK: - Conflict prompt
 
 enum ConflictResolution { case keepBoth, replace, skip }
@@ -207,6 +214,7 @@ extension Notification.Name {
 final class TabState: ObservableObject, Identifiable {
     let id = UUID()
     @Published var url: URL { didSet { restartWatching() } }
+    @Published var connectionState: ConnectionState = .local
     @Published var viewMode: ViewMode = .list
     @Published var selection: Set<FSNode.ID> = []
     @Published var nodes: [FSNode] = []
@@ -235,9 +243,12 @@ final class TabState: ObservableObject, Identifiable {
     private var searchTask: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
     private var gitCacheToken: NSObjectProtocol?
+    /// Mirrors `url.sftpEndpoint` so `deinit` (which is nonisolated) can read it safely.
+    nonisolated(unsafe) private var _currentSFTPEndpoint: RemoteEndpoint?
 
     init(url: URL) {
         self.url = url
+        self._currentSFTPEndpoint = url.sftpEndpoint
         watcher.onChange = { [weak self] in
             guard let self else { return }
             Task { @MainActor in
@@ -266,6 +277,9 @@ final class TabState: ObservableObject, Identifiable {
     deinit {
         if let token = gitCacheToken {
             NotificationCenter.default.removeObserver(token)
+        }
+        if let endpoint = _currentSFTPEndpoint {
+            Task { @MainActor in RemoteSessionManager.shared.release(endpoint) }
         }
     }
 
@@ -386,6 +400,16 @@ final class TabState: ObservableObject, Identifiable {
     var canForward: Bool { !future.isEmpty }
 
     func navigate(to newURL: URL) {
+        let wasRemote = url.isRemoteSFTP
+        let willBeRemote = newURL.isRemoteSFTP
+        let oldEndpoint = url.sftpEndpoint
+        let newEndpoint = newURL.sftpEndpoint
+
+        // Refcount sessions when crossing remote boundaries (or changing endpoints).
+        if let oldEndpoint, oldEndpoint != newEndpoint {
+            RemoteSessionManager.shared.release(oldEndpoint)
+        }
+
         let resolved = newURL.resolvingSymlinksInPath()
         guard resolved.standardizedFileURL != url.standardizedFileURL else { return }
         history.append(url)
@@ -393,6 +417,16 @@ final class TabState: ObservableObject, Identifiable {
         url = resolved
         selection.removeAll()
         Task { await self.refresh() }
+
+        _currentSFTPEndpoint = willBeRemote ? newEndpoint : nil
+
+        if willBeRemote {
+            connectionState = .remoteConnected
+        } else {
+            connectionState = .local
+        }
+        _ = wasRemote
+        _ = newEndpoint
     }
 
     func back() {

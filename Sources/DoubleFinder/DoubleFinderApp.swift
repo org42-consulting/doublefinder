@@ -9,6 +9,9 @@ private enum SmokeRunner {
         case "--pty-smoke":
             ptySmoke()
             exit(0)
+        case "--sftp-smoke":
+            sftpSmoke()
+            exit(0)
         default:
             return false
         }
@@ -43,6 +46,52 @@ private enum SmokeRunner {
             print("[pty-smoke] FAIL: \(error)")
             exit(1)
         }
+    }
+
+    private static func sftpSmoke() {
+        guard let host = ProcessInfo.processInfo.environment["DF_SFTP_HOST"],
+              let user = ProcessInfo.processInfo.environment["DF_SFTP_USER"] else {
+            print("[sftp-smoke] FAIL: set DF_SFTP_HOST and DF_SFTP_USER")
+            exit(2)
+        }
+        let endpoint = RemoteEndpoint(host: host, user: user)
+        let promptHandler: SFTPSession.PromptHandler = { prompt in
+            switch prompt {
+            case .password(let label):
+                print("[sftp-smoke] password requested for \(label) — reading from stdin (echo on, demo only):")
+                return readLine() ?? ""
+            case .passphrase(let key):
+                print("[sftp-smoke] passphrase for \(key):")
+                return readLine() ?? ""
+            case .hostKey(let h, let kt, let fp):
+                print("[sftp-smoke] host \(h) \(kt) fingerprint \(fp) — accept? (yes/no):")
+                return (readLine() == "yes") ? "yes" : "no"
+            case .hostKeyMismatch:
+                return nil
+            }
+        }
+        let task = Task {
+            do {
+                let session = SFTPSession(endpoint: endpoint, promptHandler: promptHandler)
+                try await session.start()
+                let home = try await session.pwd()
+                print("[sftp-smoke] remote home: \(home)")
+                let entries = try await session.list(path: home)
+                print("[sftp-smoke] listed \(entries.count) entries:")
+                for e in entries.prefix(5) {
+                    print("  \(e.isDirectory ? "d" : "-")\(e.permissions) \(e.size)\t\(e.name)")
+                }
+                await session.close()
+                print("[sftp-smoke] OK")
+                exit(0)
+            } catch {
+                print("[sftp-smoke] FAIL: \(error)")
+                exit(1)
+            }
+        }
+        // Wait for the Task to complete. dispatchMain() never returns; the Task calls exit().
+        _ = task
+        dispatchMain()
     }
 }
 

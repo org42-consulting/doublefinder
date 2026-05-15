@@ -113,10 +113,8 @@ struct DoubleFinderApp: App {
                     NotificationCenter.default.post(name: .connectToServerRequested, object: nil)
                 }
                 .keyboardShortcut("k", modifiers: [.command])
-                Button("Manage Connections…") {
-                    NotificationCenter.default.post(name: .manageConnectionsRequested, object: nil)
-                }
-                .keyboardShortcut("k", modifiers: [.command, .shift])
+                ManageConnectionsButton()
+                    .keyboardShortcut("k", modifiers: [.command, .shift])
             }
             CommandGroup(replacing: .appInfo) {
                 Button("About DoubleFinder") {
@@ -179,6 +177,11 @@ struct DoubleFinderApp: App {
             }
         }
 
+        WindowGroup("Connections", id: "connections") {
+            ConnectionsManagerWindow()
+        }
+        .defaultSize(width: 720, height: 480)
+
         Settings {
             SettingsView()
                 .preferredColorScheme(forceDarkMode ? .dark : nil)
@@ -231,6 +234,13 @@ private func aboutPanelOptions() -> [NSApplication.AboutPanelOptionKey: Any] {
 
     options[.credits] = credits
     return options
+}
+
+private struct ManageConnectionsButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("Manage Connections…") { openWindow(id: "connections") }
+    }
 }
 
 @main

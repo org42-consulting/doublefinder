@@ -286,7 +286,13 @@ struct ColumnView: NSViewRepresentable {
                 let urls: [URL] = rows.compactMap { idx in idx < kids.count ? kids[idx] : nil }
                 FileContextMenu.populate(
                     menu, urls: urls, directory: parent, tab: tab, state: state,
-                    onQuickLook: { urls in QuickLookCoordinator.shared.show(urls, startAt: urls.first) }
+                    onQuickLook: { urls in
+                        if urls.contains(where: \.isRemoteSFTP) {
+                            Task { @MainActor in await QuickLookCoordinator.shared.showAsync(urls, startAt: urls.first) }
+                        } else {
+                            QuickLookCoordinator.shared.show(urls, startAt: urls.first)
+                        }
+                    }
                 )
             } else {
                 FileContextMenu.populateBackground(menu, directory: parent, tab: tab, state: state)

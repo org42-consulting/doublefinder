@@ -89,6 +89,14 @@ struct DualPaneArea: View {
                     )
                 case .hostKeyMismatch(let host):
                     HostKeyMismatchSheet(host: host, onDismiss: { prompt.onResolve(nil) })
+                case .keyboardInteractive(let challengePrompt):
+                    PasswordSheet(
+                        title: "Authentication",
+                        prompt: challengePrompt,
+                        allowSaveToKeychain: false,
+                        onSubmit: { response, _ in prompt.onResolve(response) },
+                        onCancel: { prompt.onResolve(nil) }
+                    )
                 }
             }
         }

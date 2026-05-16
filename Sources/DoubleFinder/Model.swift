@@ -286,11 +286,17 @@ final class TabState: ObservableObject, Identifiable {
     }
 
     convenience init(from persisted: StatePersistence.Snapshot.Pane.Tab) {
-        let url = URL(fileURLWithPath: persisted.path)
-        let fallback = FileManager.default.fileExists(atPath: url.path)
-            ? url
-            : FileManager.default.homeDirectoryForCurrentUser
-        self.init(url: fallback)
+        // Remote URLs are stored as absolute strings (sftp://...); local tabs as plain paths.
+        if let full = URL(string: persisted.path), full.isRemoteSFTP {
+            self.init(url: full)
+            self.connectionState = .remoteDisconnected(reason: "Reconnect to restore this session.")
+        } else {
+            let local = URL(fileURLWithPath: persisted.path)
+            let fallback = FileManager.default.fileExists(atPath: local.path)
+                ? local
+                : FileManager.default.homeDirectoryForCurrentUser
+            self.init(url: fallback)
+        }
         self.viewMode = ViewMode(rawValue: persisted.viewMode) ?? .list
         self.sortKey = SortKey(rawValue: persisted.sortKey) ?? .name
         self.sortAscending = persisted.sortAscending
@@ -298,8 +304,11 @@ final class TabState: ObservableObject, Identifiable {
     }
 
     func snapshot() -> StatePersistence.Snapshot.Pane.Tab {
-        .init(
-            path: url.path,
+        // Remote tabs: store the full URL string so it survives round-trips through persistence.
+        // Local tabs: store the path (existing format, backwards-compatible).
+        let stored = url.isRemoteSFTP ? url.absoluteString : url.path
+        return .init(
+            path: stored,
             viewMode: viewMode.rawValue,
             sortKey: sortKey.rawValue,
             sortAscending: sortAscending,
@@ -412,7 +421,10 @@ final class TabState: ObservableObject, Identifiable {
 
     func navigate(to newURL: URL) {
         let resolved = newURL.resolvingSymlinksInPath()
-        guard resolved.standardizedFileURL != url.standardizedFileURL else { return }
+        // For remote URLs skip the same-URL guard: the user may be reconnecting after a
+        // disconnect, so we always want to re-enter the connection and refresh cycle.
+        let sameURL = resolved.standardizedFileURL == url.standardizedFileURL
+        guard !sameURL || resolved.isRemoteSFTP else { return }
 
         // Session refcount: now that we know we're actually navigating, release the old endpoint if different.
         let wasRemote = url.isRemoteSFTP

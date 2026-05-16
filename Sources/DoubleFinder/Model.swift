@@ -233,6 +233,7 @@ extension Notification.Name {
     static let mirrorSelectionRequested = Notification.Name("df.mirrorSelectionRequested")
     static let favoriteSlotRequested = Notification.Name("df.favoriteSlotRequested")
     static let undoRequested = Notification.Name("df.undoRequested")
+    static let toggleSinglePaneRequested = Notification.Name("df.toggleSinglePaneRequested")
 }
 
 /// A reversible file operation. Pushed onto `WindowState.undoStack` after each
@@ -743,6 +744,10 @@ final class WindowState: ObservableObject {
     @Published var batchRenamePrompt: BatchRenamePrompt?
     @Published var favourites: [SidebarFavourite] = SidebarFavourite.defaults
     @Published var showInspector: Bool = false
+    /// When true, only the currently-focused pane is rendered — the other one is
+    /// hidden. Useful when you want a single, wider listing without losing the
+    /// hidden pane's tabs / scroll positions. Toggleable via View ▸ Show One Pane.
+    @Published var singlePaneMode: Bool = false
     @Published var compareMode: Bool = false {
         didSet { recomputeCompareStatuses() }
     }
@@ -804,6 +809,7 @@ final class WindowState: ObservableObject {
                 }
             }
             self.showInspector = snap.showInspector ?? false
+            self.singlePaneMode = snap.singlePaneMode ?? false
         } else {
             let startURL = URL(fileURLWithPath: (startingPath as NSString).expandingTildeInPath)
             let safe = FileManager.default.fileExists(atPath: startURL.path)
@@ -826,7 +832,8 @@ final class WindowState: ObservableObject {
             right: right.snapshot(),
             focus: focus == .right ? "right" : "left",
             favourites: favourites,
-            showInspector: showInspector
+            showInspector: showInspector,
+            singlePaneMode: singlePaneMode
         )
     }
 
@@ -1048,6 +1055,9 @@ final class WindowState: ObservableObject {
                 guard let self else { return }
                 Task { @MainActor in await self.performUndo() }
             }
+        })
+        observerTokens.append(nc.addObserver(forName: .toggleSinglePaneRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.singlePaneMode.toggle() }
         })
     }
 

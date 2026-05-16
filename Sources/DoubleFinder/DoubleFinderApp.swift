@@ -93,6 +93,14 @@ struct DoubleFinderApp: App {
                 }
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])
             }
+            // SwiftUI already populates a "View" menu via `ToolbarCommands()` (Show
+            // Toolbar / Customize…). Adding `CommandMenu("View")` created a *second*
+            // View menu. Inserting after the .toolbar group merges our item into the
+            // system one.
+            CommandGroup(after: .toolbar) {
+                Divider()
+                SinglePaneToggleButton()
+            }
             CommandMenu("Go") {
                 Button("Back") {
                     NotificationCenter.default.post(name: .backRequested, object: nil)
@@ -224,6 +232,21 @@ private struct ManageConnectionsButton: View {
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Button("Manage Connections…") { openWindow(id: "connections") }
+    }
+}
+
+/// Reads the front-most window's `singlePaneMode` via @FocusedValue. SwiftUI
+/// commands re-evaluate their content when a FocusedValue channel publishes a
+/// different value — and because we mirror the property as a plain Bool (not
+/// as the reference-typed WindowState), the diff actually fires on every toggle.
+private struct SinglePaneToggleButton: View {
+    @FocusedValue(\.singlePaneMode) private var singlePaneMode
+
+    var body: some View {
+        Button(singlePaneMode == true ? "Show Two Panes" : "Show One Pane") {
+            NotificationCenter.default.post(name: .toggleSinglePaneRequested, object: nil)
+        }
+        .disabled(singlePaneMode == nil)
     }
 }
 

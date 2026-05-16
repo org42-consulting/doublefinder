@@ -12,15 +12,29 @@ struct DualPaneArea: View {
         // toggles on or is dragged), so showing the inspector shrinks BOTH panes
         // equally rather than only the right one.
         HSplitView {
+            // Inner pane group. In single-pane mode only the focused side is rendered;
+            // the other PaneState (and its tabs) stays alive in WindowState so toggling
+            // back restores it exactly.
+            //
+            // The .id tied to `singlePaneMode` forces SwiftUI to rebuild the HSplitView
+            // on every toggle, which resets the internal divider position. That gives us
+            // an even 50/50 split when switching from one pane back to two — without it,
+            // HSplitView would remember the divider where the user had previously dragged
+            // it.
             HSplitView {
-                PaneView(side: .left, pane: state.left)
-                    .environmentObject(state)
-                    .frame(minWidth: 240)
-                PaneView(side: .right, pane: state.right)
-                    .environmentObject(state)
-                    .frame(minWidth: 240)
+                if !state.singlePaneMode || state.focus == .left {
+                    PaneView(side: .left, pane: state.left)
+                        .environmentObject(state)
+                        .frame(minWidth: 240)
+                }
+                if !state.singlePaneMode || state.focus == .right {
+                    PaneView(side: .right, pane: state.right)
+                        .environmentObject(state)
+                        .frame(minWidth: 240)
+                }
             }
-            .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+            .id(state.singlePaneMode)
+            .frame(minWidth: 240, maxWidth: .infinity, maxHeight: .infinity)
 
             if state.showInspector {
                 InspectorView()

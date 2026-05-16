@@ -19,6 +19,7 @@ enum StatePersistence {
         let focus: String                   // "left" | "right"
         let favourites: [SidebarFavourite]? // nil for old snapshots
         let showInspector: Bool?            // nil for old snapshots
+        let singlePaneMode: Bool?           // nil for old snapshots → false
     }
 
     private static var stateURL: URL {

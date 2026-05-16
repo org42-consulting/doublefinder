@@ -1,6 +1,18 @@
 import SwiftUI
 import AppKit
 
+/// Focused-value channels into App-level commands. `windowState` is handy for
+/// commands that need the whole state object; `singlePaneMode` is a primitive
+/// mirror of the same property — SwiftUI deduplicates @FocusedValue updates by
+/// equality, and reference-typed values (like `WindowState`) test as equal even
+/// after their @Published properties change, so any command that wants to
+/// re-render on a particular property must read that property via its own
+/// FocusedValue channel.
+extension FocusedValues {
+    @Entry var windowState: WindowState? = nil
+    @Entry var singlePaneMode: Bool? = nil
+}
+
 struct WindowView: View {
     @StateObject private var state = WindowState()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
@@ -17,6 +29,14 @@ struct WindowView: View {
                 .toolbar(id: "df-main") { toolbarItems }
         }
         .navigationSplitViewStyle(.balanced)
+        // `.focusedSceneValue` (not `.focusedValue`) so the menu command can read
+        // these regardless of which view inside the window currently has focus —
+        // `.focusedValue` only propagates when the modified subtree contains the
+        // focused view, which isn't reliable for menu items.
+        .focusedSceneValue(\.windowState, state)
+        // Mirror the primitive separately so SwiftUI's diff sees a real change
+        // when only this property publishes — see the FocusedValues extension.
+        .focusedSceneValue(\.singlePaneMode, state.singlePaneMode)
     }
 
     @ToolbarContentBuilder

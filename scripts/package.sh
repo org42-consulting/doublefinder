@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="DoubleFinder"
 BUNDLE_ID="com.doublefinder.app"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.1}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 MIN_OS="26.0"
 
@@ -123,6 +123,38 @@ codesign --force --deep --sign - "$APP_DIR"
 echo
 echo "✓ Built $APP_DIR"
 du -sh "$APP_DIR"
+
+# -----------------------------------------------------------------------------
+# Build a distributable .dmg
+# -----------------------------------------------------------------------------
+DMG_NAME="$APP_NAME-$VERSION.dmg"
+DMG_PATH="$BUILD_DIR/$DMG_NAME"
+STAGING_DIR="$BUILD_DIR/dmg-staging"
+
+echo
+echo "▶ Building $DMG_NAME"
+
+# Fresh staging directory: the .app plus an /Applications symlink so users get
+# the standard "drag onto Applications to install" experience when mounting.
+rm -rf "$STAGING_DIR" "$DMG_PATH"
+mkdir -p "$STAGING_DIR"
+cp -R "$APP_DIR" "$STAGING_DIR/"
+ln -s /Applications "$STAGING_DIR/Applications"
+
+# UDZO = zlib-compressed read-only image. Quiet flag keeps output tidy on success.
+hdiutil create \
+    -volname "$APP_NAME $VERSION" \
+    -srcfolder "$STAGING_DIR" \
+    -ov \
+    -format UDZO \
+    -quiet \
+    "$DMG_PATH"
+
+rm -rf "$STAGING_DIR"
+
+echo "✓ Built $DMG_PATH"
+du -sh "$DMG_PATH"
 echo
 echo "Run with:    open \"$APP_DIR\""
 echo "Install via: mv \"$APP_DIR\" /Applications/"
+echo "Share via:   $DMG_PATH"

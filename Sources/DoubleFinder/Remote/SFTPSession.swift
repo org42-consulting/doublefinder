@@ -181,7 +181,11 @@ actor SFTPSession {
 
     private func handleAuthBytes() {
         // Check for the sftp> prompt first — that means auth succeeded.
-        if let promptRange = readBuffer.range(of: "sftp> ") {
+        // Require it at the start of a line (or buffer) to avoid matching banner text.
+        if let promptRange = readBuffer.range(of: "sftp> ", options: .anchored)
+            ?? readBuffer.range(of: "\nsftp> ")
+            ?? readBuffer.range(of: "\r\nsftp> ")
+            ?? readBuffer.range(of: "\r\r\nsftp> ") {
             // Drop everything up to and including the prompt; we'll start fresh.
             readBuffer.removeSubrange(readBuffer.startIndex..<promptRange.upperBound)
             state = .ready
@@ -228,7 +232,7 @@ actor SFTPSession {
                     cont.resume(throwing: SessionError.authFailed("User declined host-key verification."))
                 }
             }
-        case .password, .passphrase:
+        case .password, .passphrase, .keyboardInteractive:
             if let reply {
                 channel?.write(Data((reply + "\n").utf8))
             } else {
@@ -258,8 +262,11 @@ actor SFTPSession {
             readBuffer.removeSubrange(readBuffer.startIndex..<promptRange.upperBound)
             commandInFlight = nil
 
+            // Normalize pty CRLF → LF so all downstream parsers only see \n.
+            let normalized = output.replacingOccurrences(of: "\r\n", with: "\n")
+                                   .replacingOccurrences(of: "\r", with: "")
             // Echo cleanup: sftp echoes the command on the first line. Strip it.
-            let cleaned = stripCommandEcho(output, command: ctx.line)
+            let cleaned = stripCommandEcho(normalized, command: ctx.line)
             // Did the command error? sftp writes errors that don't start with "Couldn't" sometimes,
             // but the simplest signal is exit status, which we don't get per-command. We treat any
             // line starting with "Couldn't" or "remote " or "Cannot " as an error indicator.
@@ -333,7 +340,7 @@ extension SFTPSession {
         for line in output.split(separator: "\n") {
             let s = String(line)
             if let r = s.range(of: "Remote working directory: ") {
-                return String(s[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+                return String(s[r.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
         throw SessionError.operationFailed("Could not determine remote home directory.")

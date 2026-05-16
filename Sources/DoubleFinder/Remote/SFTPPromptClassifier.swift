@@ -12,6 +12,9 @@ enum SFTPPrompt: Equatable {
     case hostKey(host: String, keyType: String, fingerprint: String)
     /// REMOTE HOST IDENTIFICATION HAS CHANGED — destructive sheet.
     case hostKeyMismatch(host: String)
+    /// Generic keyboard-interactive challenge (OTP, Duo, custom PAM prompt, etc.).
+    /// The associated string is the raw prompt line from the server. Should NOT be saved to Keychain.
+    case keyboardInteractive(prompt: String)
 }
 
 enum SFTPPromptClassifier {
@@ -40,6 +43,12 @@ enum SFTPPromptClassifier {
         // Password prompts.
         if let label = passwordLabel(in: buffer) {
             return .password(label: label)
+        }
+
+        // Generic keyboard-interactive fallback: any prompt line ending in ":" that wasn't
+        // matched above. This handles TOTP, Duo, custom PAM challenges, etc.
+        if let line = genericChallengeLine(in: buffer) {
+            return .keyboardInteractive(prompt: line)
         }
 
         return nil
@@ -106,6 +115,20 @@ enum SFTPPromptClassifier {
             return "Password"
         }
         return nil
+    }
+
+    private static func genericChallengeLine(in buffer: String) -> String? {
+        // Only fire when the trimmed buffer ends with ":" — i.e., sftp/ssh is waiting for input.
+        let trimmed = buffer.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasSuffix(":") else { return nil }
+        // Extract the last non-empty line as the label.
+        let lastLine = trimmed
+            .components(separatedBy: CharacterSet.newlines)
+            .lazy
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .last(where: { !$0.isEmpty })
+            ?? trimmed
+        return lastLine
     }
 
     private static func extractMismatchHost(_ buffer: String) -> String? {

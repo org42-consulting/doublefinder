@@ -10,6 +10,8 @@ struct ConnectSheet: View {
     @State private var user = NSUserName()
     @State private var port = "22"
     @State private var identityPath = ""
+    @State private var password = ""
+    @State private var savePasswordToKeychain = true
     @State private var startingPath = "~"
     @State private var saveAsBookmark = true
     @State private var displayName = ""
@@ -25,6 +27,11 @@ struct ConnectSheet: View {
                 HStack {
                     TextField("Identity file (optional)", text: $identityPath).textFieldStyle(.roundedBorder)
                     Button("Choose…") { pickIdentityFile() }
+                }
+                SecureField("Password (optional)", text: $password)
+                    .textFieldStyle(.roundedBorder)
+                if !password.isEmpty {
+                    Toggle("Save password in Keychain", isOn: $savePasswordToKeychain)
                 }
                 TextField("Starting path", text: $startingPath).textFieldStyle(.roundedBorder)
                 Toggle("Save as bookmark", isOn: $saveAsBookmark)
@@ -70,6 +77,13 @@ struct ConnectSheet: View {
             identityFile: identityPath.isEmpty ? nil : URL(fileURLWithPath: identityPath),
             displayName: displayName.isEmpty ? nil : displayName
         )
+        // Pre-seed Keychain so the reactive prompt handler can reply silently.
+        // Always removed on failure so a wrong password isn't replayed.
+        let didPreSeed = !password.isEmpty
+        if didPreSeed {
+            RemoteServerStore.shared.storePassword(password, for: endpoint)
+        }
+
         do {
             let session = try await RemoteSessionManager.shared.acquire(endpoint, in: state)
 
@@ -96,10 +110,18 @@ struct ConnectSheet: View {
                 RemoteServerStore.shared.addBookmark(bookmark)
             }
 
+            if didPreSeed && !savePasswordToKeychain {
+                RemoteServerStore.shared.deletePassword(for: endpoint)
+            }
+
             // Navigate the focused tab to the remote URL.
             state.focusedPane.activeTab.navigate(to: remoteURL)
             onDismiss()
         } catch {
+            // Don't persist a password that didn't work.
+            if didPreSeed {
+                RemoteServerStore.shared.deletePassword(for: endpoint)
+            }
             state.connectError = ConnectError(endpoint: endpoint, message: error.localizedDescription)
             onDismiss()
         }

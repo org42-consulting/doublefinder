@@ -22,11 +22,30 @@ final class RemoteSessionManager: ObservableObject {
         init(_ e: RemoteEndpoint) { host = e.host; user = e.user; port = e.port }
     }
 
-    private var slots: [Key: Slot] = [:]
+    // willSet fires `objectWillChange` so SwiftUI views observing this manager (e.g. the
+    // Servers sidebar section) re-render whenever a session is acquired or released.
+    private var slots: [Key: Slot] = [:] {
+        willSet { objectWillChange.send() }
+    }
 
     /// Get the existing session for an endpoint without acquiring a ref.
     func existingSession(for endpoint: RemoteEndpoint) -> SFTPSession? {
         slots[Key(endpoint)]?.session
+    }
+
+    /// True when there's an open session for this endpoint (regardless of refcount).
+    func isConnected(_ endpoint: RemoteEndpoint) -> Bool {
+        slots[Key(endpoint)] != nil
+    }
+
+    /// Force-disconnect the session for this endpoint, ignoring refcounts. Any tabs
+    /// holding this endpoint will see the underlying session close and surface a
+    /// disconnected placeholder on their next refresh.
+    func disconnect(_ endpoint: RemoteEndpoint) {
+        let key = Key(endpoint)
+        guard let slot = slots[key] else { return }
+        slots[key] = nil
+        Task { await slot.session.close() }
     }
 
     /// Acquire (or reuse) a session. Increments the refcount. The returned session is in `.ready`.

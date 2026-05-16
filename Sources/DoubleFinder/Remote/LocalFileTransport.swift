@@ -44,6 +44,13 @@ struct LocalFileTransport: FileTransport {
         try FileManager.default.moveItem(at: from, to: dest)
     }
 
+    @discardableResult
+    func trash(_ url: URL) async throws -> URL? {
+        var resulting: NSURL?
+        try FileManager.default.trashItem(at: url, resultingItemURL: &resulting)
+        return resulting as URL?
+    }
+
     func download(_ remote: URL, to localTmp: URL, progress: Progress) async throws {
         throw FileTransportError.notSupported("download is only meaningful for remote transports")
     }

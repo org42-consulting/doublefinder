@@ -6,17 +6,26 @@ struct DualPaneArea: View {
     @State private var showConnectSheet = false
 
     var body: some View {
+        // Outer split: the two-pane group vs. the optional inspector. Nesting an
+        // HSplitView inside means the inner left/right divider preserves its
+        // fractional position when the outer divider moves (when the inspector
+        // toggles on or is dragged), so showing the inspector shrinks BOTH panes
+        // equally rather than only the right one.
         HSplitView {
-            PaneView(side: .left)
-                .environmentObject(state)
-                .frame(minWidth: 240)
-            PaneView(side: .right)
-                .environmentObject(state)
-                .frame(minWidth: 240)
+            HSplitView {
+                PaneView(side: .left, pane: state.left)
+                    .environmentObject(state)
+                    .frame(minWidth: 240)
+                PaneView(side: .right, pane: state.right)
+                    .environmentObject(state)
+                    .frame(minWidth: 240)
+            }
+            .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+
             if state.showInspector {
                 InspectorView()
                     .environmentObject(state)
-                    .frame(minWidth: 220, idealWidth: 260, maxWidth: 360)
+                    .frame(minWidth: 220, idealWidth: 280, maxWidth: 360)
             }
         }
         .dropDestination(for: SidebarFavourite.self) { favs, _ in

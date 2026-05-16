@@ -29,12 +29,12 @@ enum CopyMoveCoordinator {
         let label = kind == .copy ? "Copy" : "Move"
         let conflicts = await FileOps.conflicts(for: urls, in: dest)
         if conflicts.isEmpty {
-            run(kind, urls: urls, dest: dest, resolution: .keepBoth, src: src, dst: dst, label: label)
+            run(kind, urls: urls, dest: dest, resolution: .keepBoth, src: src, dst: dst, label: label, via: state)
             return
         }
         state.conflict = ConflictPrompt(kind: label, conflicts: conflicts, destination: dest) { resolution in
             if let resolution {
-                run(kind, urls: urls, dest: dest, resolution: resolution, src: src, dst: dst, label: label)
+                run(kind, urls: urls, dest: dest, resolution: resolution, src: src, dst: dst, label: label, via: state)
             }
         }
     }
@@ -46,7 +46,8 @@ enum CopyMoveCoordinator {
         resolution: ConflictResolution,
         src: TabState,
         dst: TabState?,
-        label: String
+        label: String,
+        via state: WindowState
     ) {
         let summary = summaryFor(kind: kind, urls: urls, dest: dest, label: label)
         TransferQueue.shared.enqueue(
@@ -55,6 +56,15 @@ enum CopyMoveCoordinator {
             unitCount: Int64(urls.count),
             work: { progress in
                 try await performBatch(kind: kind, urls: urls, dest: dest, resolution: resolution, progress: progress)
+                // Record an undoable op on success — only Move is reversible cheaply.
+                // Skip when conflict resolution might have renamed items (.keepBoth)
+                // since we don't know the resulting URL in that case.
+                if kind == .move, resolution != .keepBoth {
+                    await MainActor.run {
+                        let items = urls.map { (source: $0, destDir: dest) }
+                        state.pushUndo(.move(items: items))
+                    }
+                }
             },
             completion: {
                 Task { @MainActor in

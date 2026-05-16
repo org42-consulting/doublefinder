@@ -22,6 +22,14 @@ struct RemoteEndpoint: Codable, Hashable, Sendable {
         port == 22 ? "\(user)@\(host)" : "\(user)@\(host):\(port)"
     }
 
+    /// True when both endpoints address the same remote connection. Compares only the
+    /// fields that define the wire connection (host/user/port). Differences in
+    /// identityFile or displayName don't count — they affect *how* we connect, not
+    /// *what* we connect to.
+    func sameConnection(as other: RemoteEndpoint) -> Bool {
+        host == other.host && user == other.user && port == other.port
+    }
+
     /// What we render in tab titles and bookmark labels by default.
     var defaultDisplayName: String {
         displayName ?? canonicalAccount

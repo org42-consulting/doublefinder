@@ -36,13 +36,6 @@ struct FileAreaView: View {
                 tab: tab,
                 side: side,
                 onActivate: { state.focus = side },
-                onTrash: { urls in trashURLs(urls) },
-                onCopyToOther: { urls in
-                    CopyMoveCoordinator.copy(urls, to: state.otherPane.activeTab, from: tab, via: state)
-                },
-                onMoveToOther: { urls in
-                    CopyMoveCoordinator.move(urls, to: state.otherPane.activeTab, from: tab, via: state)
-                },
                 onQuickLook: { urls in
                     let allURLs = tab.nodes.map(\.url)
                     if allURLs.contains(where: \.isRemoteSFTP) {
@@ -70,7 +63,14 @@ struct FileAreaView: View {
                             }
                         )
                     }
-                }
+                },
+                onDropToFolder: { folder, urls in
+                    CopyMoveCoordinator.copy(urls, toDirectory: folder, from: tab, via: state)
+                },
+                onDropToTab: { urls in
+                    CopyMoveCoordinator.copy(urls, to: tab, from: tab, via: state)
+                },
+                compareStatuses: state.compareMode ? state.compareStatuses : [:]
             )
         case .icon:
             IconView(tab: tab, side: side)
@@ -82,13 +82,6 @@ struct FileAreaView: View {
                     tab: tab,
                     side: side,
                     onActivate: { state.focus = side },
-                    onTrash: { urls in trashURLs(urls) },
-                    onCopyToOther: { urls in
-                        CopyMoveCoordinator.copy(urls, to: state.otherPane.activeTab, from: tab, via: state)
-                    },
-                    onMoveToOther: { urls in
-                        CopyMoveCoordinator.move(urls, to: state.otherPane.activeTab, from: tab, via: state)
-                    },
                     onQuickLook: { urls in
                         let allURLs = tab.nodes.map(\.url)
                         if allURLs.contains(where: \.isRemoteSFTP) {
@@ -116,6 +109,12 @@ struct FileAreaView: View {
                                 }
                             )
                         }
+                    },
+                    onDropToFolder: { folder, urls in
+                        CopyMoveCoordinator.copy(urls, toDirectory: folder, from: tab, via: state)
+                    },
+                    onDropToTab: { urls in
+                        CopyMoveCoordinator.copy(urls, to: tab, from: tab, via: state)
                     }
                 )
             } else {
@@ -138,13 +137,4 @@ struct FileAreaView: View {
         }
     }
 
-    private func trashURLs(_ urls: [URL]) {
-        TransferQueue.shared.enqueue(
-            kind: "Trash",
-            summary: "Move \(urls.count) item\(urls.count == 1 ? "" : "s") to Trash",
-            unitCount: Int64(urls.count),
-            work: { progress in try await FileOps.trash(urls, progress: progress) },
-            completion: { Task { @MainActor in await tab.refresh() } }
-        )
-    }
 }

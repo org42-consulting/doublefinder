@@ -2,20 +2,36 @@ import SwiftUI
 
 struct ServersSidebarSection: View {
     @ObservedObject var store: RemoteServerStore = .shared
+    @ObservedObject var sessions: RemoteSessionManager = .shared
     @EnvironmentObject var window: WindowState
 
     var body: some View {
         Section {
             ForEach(store.bookmarks) { bookmark in
+                let connected = sessions.isConnected(bookmark.endpoint)
                 HStack {
                     Image(systemName: "network")
                     Text(bookmark.endpoint.defaultDisplayName)
                         .lineLimit(1)
+                    Spacer(minLength: 4)
+                    if connected {
+                        Button {
+                            disconnect(bookmark)
+                        } label: {
+                            Image(systemName: "eject.fill")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Disconnect from \(bookmark.endpoint.defaultDisplayName)")
+                    }
                 }
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) { Task { await connect(bookmark) } }
                 .contextMenu {
                     Button("Connect") { Task { await connect(bookmark) } }
+                    if connected {
+                        Button("Disconnect") { disconnect(bookmark) }
+                    }
                     Divider()
                     Button("Delete", role: .destructive) { store.removeBookmark(bookmark.id) }
                 }
@@ -33,6 +49,15 @@ struct ServersSidebarSection: View {
                 .help("Connect to Server…")
             }
         }
+    }
+
+    @MainActor
+    private func disconnect(_ bookmark: RemoteBookmark) {
+        // Move any tab pointing at this endpoint back to the configured default directory
+        // first — that releases the session refcount(s) and clears the disconnected
+        // placeholder. Then make sure the session is closed even if no tab held it.
+        window.navigateTabsAway(fromEndpoint: bookmark.endpoint)
+        sessions.disconnect(bookmark.endpoint)
     }
 
     @MainActor

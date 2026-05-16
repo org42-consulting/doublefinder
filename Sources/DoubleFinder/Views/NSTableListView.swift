@@ -9,11 +9,17 @@ struct NSTableListView: NSViewRepresentable {
     @ObservedObject var tab: TabState
     let side: PaneSide
     let onActivate: () -> Void
-    let onTrash: ([URL]) -> Void
-    let onCopyToOther: ([URL]) -> Void
-    let onMoveToOther: ([URL]) -> Void
     let onQuickLook: ([URL]) -> Void
     let onMenuNeeded: (NSMenu, [URL], URL) -> Void
+    /// Called when the user drops external/dragged URLs onto a folder row. The first arg
+    /// is the target folder's URL; the destination tab is left to the caller's discretion.
+    let onDropToFolder: (URL, [URL]) -> Void
+    /// Called when the user drops URLs onto the table background (no folder row hit).
+    /// The destination is the tab's current directory.
+    let onDropToTab: ([URL]) -> Void
+    /// Per-URL compare status from `WindowState.compareStatuses`; empty when compare
+    /// mode is off. When non-empty, each row gets a background tint accordingly.
+    var compareStatuses: [URL: CompareStatus] = [:]
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -113,10 +119,22 @@ struct NSTableListView: NSViewRepresentable {
             coord.isSyncingSort = false
         }
 
+        // If compare statuses changed, reload row views so the tinting updates.
+        if coord.lastCompareStatuses != compareStatuses {
+            coord.lastCompareStatuses = compareStatuses
+            // Reload every row's row view; the cells are unchanged.
+            let allRows = IndexSet(integersIn: 0..<table.numberOfRows)
+            if !allRows.isEmpty {
+                // Reloading rows preserves selection; row views are rebuilt.
+                table.noteHeightOfRows(withIndexesChanged: allRows)
+                table.reloadData(forRowIndexes: allRows, columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
+            }
+        }
+
         // sync node changes — use granular reload when only cell data changed
-        if coord.lastNodes != tab.nodes {
+        if coord.lastNodes != tab.visibleNodes {
             let old = coord.lastNodes
-            let new = tab.nodes
+            let new = tab.visibleNodes
             coord.lastNodes = new
             if old.map(\.id) == new.map(\.id) {
                 // same rows, same order — reload only cells whose data changed
@@ -133,7 +151,7 @@ struct NSTableListView: NSViewRepresentable {
                 table.reloadData()
             }
         }
-        let desiredIndexes = IndexSet(tab.nodes.enumerated().compactMap { idx, node in
+        let desiredIndexes = IndexSet(tab.visibleNodes.enumerated().compactMap { idx, node in
             tab.selection.contains(node.id) ? idx : nil
         })
         if table.selectedRowIndexes != desiredIndexes {
@@ -145,7 +163,7 @@ struct NSTableListView: NSViewRepresentable {
             let pendingTab = tab
             DispatchQueue.main.async {
                 pendingTab.renameRequest = nil
-                guard let row = pendingTab.nodes.firstIndex(where: { $0.id == renameID }) else { return }
+                guard let row = pendingTab.visibleNodes.firstIndex(where: { $0.id == renameID }) else { return }
                 table.scrollRowToVisible(row)
                 table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
                 if let cell = table.view(atColumn: 0, row: row, makeIfNecessary: true) as? NameCell {
@@ -166,13 +184,21 @@ struct NSTableListView: NSViewRepresentable {
         var parent: NSTableListView
         weak var table: NSTableView?
         var lastNodes: [FSNode] = []
+        var lastCompareStatuses: [URL: CompareStatus] = [:]
         var isSyncingSort = false
 
         init(parent: NSTableListView) {
             self.parent = parent
         }
 
-        var nodes: [FSNode] { parent.tab.nodes }
+        var nodes: [FSNode] { parent.tab.visibleNodes }
+
+        /// Compare-folders row view: tints the row background using `CompareStatus`.
+        func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+            guard row < nodes.count else { return nil }
+            let status = parent.compareStatuses[nodes[row].url]
+            return CompareRowView(status: status)
+        }
 
         // MARK: data source
 
@@ -196,9 +222,8 @@ struct NSTableListView: NSViewRepresentable {
                 return cell
             case .size:
                 let cell = makeOrReuse(tableView, identifier: colID, kind: TextCell.self)
-                if node.isDirectory {
-                    cell.set(text: "—")
-                } else if let s = node.size {
+                let bytes: Int64? = node.isDirectory ? node.calculatedSize : node.size
+                if let s = bytes {
                     cell.set(text: ByteCountFormatter.string(fromByteCount: s, countStyle: .file))
                 } else {
                     cell.set(text: "—")
@@ -301,14 +326,17 @@ struct NSTableListView: NSViewRepresentable {
         }
 
         private func commitRename(node: FSNode, to newName: String) {
-            let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, trimmed != node.name else { return }
-            let dest = node.url.deletingLastPathComponent().appendingPathComponent(trimmed)
-            do {
-                try FileManager.default.moveItem(at: node.url, to: dest)
-                Task { @MainActor in await parent.tab.refresh() }
-            } catch {
-                NSSound.beep()
+            let tab = parent.tab
+            // tab.window is `weak` on the model; capture into a local for the Task.
+            let window = tab.window
+            Task { @MainActor in
+                do {
+                    let new = try await FileOps.rename(node.url, to: newName)
+                    window?.pushUndo(.rename(items: [(node.url, new)]))
+                    await tab.refresh()
+                } catch {
+                    NSSound.beep()
+                }
             }
         }
 
@@ -322,14 +350,22 @@ struct NSTableListView: NSViewRepresentable {
         // MARK: drop
 
         func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
-            tableView.setDropRow(-1, dropOperation: .above)
+            if row >= 0, row < nodes.count, nodes[row].isDirectory {
+                tableView.setDropRow(row, dropOperation: .on)
+            } else {
+                tableView.setDropRow(-1, dropOperation: .above)
+            }
             return .copy
         }
 
         func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation op: NSTableView.DropOperation) -> Bool {
             let urls = (info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
             guard !urls.isEmpty else { return false }
-            parent.onCopyToOther(urls) // route handler decides actual destination — closure was supplied
+            if op == .on, row >= 0, row < nodes.count, nodes[row].isDirectory {
+                parent.onDropToFolder(nodes[row].url, urls)
+            } else {
+                parent.onDropToTab(urls)
+            }
             return true
         }
 
@@ -370,6 +406,35 @@ struct NSTableListView: NSViewRepresentable {
             f.timeStyle = .short
             return f
         }()
+    }
+}
+
+// MARK: - Row view for Compare Folders
+
+/// Custom row view that overlays a soft tint over the standard row background when
+/// the row has a non-nil `CompareStatus`. Tints stack on top of selection so the
+/// blue selection highlight stays visible — we use ~14% alpha which reads as a
+/// gentle wash rather than a solid block.
+private final class CompareRowView: NSTableRowView {
+    var status: CompareStatus?
+
+    init(status: CompareStatus?) {
+        self.status = status
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        super.drawBackground(in: dirtyRect)
+        guard let status else { return }
+        let color: NSColor
+        switch status {
+        case .uniqueHere: color = NSColor.systemRed.withAlphaComponent(0.14)
+        case .differs:    color = NSColor.systemYellow.withAlphaComponent(0.14)
+        case .same:       return // no tint; same on both sides is "expected" noise
+        }
+        color.setFill()
+        dirtyRect.fill()
     }
 }
 

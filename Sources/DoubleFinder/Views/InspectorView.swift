@@ -6,10 +6,55 @@ struct InspectorView: View {
     @EnvironmentObject var state: WindowState
 
     var body: some View {
-        InspectorContent(tab: state.focusedPane.activeTab, onClose: {
-            state.showInspector = false
-        })
-        .id(state.focus)        // re-mount when focus side changes
+        // Observe both PaneStates so a change in either pane's activeTab pushes a
+        // re-render here (we may need to switch into/out of the diff view).
+        InspectorPaneRouter(left: state.left, right: state.right)
+            .environmentObject(state)
+    }
+}
+
+/// Routes the inspector content based on the per-pane selections — if both panes
+/// have a single text file selected, swaps in the side-by-side diff view.
+private struct InspectorPaneRouter: View {
+    @ObservedObject var left: PaneState
+    @ObservedObject var right: PaneState
+    @EnvironmentObject var state: WindowState
+
+    var body: some View {
+        InspectorTabRouter(leftTab: left.activeTab, rightTab: right.activeTab)
+            .environmentObject(state)
+    }
+}
+
+private struct InspectorTabRouter: View {
+    @ObservedObject var leftTab: TabState
+    @ObservedObject var rightTab: TabState
+    @EnvironmentObject var state: WindowState
+
+    var body: some View {
+        if let pair = diffPair() {
+            DiffView(left: pair.0, right: pair.1) {
+                state.showInspector = false
+            }
+        } else {
+            InspectorContent(tab: state.focusedPane.activeTab, onClose: {
+                state.showInspector = false
+            })
+            .id(state.focus)
+        }
+    }
+
+    /// Returns (leftURL, rightURL) if both panes have exactly one local text file
+    /// selected. Returns nil otherwise (then we fall back to the normal inspector).
+    private func diffPair() -> (URL, URL)? {
+        guard leftTab.selection.count == 1, rightTab.selection.count == 1,
+              let leftID = leftTab.selection.first,
+              let rightID = rightTab.selection.first,
+              let leftNode = leftTab.nodes.first(where: { $0.id == leftID }),
+              let rightNode = rightTab.nodes.first(where: { $0.id == rightID }),
+              !leftNode.isDirectory, !rightNode.isDirectory,
+              isTextFile(leftNode.url), isTextFile(rightNode.url) else { return nil }
+        return (leftNode.url, rightNode.url)
     }
 }
 
@@ -206,7 +251,12 @@ private struct InspectorContent: View {
 
     private func sizeText(_ node: FSNode) -> String {
         let isDir = (attrs[.isDirectoryKey] as? Bool) ?? node.isDirectory
-        if isDir { return "—" }
+        if isDir {
+            if let s = node.calculatedSize {
+                return ByteCountFormatter.string(fromByteCount: s, countStyle: .file)
+            }
+            return "—"
+        }
         let s = (attrs[.totalFileSizeKey] as? Int) ?? (attrs[.fileSizeKey] as? Int)
         guard let s else { return "—" }
         return ByteCountFormatter.string(fromByteCount: Int64(s), countStyle: .file)

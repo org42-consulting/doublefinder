@@ -9,6 +9,7 @@ enum StatePersistence {
                 let sortKey: String         // SortKey.rawValue
                 let sortAscending: Bool
                 let showHidden: Bool
+                let isPinned: Bool?         // nil for old snapshots → false
             }
             let tabs: [Tab]
             let activeIndex: Int
@@ -17,6 +18,7 @@ enum StatePersistence {
         let right: Pane
         let focus: String                   // "left" | "right"
         let favourites: [SidebarFavourite]? // nil for old snapshots
+        let showInspector: Bool?            // nil for old snapshots
     }
 
     private static var stateURL: URL {

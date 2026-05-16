@@ -60,6 +60,14 @@ struct SFTPFileTransport: FileTransport {
         try await s.rename(from: from.sftpPath, to: dest.sftpPath)
     }
 
+    @discardableResult
+    func trash(_ url: URL) async throws -> URL? {
+        // SFTP has no trash concept; we permanently remove. nil return signals
+        // "no put-back URL available" so Undo will skip this entry.
+        try await remove(url)
+        return nil
+    }
+
     func download(_ remote: URL, to localTmp: URL, progress: Progress) async throws {
         let s = try session()
         try await s.download(remote: remote.sftpPath, local: localTmp, progress: progress)

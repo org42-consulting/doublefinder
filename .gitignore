@@ -61,3 +61,9 @@ Temporary Items
 *.log
 *.tmp
 *.bak
+
+# Repo-root icon preview written by scripts/regenerate-icon.swift. The
+# authoritative copy lives at Sources/DoubleFinder/Resources/doublefinder.png.
+/doublefinder.png
+# Finder "Copy of …" workspace files left while iterating on icons.
+*\ kopie.png

@@ -28,21 +28,41 @@ enum FileContextMenu {
 
         let multiple = urls.count > 1
         let firstName = urls.first?.lastPathComponent ?? ""
-        let isDir = urls.allSatisfy {
-            (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        let allRemote = urls.allSatisfy(\.isRemoteSFTP)
+        let isDir = urls.allSatisfy { u in
+            if u.isRemoteSFTP {
+                return tab.nodes.first(where: { $0.url == u })?.isDirectory ?? false
+            }
+            return (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
         }
 
         addItem(menu, "Open") {
             for u in urls {
+                if u.isRemoteSFTP {
+                    if let node = tab.nodes.first(where: { $0.url == u }), node.isDirectory {
+                        tab.navigate(to: u); break
+                    }
+                    continue
+                }
                 let dir = (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
                 if dir { tab.navigate(to: u); break }
                 NSWorkspace.shared.open(u)
             }
         }
 
-        let owItem = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
-        owItem.submenu = makeOpenWithSubmenu(urls: urls)
-        menu.addItem(owItem)
+        if !allRemote {
+            let owItem = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+            owItem.submenu = makeOpenWithSubmenu(urls: urls)
+            menu.addItem(owItem)
+        }
+
+        // Edit Locally: only for single remote file selections. Downloads to a local
+        // cache, opens with the default editor, and re-uploads on every save.
+        if allRemote, !multiple, !isDir, let url = urls.first {
+            addItem(menu, "Edit Locally") {
+                RemoteEditWatcher.shared.startEditing(url)
+            }
+        }
 
         if isDir, !multiple, let url = urls.first {
             addItem(menu, "Open in Other Pane") {
@@ -55,12 +75,13 @@ enum FileContextMenu {
 
         if isDir, !multiple, let url = urls.first {
             addItem(menu, "Open in Terminal") {
-                let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
-                NSWorkspace.shared.open([url], withApplicationAt: terminalURL, configuration: .init()) { _, _ in }
+                openTerminal(at: url)
             }
         }
-        addItem(menu, "Open in Finder") {
-            NSWorkspace.shared.activateFileViewerSelecting(urls)
+        if !allRemote {
+            addItem(menu, "Open in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting(urls)
+            }
         }
         addItem(menu, "Quick Look" + (multiple ? "" : " \u{201C}\(firstName)\u{201D}"), key: " ") {
             onQuickLook(urls)
@@ -68,32 +89,54 @@ enum FileContextMenu {
 
         menu.addItem(.separator())
 
-        addItem(menu, "Get Info", key: "i") {
-            guard let url = urls.first else { return }
-            state.getInfoPrompt = GetInfoPrompt(url: url) {
-                Task { @MainActor in await tab.refresh() }
+        if !allRemote {
+            addItem(menu, "Get Info", key: "i") {
+                guard let url = urls.first else { return }
+                state.getInfoPrompt = GetInfoPrompt(url: url) {
+                    Task { @MainActor in await tab.refresh() }
+                }
+            }
+            let hasLocalDir = urls.contains { u in
+                !u.isRemoteSFTP && (tab.nodes.first(where: { $0.url == u })?.isDirectory ?? false)
+            }
+            if hasLocalDir {
+                addItem(menu, "Calculate Size") {
+                    calculateSize(for: urls, in: tab)
+                }
             }
         }
         addItem(menu, multiple ? "Rename \(urls.count) Items…" : "Rename…", key: "\r") {
             if multiple {
                 state.batchRenamePrompt = BatchRenamePrompt(urls: urls) { pairs in
-                    applyBatchRename(pairs, refresh: { Task { @MainActor in await tab.refresh() } })
+                    applyBatchRename(pairs, refresh: { Task { @MainActor in await tab.refresh() } }, recordUndoOn: state)
                 }
             } else if let url = urls.first {
                 state.renamePrompt = RenamePromptModel(url: url) { newName in
-                    let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty, trimmed != url.lastPathComponent else { return }
-                    let dst = url.deletingLastPathComponent().appendingPathComponent(trimmed)
-                    try? FileManager.default.moveItem(at: url, to: dst)
-                    Task { @MainActor in await tab.refresh() }
+                    Task { @MainActor in
+                        do {
+                            let new = try await FileOps.rename(url, to: newName)
+                            state.pushUndo(.rename(items: [(url, new)]))
+                            await tab.refresh()
+                        } catch {
+                            NSSound.beep()
+                        }
+                    }
                 }
             }
         }
         addItem(menu, multiple ? "Duplicate \(urls.count) Items" : "Duplicate") {
             duplicate(urls, refresh: { Task { @MainActor in await tab.refresh() } })
         }
-        addItem(menu, multiple ? "Compress \(urls.count) Items" : "Compress \u{201C}\(firstName)\u{201D}") {
-            compress(urls, refresh: { Task { @MainActor in await tab.refresh() } })
+        if !allRemote {
+            addItem(menu, multiple ? "Compress \(urls.count) Items" : "Compress \u{201C}\(firstName)\u{201D}") {
+                compress(urls, refresh: { Task { @MainActor in await tab.refresh() } })
+            }
+            addItem(menu, multiple ? "Make Aliases" : "Make Alias") {
+                makeAliases(urls, refresh: { Task { @MainActor in await tab.refresh() } })
+            }
+            addItem(menu, multiple ? "Make Symbolic Links" : "Make Symbolic Link") {
+                makeSymbolicLinks(urls, refresh: { Task { @MainActor in await tab.refresh() } })
+            }
         }
 
         menu.addItem(.separator())
@@ -104,33 +147,50 @@ enum FileContextMenu {
         addItem(menu, "Move to Other Pane") {
             CopyMoveCoordinator.move(urls, to: state.otherPane.activeTab, from: tab, via: state)
         }
-        addItem(menu, "Copy") {
-            let pb = NSPasteboard.general
-            pb.clearContents()
-            pb.writeObjects(urls.map { $0 as NSURL })
+        if !allRemote {
+            addItem(menu, "Copy") {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.writeObjects(urls.map { $0 as NSURL })
+            }
         }
         addItem(menu, multiple ? "Copy \(urls.count) Paths" : "Copy Path") {
-            let paths = urls.map(\.path).joined(separator: "\n")
+            let paths = urls.map { $0.isRemoteSFTP ? $0.sftpPath : $0.path }.joined(separator: "\n")
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(paths, forType: .string)
         }
 
+        if !allRemote {
+            menu.addItem(.separator())
+            let tagsItem = NSMenuItem(title: "Tags", action: nil, keyEquivalent: "")
+            tagsItem.submenu = makeTagsSubmenu(urls: urls, refresh: {
+                Task { @MainActor in await tab.refresh() }
+            })
+            menu.addItem(tagsItem)
+        }
+
         menu.addItem(.separator())
 
-        let tagsItem = NSMenuItem(title: "Tags", action: nil, keyEquivalent: "")
-        tagsItem.submenu = makeTagsSubmenu(urls: urls, refresh: {
-            Task { @MainActor in await tab.refresh() }
-        })
-        menu.addItem(tagsItem)
-
-        menu.addItem(.separator())
-
-        addItem(menu, multiple ? "Move \(urls.count) Items to Trash" : "Move to Trash") {
+        let deleteTitle: String
+        if allRemote {
+            deleteTitle = multiple ? "Delete \(urls.count) Items…" : "Delete…"
+        } else {
+            deleteTitle = multiple ? "Move \(urls.count) Items to Trash" : "Move to Trash"
+        }
+        addItem(menu, deleteTitle) {
+            if allRemote, !TrashConfirm.askDeletePermanently(urls) { return }
+            let kind = allRemote ? "Delete" : "Trash"
+            let summary = allRemote
+                ? "Delete \(urls.count) item\(multiple ? "s" : "") permanently"
+                : "Move \(urls.count) item\(multiple ? "s" : "") to Trash"
             TransferQueue.shared.enqueue(
-                kind: "Trash",
-                summary: "Move \(urls.count) item\(multiple ? "s" : "") to Trash",
+                kind: kind,
+                summary: summary,
                 unitCount: Int64(urls.count),
-                work: { progress in try await FileOps.trash(urls, progress: progress) },
+                work: { progress in
+                    let results = try await FileOps.trash(urls, progress: progress)
+                    await MainActor.run { state.pushUndo(.trash(items: results)) }
+                },
                 completion: { Task { @MainActor in await tab.refresh() } }
             )
         }
@@ -139,21 +199,25 @@ enum FileContextMenu {
     /// Populate `menu` for a right-click on the background (no item under the cursor).
     static func populateBackground(_ menu: NSMenu, directory: URL, tab: TabState, state: WindowState) {
         menu.removeAllItems()
+        let isRemote = directory.isRemoteSFTP
 
         addItem(menu, "New Folder", key: "n") {
-            do {
-                _ = try FileOps.makeFolder(in: directory)
-                Task { @MainActor in await tab.refresh() }
-            } catch { NSSound.beep() }
+            Task { @MainActor in
+                do {
+                    _ = try await FileOps.makeFolder(in: directory)
+                    await tab.refresh()
+                } catch { NSSound.beep() }
+            }
         }
-        addItem(menu, "Get Info on Folder", key: "i") {
-            state.getInfoPrompt = GetInfoPrompt(url: directory) {
-                Task { @MainActor in await tab.refresh() }
+        if !isRemote {
+            addItem(menu, "Get Info on Folder", key: "i") {
+                state.getInfoPrompt = GetInfoPrompt(url: directory) {
+                    Task { @MainActor in await tab.refresh() }
+                }
             }
         }
         addItem(menu, "Open in Terminal", key: "t") {
-            let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
-            NSWorkspace.shared.open([directory], withApplicationAt: terminalURL, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
+            openTerminal(at: directory)
         }
 
         menu.addItem(.separator())
@@ -204,46 +268,70 @@ enum FileContextMenu {
         if !urls.isEmpty {
             let multiple = urls.count > 1
             let firstName = urls.first?.lastPathComponent ?? ""
-            let allDirs = urls.allSatisfy {
-                (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            let allRemote = urls.allSatisfy(\.isRemoteSFTP)
+            let allDirs = urls.allSatisfy { u in
+                if u.isRemoteSFTP {
+                    return tab.nodes.first(where: { $0.url == u })?.isDirectory ?? false
+                }
+                return (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
             }
             let refresh: () -> Void = { Task { @MainActor in await tab.refresh() } }
 
             Button("Open") {
                 for u in urls {
+                    if u.isRemoteSFTP {
+                        if let node = tab.nodes.first(where: { $0.url == u }), node.isDirectory {
+                            tab.navigate(to: u); break
+                        }
+                        continue
+                    }
                     let dir = (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
                     if dir { tab.navigate(to: u); break }
                     NSWorkspace.shared.open(u)
                 }
             }
-            let (defApp, otherApps) = openWithApps(for: urls[0])
-            Menu("Open With") {
-                if let def = defApp {
-                    Button(def.deletingPathExtension().lastPathComponent) { openWith(urls, app: def) }
-                    Divider()
+            if allRemote, !multiple, !allDirs, let url = urls.first {
+                Button("Edit Locally") {
+                    RemoteEditWatcher.shared.startEditing(url)
                 }
-                ForEach(Array(otherApps.enumerated()), id: \.offset) { _, appURL in
-                    Button(appURL.deletingPathExtension().lastPathComponent) { openWith(urls, app: appURL) }
+            }
+            if !allRemote {
+                let (defApp, otherApps) = openWithApps(for: urls[0])
+                Menu("Open With") {
+                    if let def = defApp {
+                        Button(def.deletingPathExtension().lastPathComponent) { openWith(urls, app: def) }
+                        Divider()
+                    }
+                    ForEach(Array(otherApps.enumerated()), id: \.offset) { _, appURL in
+                        Button(appURL.deletingPathExtension().lastPathComponent) { openWith(urls, app: appURL) }
+                    }
+                    if defApp != nil || !otherApps.isEmpty { Divider() }
+                    Button("Other…") { chooseApp(for: urls) }
                 }
-                if defApp != nil || !otherApps.isEmpty { Divider() }
-                Button("Other…") { chooseApp(for: urls) }
             }
             if allDirs, !multiple, let url = urls.first {
                 Button("Open in Other Pane") { state.otherPane.activeTab.navigate(to: url) }
                 Button("Open in New Tab") { state.focusedPane.addTab(url: url) }
-                Button("Open in Terminal") {
-                    let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
-                    NSWorkspace.shared.open([url], withApplicationAt: terminalURL, configuration: .init()) { _, _ in }
-                }
+                Button("Open in Terminal") { openTerminal(at: url) }
             }
-            Button("Open in Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+            if !allRemote {
+                Button("Open in Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+            }
             Button(multiple ? "Quick Look" : "Quick Look \u{201C}\(firstName)\u{201D}") { onQuickLook(urls) }
 
             Divider()
 
-            Button("Get Info") {
-                guard let url = urls.first else { return }
-                state.getInfoPrompt = GetInfoPrompt(url: url, onTagsChanged: refresh)
+            if !allRemote {
+                Button("Get Info") {
+                    guard let url = urls.first else { return }
+                    state.getInfoPrompt = GetInfoPrompt(url: url, onTagsChanged: refresh)
+                }
+                let hasLocalDir = urls.contains { u in
+                    !u.isRemoteSFTP && (tab.nodes.first(where: { $0.url == u })?.isDirectory ?? false)
+                }
+                if hasLocalDir {
+                    Button("Calculate Size") { calculateSize(for: urls, in: tab) }
+                }
             }
             Button(multiple ? "Rename \(urls.count) Items…" : "Rename…") {
                 if multiple {
@@ -252,19 +340,31 @@ enum FileContextMenu {
                     }
                 } else if let url = urls.first {
                     state.renamePrompt = RenamePromptModel(url: url) { newName in
-                        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty, trimmed != url.lastPathComponent else { return }
-                        let dst = url.deletingLastPathComponent().appendingPathComponent(trimmed)
-                        try? FileManager.default.moveItem(at: url, to: dst)
-                        refresh()
+                        Task { @MainActor in
+                            do {
+                                let new = try await FileOps.rename(url, to: newName)
+                                state.pushUndo(.rename(items: [(url, new)]))
+                                refresh()
+                            } catch {
+                                NSSound.beep()
+                            }
+                        }
                     }
                 }
             }
             Button(multiple ? "Duplicate \(urls.count) Items" : "Duplicate") {
                 duplicate(urls, refresh: refresh)
             }
-            Button(multiple ? "Compress \(urls.count) Items" : "Compress \u{201C}\(firstName)\u{201D}") {
-                compress(urls, refresh: refresh)
+            if !allRemote {
+                Button(multiple ? "Compress \(urls.count) Items" : "Compress \u{201C}\(firstName)\u{201D}") {
+                    compress(urls, refresh: refresh)
+                }
+                Button(multiple ? "Make Aliases" : "Make Alias") {
+                    makeAliases(urls, refresh: refresh)
+                }
+                Button(multiple ? "Make Symbolic Links" : "Make Symbolic Link") {
+                    makeSymbolicLinks(urls, refresh: refresh)
+                }
             }
 
             Divider()
@@ -275,47 +375,63 @@ enum FileContextMenu {
             Button("Move to Other Pane") {
                 CopyMoveCoordinator.move(urls, to: state.otherPane.activeTab, from: tab, via: state)
             }
-            Button("Copy") {
-                let pb = NSPasteboard.general
-                pb.clearContents()
-                pb.writeObjects(urls.map { $0 as NSURL })
+            if !allRemote {
+                Button("Copy") {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.writeObjects(urls.map { $0 as NSURL })
+                }
             }
             Button(multiple ? "Copy \(urls.count) Paths" : "Copy Path") {
-                let paths = urls.map(\.path).joined(separator: "\n")
+                let paths = urls.map { $0.isRemoteSFTP ? $0.sftpPath : $0.path }.joined(separator: "\n")
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(paths, forType: .string)
             }
 
-            Divider()
+            if !allRemote {
+                Divider()
 
-            Menu("Tags") {
-                ForEach(Tag.Color.allCases.filter { $0 != .none }, id: \.self) { color in
-                    Button(color.displayName) {
-                        for u in urls {
-                            TagStore.addTag(Tag(name: color.displayName, color: color), to: u)
+                Menu("Tags") {
+                    ForEach(Tag.Color.allCases.filter { $0 != .none }, id: \.self) { color in
+                        Button(color.displayName) {
+                            for u in urls {
+                                TagStore.addTag(Tag(name: color.displayName, color: color), to: u)
+                            }
+                            refresh()
                         }
+                    }
+                    Divider()
+                    Button("Clear Tags") {
+                        for u in urls { TagStore.clear(u) }
                         refresh()
                     }
-                }
-                Divider()
-                Button("Clear Tags") {
-                    for u in urls { TagStore.clear(u) }
-                    refresh()
                 }
             }
 
             Divider()
 
             Button(role: .destructive) {
+                if allRemote, !TrashConfirm.askDeletePermanently(urls) { return }
+                let kind = allRemote ? "Delete" : "Trash"
+                let summary = allRemote
+                    ? "Delete \(urls.count) item\(multiple ? "s" : "") permanently"
+                    : "Move \(urls.count) item\(multiple ? "s" : "") to Trash"
                 TransferQueue.shared.enqueue(
-                    kind: "Trash",
-                    summary: "Move \(urls.count) item\(multiple ? "s" : "") to Trash",
+                    kind: kind,
+                    summary: summary,
                     unitCount: Int64(urls.count),
-                    work: { progress in try await FileOps.trash(urls, progress: progress) },
+                    work: { progress in
+                    let results = try await FileOps.trash(urls, progress: progress)
+                    await MainActor.run { state.pushUndo(.trash(items: results)) }
+                },
                     completion: refresh
                 )
             } label: {
-                Text(multiple ? "Move \(urls.count) Items to Trash" : "Move to Trash")
+                if allRemote {
+                    Text(multiple ? "Delete \(urls.count) Items…" : "Delete…")
+                } else {
+                    Text(multiple ? "Move \(urls.count) Items to Trash" : "Move to Trash")
+                }
             }
         }
     }
@@ -324,21 +440,24 @@ enum FileContextMenu {
     @MainActor
     @ViewBuilder
     static func backgroundItems(directory: URL, tab: TabState, state: WindowState) -> some View {
+        let isRemote = directory.isRemoteSFTP
+
         Button("New Folder") {
-            do {
-                _ = try FileOps.makeFolder(in: directory)
-                Task { @MainActor in await tab.refresh() }
-            } catch { NSSound.beep() }
-        }
-        Button("Get Info on Folder") {
-            state.getInfoPrompt = GetInfoPrompt(url: directory) {
-                Task { @MainActor in await tab.refresh() }
+            Task { @MainActor in
+                do {
+                    _ = try await FileOps.makeFolder(in: directory)
+                    await tab.refresh()
+                } catch { NSSound.beep() }
             }
         }
-        Button("Open in Terminal") {
-            let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
-            NSWorkspace.shared.open([directory], withApplicationAt: terminalURL, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
+        if !isRemote {
+            Button("Get Info on Folder") {
+                state.getInfoPrompt = GetInfoPrompt(url: directory) {
+                    Task { @MainActor in await tab.refresh() }
+                }
+            }
         }
+        Button("Open in Terminal") { openTerminal(at: directory) }
 
         Divider()
 
@@ -403,14 +522,7 @@ enum FileContextMenu {
             kind: "Duplicate",
             summary: "Duplicate \(urls.count) item\(urls.count == 1 ? "" : "s")",
             unitCount: Int64(urls.count),
-            work: { progress in
-                for url in urls {
-                    if progress.isCancelled { return }
-                    let dir = url.deletingLastPathComponent()
-                    try await FileOps.copy([url], to: dir, resolution: .keepBoth, progress: nil)
-                    await MainActor.run { progress.completedUnitCount += 1 }
-                }
-            },
+            work: { progress in try await FileOps.duplicate(urls, progress: progress) },
             completion: { refresh() }
         )
     }
@@ -447,7 +559,7 @@ enum FileContextMenu {
         )
     }
 
-    static func applyBatchRename(_ pairs: [(URL, String)], refresh: @escaping () -> Void) {
+    static func applyBatchRename(_ pairs: [(URL, String)], refresh: @escaping () -> Void, recordUndoOn state: WindowState? = nil) {
         let actionable = pairs.filter { $0.1 != $0.0.lastPathComponent && !$0.1.isEmpty }
         guard !actionable.isEmpty else { return }
         TransferQueue.shared.enqueue(
@@ -455,16 +567,69 @@ enum FileContextMenu {
             summary: "Rename \(actionable.count) item\(actionable.count == 1 ? "" : "s")",
             unitCount: Int64(actionable.count),
             work: { progress in
-                let fm = FileManager.default
-                for (src, newName) in actionable {
-                    if progress.isCancelled { return }
-                    let dst = src.deletingLastPathComponent().appendingPathComponent(newName)
-                    try fm.moveItem(at: src, to: dst)
-                    await MainActor.run { progress.completedUnitCount += 1 }
+                let results = try await FileOps.batchRename(actionable, progress: progress)
+                if let state {
+                    await MainActor.run { state.pushUndo(.rename(items: results)) }
                 }
             },
             completion: { refresh() }
         )
+    }
+
+    /// Create a macOS alias file next to each source URL. Refreshes after.
+    @MainActor
+    static func makeAliases(_ urls: [URL], refresh: @escaping () -> Void) {
+        Task { @MainActor in
+            for url in urls where !url.isRemoteSFTP {
+                _ = try? await FileOps.makeAlias(for: url)
+            }
+            refresh()
+        }
+    }
+
+    /// Create a POSIX symbolic link next to each source URL pointing at it.
+    @MainActor
+    static func makeSymbolicLinks(_ urls: [URL], refresh: @escaping () -> Void) {
+        Task { @MainActor in
+            for url in urls where !url.isRemoteSFTP {
+                _ = try? await FileOps.makeSymbolicLink(for: url)
+            }
+            refresh()
+        }
+    }
+
+    /// Recursively measure each selected directory and stamp the result onto its
+    /// `FSNode.calculatedSize` so the size column + inspector pick it up. Files in
+    /// the selection are ignored. Remote URLs are also skipped — see FileOps.
+    @MainActor
+    static func calculateSize(for urls: [URL], in tab: TabState) {
+        for url in urls where !url.isRemoteSFTP {
+            let isDir = tab.nodes.first(where: { $0.url == url })?.isDirectory ?? false
+            guard isDir else { continue }
+            Task { @MainActor in
+                do {
+                    let size = try await FileOps.calculateSize(url)
+                    guard let i = tab.nodes.firstIndex(where: { $0.url == url }) else { return }
+                    var node = tab.nodes[i]
+                    node.calculatedSize = size
+                    tab.nodes[i] = node
+                } catch {
+                    NSSound.beep()
+                }
+            }
+        }
+    }
+
+    /// Open Terminal.app at the given URL. Local URLs use NSWorkspace; remote URLs
+    /// (sftp://) launch `ssh -t user@host` via WindowState.openSSHTerminal so the
+    /// user lands in the right remote directory.
+    static func openTerminal(at url: URL) {
+        if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
+            WindowState.openSSHTerminal(endpoint: endpoint, path: url.sftpPath)
+        } else {
+            let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+            NSWorkspace.shared.open([url], withApplicationAt: terminalURL, configuration: .init()) { _, _ in }
+        }
     }
 
     // MARK: - Open With

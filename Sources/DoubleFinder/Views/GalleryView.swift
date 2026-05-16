@@ -42,7 +42,7 @@ struct GalleryView: View {
     @ViewBuilder
     private var mainPreview: some View {
         if let id = tab.selection.first,
-           let node = tab.nodes.first(where: { $0.id == id }) {
+           let node = tab.visibleNodes.first(where: { $0.id == id }) {
             GalleryPreview(url: node.url)
                 .padding(16)
                 .overlay(alignment: .bottom) {
@@ -93,7 +93,7 @@ struct GalleryView: View {
     private var strip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(tab.nodes) { node in
+                ForEach(tab.visibleNodes) { node in
                     StripCell(
                         node: node,
                         isSelected: tab.selection.contains(node.id),

@@ -57,6 +57,40 @@ struct WindowView: View {
             .help("Active pane: \(state.focus == .left ? "left" : "right") — press ⇥ to swap")
             .keyboardShortcut(.tab, modifiers: [])
         }
+
+        ToolbarItem(id: "sync", placement: .navigation) {
+            Button {
+                state.syncPanes()
+            } label: {
+                Image(systemName: state.focus == .left
+                      ? "arrow.right.to.line.compact"
+                      : "arrow.left.to.line.compact")
+            }
+            .help("Mirror active pane to other side (⌥⌘=)")
+        }
+
+        ToolbarItem(id: "swap", placement: .navigation) {
+            Button {
+                state.swapPanes()
+            } label: {
+                Image(systemName: "arrow.left.arrow.right")
+            }
+            .help("Swap left and right panes (⌥⌘\\)")
+        }
+
+        ToolbarItem(id: "compare", placement: .navigation) {
+            Button {
+                state.compareMode.toggle()
+            } label: {
+                Image(systemName: state.compareMode
+                      ? "rectangle.split.2x1.fill"
+                      : "rectangle.split.2x1")
+                    .foregroundStyle(state.compareMode ? Color.accentColor : Color.primary)
+            }
+            .help(state.compareMode
+                  ? "Stop comparing — red = only on this side, yellow = same name but different contents"
+                  : "Compare panes — highlights rows that are unique to one side or differ in size/date")
+        }
     }
 
     @ToolbarContentBuilder
@@ -218,14 +252,14 @@ struct WindowView: View {
             tab.renameRequest = id
         } else {
             state.renamePrompt = RenamePromptModel(url: node.url) { newName in
-                let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty, trimmed != node.url.lastPathComponent else { return }
-                let dest = node.url.deletingLastPathComponent().appendingPathComponent(trimmed)
-                do {
-                    try FileManager.default.moveItem(at: node.url, to: dest)
-                    Task { @MainActor in await tab.refresh() }
-                } catch {
-                    NSSound.beep()
+                Task { @MainActor in
+                    do {
+                        let new = try await FileOps.rename(node.url, to: newName)
+                        state.pushUndo(.rename(items: [(node.url, new)]))
+                        await tab.refresh()
+                    } catch {
+                        NSSound.beep()
+                    }
                 }
             }
         }
@@ -233,18 +267,14 @@ struct WindowView: View {
 
     private func applyBatchRename(_ pairs: [(URL, String)], in tab: TabState) {
         let actionable = pairs.filter { $0.1 != $0.0.lastPathComponent && !$0.1.isEmpty }
+        let stateRef = state
         TransferQueue.shared.enqueue(
             kind: "Rename",
             summary: "Rename \(actionable.count) item\(actionable.count == 1 ? "" : "s")",
             unitCount: Int64(actionable.count),
             work: { progress in
-                let fm = FileManager.default
-                for (src, newName) in actionable {
-                    if progress.isCancelled { return }
-                    let dst = src.deletingLastPathComponent().appendingPathComponent(newName)
-                    try fm.moveItem(at: src, to: dst)
-                    await MainActor.run { progress.completedUnitCount += 1 }
-                }
+                let results = try await FileOps.batchRename(actionable, progress: progress)
+                await MainActor.run { stateRef.pushUndo(.rename(items: results)) }
             },
             completion: { Task { @MainActor in await tab.refresh() } }
         )
@@ -252,11 +282,13 @@ struct WindowView: View {
 
     private func newFolder() {
         let src = state.focusedPane.activeTab
-        do {
-            _ = try FileOps.makeFolder(in: src.url)
-            Task { await src.refresh() }
-        } catch {
-            NSSound.beep()
+        Task { @MainActor in
+            do {
+                _ = try await FileOps.makeFolder(in: src.url)
+                await src.refresh()
+            } catch {
+                NSSound.beep()
+            }
         }
     }
 
@@ -264,11 +296,21 @@ struct WindowView: View {
         let src = state.focusedPane.activeTab
         let urls = selectedURLs(in: src)
         guard !urls.isEmpty else { return }
+        let allRemote = urls.allSatisfy(\.isRemoteSFTP)
+        if allRemote, !TrashConfirm.askDeletePermanently(urls) { return }
+        let label = allRemote ? "Delete" : "Trash"
+        let summary = allRemote
+            ? "Delete \(urls.count) item\(urls.count == 1 ? "" : "s") permanently"
+            : "Move \(urls.count) item\(urls.count == 1 ? "" : "s") to Trash"
+        let stateRef = state
         TransferQueue.shared.enqueue(
-            kind: "Trash",
-            summary: "Move \(urls.count) item\(urls.count == 1 ? "" : "s") to Trash",
+            kind: label,
+            summary: summary,
             unitCount: Int64(urls.count),
-            work: { progress in try await FileOps.trash(urls, progress: progress) },
+            work: { progress in
+                let results = try await FileOps.trash(urls, progress: progress)
+                await MainActor.run { stateRef.pushUndo(.trash(items: results)) }
+            },
             completion: { Task { @MainActor in await src.refresh() } }
         )
     }

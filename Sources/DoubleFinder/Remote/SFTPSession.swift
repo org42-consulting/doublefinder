@@ -256,33 +256,76 @@ actor SFTPSession {
         if let progress = ctx.progress {
             SFTPParser.updateProgress(progress, from: readBuffer)
         }
-        // Look for the prompt at the start of a line.
-        if let promptRange = readBuffer.range(of: "\nsftp> ") ?? readBuffer.range(of: "sftp> ", options: .anchored) {
-            let output = String(readBuffer[readBuffer.startIndex..<promptRange.lowerBound])
-            readBuffer.removeSubrange(readBuffer.startIndex..<promptRange.upperBound)
-            commandInFlight = nil
+        // Some pty configurations deliver the prompt without its trailing space (or with a
+        // trailing newline). Accept the prompt at the end of the buffer regardless of those
+        // quirks. See consumeCommandPromptOutput for the matching rules.
+        guard let output = consumeCommandPromptOutput() else { return }
+        commandInFlight = nil
 
-            // Normalize pty CRLF → LF so all downstream parsers only see \n.
-            let normalized = output.replacingOccurrences(of: "\r\n", with: "\n")
-                                   .replacingOccurrences(of: "\r", with: "")
-            // Echo cleanup: sftp echoes the command on the first line. Strip it.
-            let cleaned = stripCommandEcho(normalized, command: ctx.line)
-            // Did the command error? sftp writes errors that don't start with "Couldn't" sometimes,
-            // but the simplest signal is exit status, which we don't get per-command. We treat any
-            // line starting with "Couldn't" or "remote " or "Cannot " as an error indicator.
-            if let err = extractErrorLine(cleaned) {
-                ctx.continuation.resume(throwing: SessionError.operationFailed(err))
+        // Normalize pty CRLF → LF so all downstream parsers only see \n.
+        let normalized = output.replacingOccurrences(of: "\r\n", with: "\n")
+                               .replacingOccurrences(of: "\r", with: "")
+        // Echo cleanup: sftp echoes the command on the first line. Strip it.
+        let cleaned = stripCommandEcho(normalized, command: ctx.line)
+        if let err = extractErrorLine(cleaned) {
+            ctx.continuation.resume(throwing: SessionError.operationFailed(err))
+        } else {
+            ctx.continuation.resume(returning: cleaned)
+        }
+
+        // Dispatch next.
+        if let next = commandQueue.first {
+            commandQueue.removeFirst()
+            commandInFlight = next
+            dispatchInFlight()
+        }
+    }
+
+    /// Detect the `sftp>` prompt at the end of the read buffer. Accepts the prompt with
+    /// or without a trailing space, and tolerates trailing newlines/whitespace from pty
+    /// buffering. Returns the output (everything before the prompt's line) on a match
+    /// and clears the buffer; returns nil if the prompt isn't yet fully formed.
+    private func consumeCommandPromptOutput() -> String? {
+        // Skip trailing whitespace so we recognise variants like "sftp> ", "sftp>",
+        // "sftp> \n", or "sftp>\n".
+        var end = readBuffer.endIndex
+        while end > readBuffer.startIndex {
+            let prev = readBuffer.index(before: end)
+            if readBuffer[prev].isWhitespace {
+                end = prev
             } else {
-                ctx.continuation.resume(returning: cleaned)
-            }
-
-            // Dispatch next.
-            if let next = commandQueue.first {
-                commandQueue.removeFirst()
-                commandInFlight = next
-                dispatchInFlight()
+                break
             }
         }
+        let trimmed = readBuffer[..<end]
+        guard trimmed.hasSuffix("sftp>") else { return nil }
+
+        let promptStart = trimmed.index(trimmed.endIndex, offsetBy: -5)
+
+        // Require the prompt to be at the start of a line so we don't false-match on a
+        // filename or other text that happens to contain "sftp>". Swift treats "\r\n" as a
+        // single grapheme cluster, so we use `isNewline` rather than comparing to "\r"/"\n"
+        // — the latter would miss the CR-LF case.
+        if promptStart > readBuffer.startIndex {
+            let before = readBuffer[readBuffer.index(before: promptStart)]
+            guard before.isNewline else { return nil }
+        }
+
+        // Walk back over any newline characters preceding the prompt line — we don't want
+        // them in the output. Same `isNewline` rationale as above.
+        var lineStart = promptStart
+        while lineStart > readBuffer.startIndex {
+            let prev = readBuffer.index(before: lineStart)
+            if readBuffer[prev].isNewline {
+                lineStart = prev
+            } else {
+                break
+            }
+        }
+
+        let output = String(readBuffer[readBuffer.startIndex..<lineStart])
+        readBuffer.removeAll(keepingCapacity: true)
+        return output
     }
 
     private func stripCommandEcho(_ output: String, command: String) -> String {

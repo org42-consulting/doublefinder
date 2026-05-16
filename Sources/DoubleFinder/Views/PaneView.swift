@@ -3,10 +3,13 @@ import AppKit
 
 struct PaneView: View {
     let side: PaneSide
+    /// Observed directly so a change to `pane.activeTabID` (e.g. when a pinned tab
+    /// spawns a new sibling tab) re-runs PaneView's body and rebuilds child views
+    /// like FileAreaView with the new active tab.
+    @ObservedObject var pane: PaneState
     @EnvironmentObject var state: WindowState
     @State private var isDropTarget: Bool = false
 
-    private var pane: PaneState { side == .left ? state.left : state.right }
     private var isActive: Bool { state.focus == side }
 
     var body: some View {
@@ -17,13 +20,17 @@ struct PaneView: View {
                 .padding(.top, 6)
                 .padding(.bottom, 4)
 
+            PanePathBar(tab: pane.activeTab)
+            PaneFilterBar(tab: pane.activeTab, side: side)
+
             ZStack {
                 FileAreaView(tab: pane.activeTab, side: side)
                     .environmentObject(state)
                     .overlay(alignment: .top) {
                         Rectangle()
                             .fill(isActive ? Color.accentColor : Color.clear)
-                            .frame(height: 2)
+                            .frame(height: 3)
+                            .allowsHitTesting(false)
                             .animation(.easeInOut(duration: 0.15), value: isActive)
                     }
 
@@ -40,9 +47,6 @@ struct PaneView: View {
 
             PaneFooter(tab: pane.activeTab)
         }
-        .background(
-            isActive ? Color.accentColor.opacity(0.025) : Color.clear
-        )
         .contentShape(Rectangle())
         .onTapGesture { state.focus = side }
         .dropDestination(for: URL.self) { urls, _ in
@@ -79,18 +83,89 @@ struct PaneView: View {
 
 }
 
-// MARK: - Footer (path bar + status bar) — observes tab directly so it stays live
+// MARK: - Path bar (sits above the file area, observes the tab so it stays live)
+
+private struct PanePathBar: View {
+    @ObservedObject var tab: TabState
+
+    var body: some View {
+        PathBarView(url: tab.url) { url in
+            tab.navigate(to: url)
+        }
+        .frame(height: 24)
+        .padding(.bottom, 4)
+    }
+}
+
+// MARK: - Quick filter bar — appears between path bar and file area when active
+
+private struct PaneFilterBar: View {
+    @ObservedObject var tab: TabState
+    let side: PaneSide
+    @EnvironmentObject var state: WindowState
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let active = !tab.quickFilter.isEmpty || focused
+        Group {
+            if active {
+                HStack(spacing: 6) {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    TextField("Filter visible items", text: Binding(
+                        get: { tab.quickFilter },
+                        set: { tab.quickFilter = $0 }
+                    ))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+                    .focused($focused)
+                    .onKeyPress(.escape) {
+                        tab.quickFilter = ""
+                        focused = false
+                        return .handled
+                    }
+                    Spacer(minLength: 6)
+                    if !tab.quickFilter.isEmpty {
+                        Text("\(tab.visibleNodes.count) of \(tab.nodes.count)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                        Button {
+                            tab.quickFilter = ""
+                            focused = false
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Clear filter")
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .background(.regularMaterial)
+                .overlay(alignment: .bottom) { Divider().opacity(0.4) }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.12), value: active)
+        .onReceive(NotificationCenter.default.publisher(for: .quickFilterFocusRequested)) { _ in
+            // Only respond if WE are the focused pane — otherwise both panes' filter
+            // bars would grab focus simultaneously on every ⌘/.
+            guard state.focus == side else { return }
+            focused = true
+        }
+    }
+}
+
+// MARK: - Footer (status bar) — observes tab directly so it stays live
 
 private struct PaneFooter: View {
     @ObservedObject var tab: TabState
 
     var body: some View {
         VStack(spacing: 0) {
-            PathBarView(url: tab.url) { url in
-                tab.navigate(to: url)
-            }
-            .frame(height: 24)
-
             HStack(spacing: 6) {
                 if let err = tab.loadError {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -108,7 +183,7 @@ private struct PaneFooter: View {
                         Text("\(tab.nodes.count) item\(tab.nodes.count == 1 ? "" : "s")")
                     }
                     if !tab.selection.isEmpty {
-                        Text("· \(tab.selection.count) selected")
+                        Text("· \(tab.selection.count) selected\(selectedSizeSuffix)")
                     }
                 }
                 Spacer()
@@ -122,11 +197,22 @@ private struct PaneFooter: View {
     }
 
     private func volumeAvailable(for url: URL) -> String {
+        if url.isRemoteSFTP { return "" }
         let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityKey])
         if let bytes = values?.volumeAvailableCapacity {
             return "\(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)) available"
         }
         return ""
+    }
+
+    /// Sums file sizes of the selected nodes (directories count as 0 since we don't
+    /// recurse). Returns "" when the selection has no measurable size — for example
+    /// a folder-only selection — so the footer stays uncluttered.
+    private var selectedSizeSuffix: String {
+        let selectedNodes = tab.nodes.filter { tab.selection.contains($0.id) && !$0.isDirectory }
+        let total = selectedNodes.compactMap(\.size).reduce(Int64(0), +)
+        guard total > 0 else { return "" }
+        return " · \(ByteCountFormatter.string(fromByteCount: total, countStyle: .file))"
     }
 }
 
@@ -203,14 +289,14 @@ private struct TabChip: View {
     var body: some View {
         let title = tab.displayTitle
         HStack(spacing: 6) {
-            Image(systemName: "folder.fill")
+            Image(systemName: tab.isPinned ? "pin.fill" : "folder.fill")
                 .font(.system(size: 10))
                 .foregroundStyle(active ? Color.accentColor : Color.secondary)
             Text(title)
                 .font(.system(size: 12, weight: active ? .semibold : .regular))
                 .lineLimit(1)
                 .foregroundStyle(active ? Color.accentColor : Color.primary)
-            if pane.tabs.count > 1, hovering || active {
+            if pane.tabs.count > 1, !tab.isPinned, hovering || active {
                 Button {
                     pane.closeTab(tab.id)
                 } label: {
@@ -231,6 +317,44 @@ private struct TabChip: View {
         .onTapGesture {
             pane.activeTabID = tab.id
             state.focus = side
+        }
+        .contextMenu {
+            Button(tab.isPinned ? "Unpin Tab" : "Pin Tab") {
+                tab.isPinned.toggle()
+            }
+            if pane.tabs.count > 1 && !tab.isPinned {
+                Divider()
+                Button("Close Tab", role: .destructive) { pane.closeTab(tab.id) }
+            }
+        }
+        .draggable(tab.id.uuidString) {
+            // Drag preview: a smaller, ghosted chip so the user sees what they're moving.
+            HStack(spacing: 6) {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.accentColor)
+                Text(tab.displayTitle)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(.regularMaterial, in: Capsule())
+        }
+        .dropDestination(for: String.self) { items, _ in
+            guard let droppedID = items.first,
+                  let droppedUUID = UUID(uuidString: droppedID),
+                  droppedUUID != tab.id,
+                  let from = pane.tabs.firstIndex(where: { $0.id == droppedUUID }),
+                  let to = pane.tabs.firstIndex(where: { $0.id == tab.id })
+            else { return false }
+            let item = pane.tabs.remove(at: from)
+            // SwiftUI's `move(fromOffsets:toOffset:)` semantics: dropping ON a tab inserts
+            // before it (or after, if dragging right-to-left). Simplest: just insert at the
+            // target index after removal.
+            let target = (from < to) ? max(to - 1, 0) : to
+            pane.tabs.insert(item, at: target)
+            return true
         }
     }
 }
@@ -257,9 +381,21 @@ struct PathBarView: View {
     @FocusState private var fieldFocused: Bool
     @State private var suggestions: [URL] = []
     @State private var suggestionsShown: Bool = false
+    @ObservedObject private var recents: RecentLocationsStore = .shared
 
     private var crumbs: [(name: String, url: URL)] {
         var parts: [(String, URL)] = []
+        if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
+            // Build remote crumbs by walking the sftp path; root is labelled with the host.
+            var current = url
+            while let parent = current.sftpParent {
+                let name = (current.sftpPath as NSString).lastPathComponent
+                parts.insert((name.isEmpty ? "/" : name, current), at: 0)
+                current = parent
+            }
+            parts.insert((endpoint.host, URL.sftp(endpoint: endpoint, path: "/")), at: 0)
+            return parts
+        }
         var current = url.standardizedFileURL
         while current.path != "/" {
             let name = current.lastPathComponent
@@ -272,6 +408,7 @@ struct PathBarView: View {
 
     var body: some View {
         HStack(spacing: 6) {
+            recentsMenu
             if editing {
                 TextField("/path/to/folder (use ~ for home)", text: $draft)
                     .textFieldStyle(.plain)
@@ -305,6 +442,44 @@ struct PathBarView: View {
         }
     }
 
+    /// Clock-arrow dropdown showing the last ~15 distinct locations visited.
+    /// Clicking an entry navigates this pane's tab there. Empty state and a
+    /// Clear-Recents action are inlined into the menu.
+    @ViewBuilder
+    private var recentsMenu: some View {
+        Menu {
+            if recents.recents.isEmpty {
+                Text("No recent locations").disabled(true)
+            } else {
+                ForEach(recents.recents, id: \.self) { recent in
+                    Button {
+                        onNavigate(recent)
+                    } label: {
+                        Text(displayName(for: recent))
+                    }
+                }
+                Divider()
+                Button("Clear Recents") { recents.clear() }
+            }
+        } label: {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Recent locations")
+    }
+
+    private func displayName(for url: URL) -> String {
+        if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
+            let leaf = url.sftpPath.isEmpty ? "/" : url.sftpPath
+            return "\(endpoint.host): \(leaf)"
+        }
+        return (url.path as NSString).abbreviatingWithTildeInPath
+    }
+
     private var suggestionsList: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(suggestions, id: \.self) { candidate in
@@ -333,6 +508,12 @@ struct PathBarView: View {
     }
 
     private func updateSuggestions() {
+        // Remote URLs don't have local suggestions; suppress the popover.
+        if draft.hasPrefix("sftp://") {
+            suggestions = []
+            suggestionsShown = false
+            return
+        }
         let expanded = (draft as NSString).expandingTildeInPath
         let fm = FileManager.default
 
@@ -405,7 +586,11 @@ struct PathBarView: View {
     }
 
     private func startEditing() {
-        draft = (url.path as NSString).abbreviatingWithTildeInPath
+        if url.isRemoteSFTP {
+            draft = url.absoluteString
+        } else {
+            draft = (url.path as NSString).abbreviatingWithTildeInPath
+        }
         editing = true
         DispatchQueue.main.async { fieldFocused = true }
     }
@@ -415,7 +600,14 @@ struct PathBarView: View {
     }
 
     private func commit() {
-        let expanded = (draft as NSString).expandingTildeInPath
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Remote URL: trust the user and let the tab handle connection/refresh failures.
+        if let sftpURL = URL(string: trimmed), sftpURL.isRemoteSFTP {
+            editing = false
+            onNavigate(sftpURL)
+            return
+        }
+        let expanded = (trimmed as NSString).expandingTildeInPath
         let newURL = URL(fileURLWithPath: expanded)
         var isDir: ObjCBool = false
         if FileManager.default.fileExists(atPath: newURL.path, isDirectory: &isDir), isDir.boolValue {

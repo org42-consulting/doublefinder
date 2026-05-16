@@ -14,6 +14,9 @@ struct FSNode: Identifiable, Hashable {
     let modified: Date?
     let tags: [Tag]
     var gitStatus: GitFileState? = nil
+    /// Recursive folder size, populated on-demand by the "Calculate Size" action.
+    /// Cleared on the next `tab.refresh()` since the listing replaces all nodes.
+    var calculatedSize: Int64? = nil
 
     var id: URL { url }
     var name: String { url.lastPathComponent }
@@ -111,6 +114,15 @@ enum ConnectionState: Equatable {
     case remoteDisconnected(reason: String)
 }
 
+/// Per-node status when compare-folders mode is active. Each node in either pane
+/// gets assigned one of these based on whether a same-named entry exists in the
+/// other pane and how its attributes compare.
+enum CompareStatus: Hashable {
+    case uniqueHere    // no match by name in the other pane
+    case differs       // matched by name but size or modified date differs
+    case same          // matched and attributes equal
+}
+
 // MARK: - Conflict prompt
 
 enum ConflictResolution { case keepBoth, replace, skip }
@@ -206,6 +218,45 @@ extension Notification.Name {
     static let toggleInspectorRequested = Notification.Name("doublefinder.toggleInspector")
     static let connectToServerRequested = Notification.Name("df.connectToServerRequested")
     static let manageConnectionsRequested = Notification.Name("df.manageConnectionsRequested")
+    static let syncPanesRequested = Notification.Name("df.syncPanesRequested")
+    static let swapPanesRequested = Notification.Name("df.swapPanesRequested")
+    static let selectAllRequested = Notification.Name("df.selectAllRequested")
+    static let duplicateSelectionRequested = Notification.Name("df.duplicateSelectionRequested")
+    static let revealInFinderRequested = Notification.Name("df.revealInFinderRequested")
+    static let newTabRequested = Notification.Name("df.newTabRequested")
+    static let closeTabRequested = Notification.Name("df.closeTabRequested")
+    static let backRequested = Notification.Name("df.backRequested")
+    static let forwardRequested = Notification.Name("df.forwardRequested")
+    static let quickFilterFocusRequested = Notification.Name("df.quickFilterFocusRequested")
+    static let toggleCompareModeRequested = Notification.Name("df.toggleCompareModeRequested")
+    static let newFileRequested = Notification.Name("df.newFileRequested")
+    static let mirrorSelectionRequested = Notification.Name("df.mirrorSelectionRequested")
+    static let favoriteSlotRequested = Notification.Name("df.favoriteSlotRequested")
+    static let undoRequested = Notification.Name("df.undoRequested")
+}
+
+/// A reversible file operation. Pushed onto `WindowState.undoStack` after each
+/// successful move / rename / trash and popped by ⌘Z. Copy / duplicate / new-file
+/// are not reversible automatically — Trashing the result is the user's option.
+enum UndoableOp {
+    /// A batch of moves: each (source, destDir) recorded so we can move the file
+    /// back to source's parent on undo. We trust the basename to land at
+    /// destDir/source.lastPathComponent (true unless conflict-keepBoth renamed it).
+    case move(items: [(source: URL, destDir: URL)])
+    /// One or more renames. Undo restores each `to`'s name back to `from`'s
+    /// last path component.
+    case rename(items: [(from: URL, to: URL)])
+    /// A batch of trashes. `trashed` may be nil for remote (permanent delete).
+    /// Undo moves each non-nil trashed URL back to its original location.
+    case trash(items: [(original: URL, trashed: URL?)])
+
+    var displayName: String {
+        switch self {
+        case .move:   return "Move"
+        case .rename: return "Rename"
+        case .trash:  return "Move to Trash"
+        }
+    }
 }
 
 // MARK: - TabState
@@ -224,11 +275,24 @@ final class TabState: ObservableObject, Identifiable {
     @Published var searchText: String = ""
     @Published var isSearching: Bool = false
     @Published var renameRequest: FSNode.ID?
+    /// In-place name filter applied on top of `nodes`. Independent from Spotlight
+    /// search (`searchText`); the filter never touches disk. Cleared with Esc.
+    @Published var quickFilter: String = ""
+
+    /// What the file views actually render — `nodes` with the quick-filter applied.
+    var visibleNodes: [FSNode] {
+        let q = quickFilter.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return nodes }
+        return nodes.filter { $0.name.localizedStandardContains(q) }
+    }
     @Published var showHidden: Bool = false {
         didSet {
             if isSearching { runSearch(searchText) } else { Task { await refresh() } }
         }
     }
+    /// Pinned tabs survive ⌘W (close-tab is a no-op for them) and always restore
+    /// on app launch with their URL. Toggleable via the tab's context menu.
+    @Published var isPinned: Bool = false
     @Published var searchScope: SearchScope = .folder {
         didSet {
             if isSearching && searchScope != oldValue { runSearch(searchText) }
@@ -301,6 +365,7 @@ final class TabState: ObservableObject, Identifiable {
         self.sortKey = SortKey(rawValue: persisted.sortKey) ?? .name
         self.sortAscending = persisted.sortAscending
         self.showHidden = persisted.showHidden
+        self.isPinned = persisted.isPinned ?? false
     }
 
     func snapshot() -> StatePersistence.Snapshot.Pane.Tab {
@@ -312,7 +377,8 @@ final class TabState: ObservableObject, Identifiable {
             viewMode: viewMode.rawValue,
             sortKey: sortKey.rawValue,
             sortAscending: sortAscending,
-            showHidden: showHidden
+            showHidden: showHidden,
+            isPinned: isPinned
         )
     }
 
@@ -416,11 +482,34 @@ final class TabState: ObservableObject, Identifiable {
         return url.lastPathComponent.isEmpty ? "/" : url.lastPathComponent
     }
 
-    var canBack: Bool { !history.isEmpty }
-    var canForward: Bool { !future.isEmpty }
+    // Pinned tabs ignore back/forward — they're locked to their original URL,
+    // and history navigation would change their location.
+    var canBack: Bool { !isPinned && !history.isEmpty }
+    var canForward: Bool { !isPinned && !future.isEmpty }
+
+    /// Find the PaneState that currently owns this tab. Used by `navigate` when
+    /// pinned tabs need to spawn a sibling tab in the same pane.
+    private func containingPane() -> PaneState? {
+        guard let window else { return nil }
+        if window.left.tabs.contains(where: { $0 === self }) { return window.left }
+        if window.right.tabs.contains(where: { $0 === self }) { return window.right }
+        return nil
+    }
 
     func navigate(to newURL: URL) {
         let resolved = newURL.resolvingSymlinksInPath()
+
+        // Pinned tabs don't change directory — open the target in a new sibling tab
+        // in the same pane instead. The exception is when something synthesises a
+        // navigation to the tab's CURRENT URL (e.g. a reconnect path), which we
+        // pass through unchanged.
+        if isPinned, resolved.standardizedFileURL != url.standardizedFileURL {
+            if let pane = containingPane() {
+                pane.addTab(url: resolved)
+            }
+            return
+        }
+
         // For remote URLs skip the same-URL guard: the user may be reconnecting after a
         // disconnect, so we always want to re-enter the connection and refresh cycle.
         let sameURL = resolved.standardizedFileURL == url.standardizedFileURL
@@ -439,6 +528,8 @@ final class TabState: ObservableObject, Identifiable {
         future.removeAll()
         url = resolved
         selection.removeAll()
+        quickFilter = ""
+        RecentLocationsStore.shared.push(resolved)
         Task { await self.refresh() }
 
         _currentSFTPEndpoint = willBeRemote ? newEndpoint : nil
@@ -453,6 +544,9 @@ final class TabState: ObservableObject, Identifiable {
     }
 
     func back() {
+        // Defense in depth: canBack already gates the toolbar/menu, but if some
+        // caller side-steps that check, refuse to walk a pinned tab's history.
+        guard !isPinned else { return }
         guard let prev = history.popLast() else { return }
         future.append(url)
         url = prev
@@ -461,6 +555,7 @@ final class TabState: ObservableObject, Identifiable {
     }
 
     func forward() {
+        guard !isPinned else { return }
         guard let next = future.popLast() else { return }
         history.append(url)
         url = next
@@ -501,6 +596,8 @@ final class TabState: ObservableObject, Identifiable {
             await subscribeToSessionDisconnectIfNeeded()
             if loadError == nil { connectionState = .remoteConnected }
         }
+        // Re-stamp compare statuses if compare-folders mode is on; cheap no-op otherwise.
+        window?.recomputeCompareStatuses()
     }
 
     private var disconnectSubscribed: Set<RemoteEndpoint> = []
@@ -618,6 +715,9 @@ final class PaneState: ObservableObject, Identifiable {
 
     func closeTab(_ id: TabState.ID) {
         guard tabs.count > 1 else { return }
+        // Refuse to close a pinned tab — caller (toolbar / ⌘W / X button) should
+        // gate on isPinned and beep, but defend in depth here.
+        if let tab = tabs.first(where: { $0.id == id }), tab.isPinned { return }
         let idx = tabs.firstIndex { $0.id == id } ?? 0
         tabs.removeAll { $0.id == id }
         if activeTabID == id {
@@ -643,9 +743,45 @@ final class WindowState: ObservableObject {
     @Published var batchRenamePrompt: BatchRenamePrompt?
     @Published var favourites: [SidebarFavourite] = SidebarFavourite.defaults
     @Published var showInspector: Bool = false
+    @Published var compareMode: Bool = false {
+        didSet { recomputeCompareStatuses() }
+    }
+    /// `node.url → status` for every node in both panes' active tabs, populated
+    /// when `compareMode` is on. Cleared otherwise so views skip the lookup.
+    @Published var compareStatuses: [URL: CompareStatus] = [:]
+    /// Undo stack of recent file operations. Bounded so it doesn't grow forever.
+    @Published var undoStack: [UndoableOp] = []
+    private static let maxUndoStack = 50
 
     private var observerTokens: [NSObjectProtocol] = []
     private var favouritesCancellable: AnyCancellable?
+
+    /// The configured starting directory from Settings, falling back to home if the
+    /// configured path no longer exists or isn't set.
+    static func defaultStartingURL() -> URL {
+        let defaults = UserDefaults.standard
+        let startingPath = defaults.string(forKey: SettingsKey.startingDirectoryPath)
+            ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let startURL = URL(fileURLWithPath: (startingPath as NSString).expandingTildeInPath)
+        return FileManager.default.fileExists(atPath: startURL.path)
+            ? startURL
+            : FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    /// Replace every tab in this window whose URL targets `endpoint` with the configured
+    /// starting directory. Used when the user explicitly disconnects from a server so the
+    /// tab doesn't get stuck on the disconnected placeholder.
+    @MainActor
+    func navigateTabsAway(fromEndpoint endpoint: RemoteEndpoint) {
+        let target = WindowState.defaultStartingURL()
+        for pane in [left, right] {
+            for tab in pane.tabs {
+                guard let tabEndpoint = tab.url.sftpEndpoint,
+                      tabEndpoint.sameConnection(as: endpoint) else { continue }
+                tab.navigate(to: target)
+            }
+        }
+    }
 
     init() {
         let defaults = UserDefaults.standard
@@ -667,6 +803,7 @@ final class WindowState: ObservableObject {
                     return !legacy
                 }
             }
+            self.showInspector = snap.showInspector ?? false
         } else {
             let startURL = URL(fileURLWithPath: (startingPath as NSString).expandingTildeInPath)
             let safe = FileManager.default.fileExists(atPath: startURL.path)
@@ -688,7 +825,8 @@ final class WindowState: ObservableObject {
             left: left.snapshot(),
             right: right.snapshot(),
             focus: focus == .right ? "right" : "left",
-            favourites: favourites
+            favourites: favourites,
+            showInspector: showInspector
         )
     }
 
@@ -780,10 +918,14 @@ final class WindowState: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let url = self.focusedPane.activeTab.url
-                let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
-                let config = NSWorkspace.OpenConfiguration()
-                NSWorkspace.shared.open([url], withApplicationAt: terminalURL, configuration: config) { _, error in
-                    if error != nil { DispatchQueue.main.async { NSSound.beep() } }
+                if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
+                    WindowState.openSSHTerminal(endpoint: endpoint, path: url.sftpPath)
+                } else {
+                    let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+                    let config = NSWorkspace.OpenConfiguration()
+                    NSWorkspace.shared.open([url], withApplicationAt: terminalURL, configuration: config) { _, error in
+                        if error != nil { DispatchQueue.main.async { NSSound.beep() } }
+                    }
                 }
             }
         })
@@ -797,6 +939,116 @@ final class WindowState: ObservableObject {
                 self?.showInspector.toggle()
             }
         })
+        observerTokens.append(nc.addObserver(forName: .syncPanesRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.syncPanes() }
+        })
+        observerTokens.append(nc.addObserver(forName: .swapPanesRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.swapPanes() }
+        })
+        observerTokens.append(nc.addObserver(forName: .selectAllRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                tab.selection = Set(tab.nodes.map(\.id))
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .duplicateSelectionRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                let urls = tab.selection.compactMap { id in tab.nodes.first(where: { $0.id == id })?.url }
+                guard !urls.isEmpty else { NSSound.beep(); return }
+                FileContextMenu.duplicate(urls, refresh: { Task { @MainActor in await tab.refresh() } })
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .revealInFinderRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                if tab.url.isRemoteSFTP {
+                    NSSound.beep()
+                    return
+                }
+                let urls = tab.selection.compactMap { id in tab.nodes.first(where: { $0.id == id })?.url }
+                if urls.isEmpty {
+                    NSWorkspace.shared.activateFileViewerSelecting([tab.url])
+                } else {
+                    NSWorkspace.shared.activateFileViewerSelecting(urls)
+                }
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .newTabRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let pane = self.focusedPane
+                pane.addTab(url: pane.activeTab.url)
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .closeTabRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let pane = self.focusedPane
+                // Only close if there's more than one tab; otherwise fall through to the
+                // system's default ⌘W (close window) by beeping so the user notices.
+                guard pane.tabs.count > 1 else { NSSound.beep(); return }
+                // Refuse to close pinned tabs — ⌘W on a pinned tab beeps so the user
+                // realises they need to unpin first.
+                guard !pane.activeTab.isPinned else { NSSound.beep(); return }
+                pane.closeTab(pane.activeTabID)
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .backRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.focusedPane.activeTab.back()
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .forwardRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.focusedPane.activeTab.forward()
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .toggleCompareModeRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.compareMode.toggle() }
+        })
+        observerTokens.append(nc.addObserver(forName: .newFileRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                Task { @MainActor in
+                    do {
+                        let url = try await FileOps.makeFile(in: tab.url)
+                        await tab.refresh()
+                        // Land on the new file and immediately offer inline rename.
+                        if let id = tab.nodes.first(where: { $0.url == url })?.id {
+                            tab.selection = [id]
+                            tab.renameRequest = id
+                        }
+                    } catch {
+                        NSSound.beep()
+                    }
+                }
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .mirrorSelectionRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.mirrorSelection() }
+        })
+        observerTokens.append(nc.addObserver(forName: .favoriteSlotRequested, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let slot = note.userInfo?["slot"] as? Int,
+                      slot >= 0, slot < self.favourites.count else {
+                    NSSound.beep()
+                    return
+                }
+                self.focusedPane.activeTab.navigate(to: self.favourites[slot].url)
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .undoRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                Task { @MainActor in await self.performUndo() }
+            }
+        })
     }
 
     func addFocusedURLToSidebar() {
@@ -807,6 +1059,35 @@ final class WindowState: ObservableObject {
         }
         let title = url.lastPathComponent.isEmpty ? "/" : url.lastPathComponent
         favourites.append(SidebarFavourite(title: title, systemImage: "folder", path: url.path))
+    }
+
+    /// Launch Terminal.app and ssh into the given endpoint, cd'ing to `path` on
+    /// arrival. Uses `ssh -t` so the remote tty is allocated; the remote shell
+    /// inherits via `exec $SHELL -l` (with `$SHELL` expanded on the remote, not
+    /// locally — that's why we escape the `$`).
+    static func openSSHTerminal(endpoint: RemoteEndpoint, path: String) {
+        // POSIX-shell quote the remote path: wrap in single quotes and escape any
+        // embedded single quote with the `'\''` trick.
+        let escapedPath = path.replacingOccurrences(of: "'", with: "'\\''")
+        let quotedPath = "'\(escapedPath)'"
+        let portArg = endpoint.port == 22 ? "" : " -p \(endpoint.port)"
+        // The LOCAL shell command that Terminal will run. `\$SHELL` keeps `$SHELL`
+        // unexpanded locally so the REMOTE shell expands it after ssh hands off.
+        let shellCmd = "ssh -t\(portArg) \(endpoint.user)@\(endpoint.host) \"cd \(quotedPath) && exec \\$SHELL -l\""
+
+        // Escape for AppleScript string literal.
+        let asEscaped = shellCmd
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let source = """
+        tell application "Terminal"
+            activate
+            do script "\(asEscaped)"
+        end tell
+        """
+        var error: NSDictionary?
+        _ = NSAppleScript(source: source)?.executeAndReturnError(&error)
+        if error != nil { NSSound.beep() }
     }
 
     static func emptyTrashWithConfirmation() {
@@ -844,6 +1125,110 @@ final class WindowState: ObservableObject {
 
     func toggleFocus() {
         focus = (focus == .left) ? .right : .left
+    }
+
+    /// Re-compute the URL→status dictionary used by Compare Folders mode. Called
+    /// whenever `compareMode` toggles or either pane's active tab finishes a
+    /// refresh. Cheap: O(|left| + |right|) with a hash table.
+    func recomputeCompareStatuses() {
+        guard compareMode else {
+            if !compareStatuses.isEmpty { compareStatuses = [:] }
+            return
+        }
+        let leftNodes = left.activeTab.nodes
+        let rightNodes = right.activeTab.nodes
+        var leftByName: [String: FSNode] = [:]
+        leftByName.reserveCapacity(leftNodes.count)
+        for n in leftNodes { leftByName[n.name] = n }
+        var rightByName: [String: FSNode] = [:]
+        rightByName.reserveCapacity(rightNodes.count)
+        for n in rightNodes { rightByName[n.name] = n }
+
+        var map: [URL: CompareStatus] = [:]
+        map.reserveCapacity(leftNodes.count + rightNodes.count)
+        for n in leftNodes {
+            map[n.url] = Self.compareTwo(here: n, there: rightByName[n.name])
+        }
+        for n in rightNodes {
+            map[n.url] = Self.compareTwo(here: n, there: leftByName[n.name])
+        }
+        compareStatuses = map
+    }
+
+    private static func compareTwo(here: FSNode, there: FSNode?) -> CompareStatus {
+        guard let other = there else { return .uniqueHere }
+        if here.isDirectory != other.isDirectory { return .differs }
+        if here.size != other.size { return .differs }
+        if let a = here.modified, let b = other.modified, abs(a.timeIntervalSince(b)) > 1 { return .differs }
+        return .same
+    }
+
+    /// Mirror the active pane's URL onto the other pane's active tab.
+    func syncPanes() {
+        let source = focusedPane.activeTab
+        let target = otherPane.activeTab
+        guard source.url != target.url else { return }
+        target.navigate(to: source.url)
+    }
+
+    /// Record an undoable operation. Caps the stack at `maxUndoStack`.
+    func pushUndo(_ op: UndoableOp) {
+        undoStack.append(op)
+        if undoStack.count > Self.maxUndoStack {
+            undoStack.removeFirst(undoStack.count - Self.maxUndoStack)
+        }
+    }
+
+    /// Pop the most recent op and run its inverse. Refreshes every tab in both
+    /// panes afterward so the UI reflects the result regardless of where the
+    /// original operation happened.
+    @MainActor
+    func performUndo() async {
+        guard let op = undoStack.popLast() else { NSSound.beep(); return }
+        switch op {
+        case .move(let items):
+            // Process in reverse so chained moves unwind in the same order as the
+            // original. Each iteration moves dest/file back to source's parent.
+            for (src, destDir) in items.reversed() {
+                let moved = destDir.appendingPathComponent(src.lastPathComponent)
+                _ = try? await FileOps.move([moved], to: src.deletingLastPathComponent())
+            }
+        case .rename(let items):
+            for (from, to) in items.reversed() {
+                _ = try? await FileOps.rename(to, to: from.lastPathComponent)
+            }
+        case .trash(let items):
+            for (original, trashed) in items.reversed() {
+                guard let trashed else { continue } // remote: nothing to put back
+                try? FileManager.default.moveItem(at: trashed, to: original)
+            }
+        }
+        // Refresh all tabs in both panes — the affected files may live anywhere.
+        for pane in [left, right] {
+            for tab in pane.tabs { await tab.refresh() }
+        }
+    }
+
+    /// Select files in the OTHER pane that share names with the current selection
+    /// in the focused pane. Useful with Compare Folders to act on the matched set.
+    func mirrorSelection() {
+        let src = focusedPane.activeTab
+        let dst = otherPane.activeTab
+        let names = Set(src.selection.compactMap { id in src.nodes.first(where: { $0.id == id })?.name })
+        guard !names.isEmpty else { return }
+        let dstIDs = dst.nodes.filter { names.contains($0.name) }.map(\.id)
+        dst.selection = Set(dstIDs)
+    }
+
+    /// Exchange the tab lists of the two panes. Focus stays on the same side, so the
+    /// user sees the previously-other pane's content under the same focus indicator.
+    func swapPanes() {
+        let leftTabs = left.tabs
+        let leftActive = left.activeTabID
+        left.tabs = right.tabs
+        left.activeTabID = right.activeTabID
+        right.tabs = leftTabs
+        right.activeTabID = leftActive
     }
 
     func presentRemotePrompt(_ prompt: SFTPPrompt, endpoint: RemoteEndpoint) async -> String? {

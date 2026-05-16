@@ -16,6 +16,23 @@ struct DoubleFinderApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(after: .newItem) {
+                Button("New File") {
+                    NotificationCenter.default.post(name: .newFileRequested, object: nil)
+                }
+                .keyboardShortcut("n", modifiers: [.command, .option])
+
+                Button("New Tab") {
+                    NotificationCenter.default.post(name: .newTabRequested, object: nil)
+                }
+                .keyboardShortcut("t", modifiers: [.command])
+
+                Button("Close Tab") {
+                    NotificationCenter.default.post(name: .closeTabRequested, object: nil)
+                }
+                .keyboardShortcut("w", modifiers: [.command])
+
+                Divider()
+
                 Button("Connect to Server…") {
                     NotificationCenter.default.post(name: .connectToServerRequested, object: nil)
                 }
@@ -29,7 +46,26 @@ struct DoubleFinderApp: App {
                 }
             }
             ToolbarCommands()
+            CommandGroup(replacing: .undoRedo) {
+                Button("Undo") {
+                    NotificationCenter.default.post(name: .undoRequested, object: nil)
+                }
+                .keyboardShortcut("z", modifiers: [.command])
+                // Redo would push the undone-op onto a redo stack and re-apply.
+                // Not implemented yet — leaving the slot intentionally blank.
+            }
             CommandGroup(after: .pasteboard) {
+                Button("Select All Items") {
+                    NotificationCenter.default.post(name: .selectAllRequested, object: nil)
+                }
+                .keyboardShortcut("a", modifiers: [.command])
+
+                Button("Quick Filter") {
+                    NotificationCenter.default.post(name: .quickFilterFocusRequested, object: nil)
+                }
+                .keyboardShortcut("/", modifiers: [.command])
+
+                Divider()
                 Button("Get Info") {
                     NotificationCenter.default.post(name: .getInfoRequested, object: nil)
                 }
@@ -40,6 +76,16 @@ struct DoubleFinderApp: App {
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
 
+                Button("Duplicate") {
+                    NotificationCenter.default.post(name: .duplicateSelectionRequested, object: nil)
+                }
+                .keyboardShortcut("d", modifiers: [.command])
+
+                Button("Reveal in Finder") {
+                    NotificationCenter.default.post(name: .revealInFinderRequested, object: nil)
+                }
+                .keyboardShortcut("r", modifiers: [.command, .option])
+
                 Divider()
 
                 Button("Empty Trash…") {
@@ -48,6 +94,16 @@ struct DoubleFinderApp: App {
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])
             }
             CommandMenu("Go") {
+                Button("Back") {
+                    NotificationCenter.default.post(name: .backRequested, object: nil)
+                }
+                .keyboardShortcut("[", modifiers: [.command])
+
+                Button("Forward") {
+                    NotificationCenter.default.post(name: .forwardRequested, object: nil)
+                }
+                .keyboardShortcut("]", modifiers: [.command])
+
                 Button("Enclosing Folder") {
                     NotificationCenter.default.post(name: .parentFolderRequested, object: nil)
                 }
@@ -81,6 +137,27 @@ struct DoubleFinderApp: App {
                     NotificationCenter.default.post(name: .toggleHiddenFilesRequested, object: nil)
                 }
                 .keyboardShortcut(".", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Mirror to Other Pane") {
+                    NotificationCenter.default.post(name: .syncPanesRequested, object: nil)
+                }
+                .keyboardShortcut("=", modifiers: [.command, .option])
+
+                Button("Swap Panes") {
+                    NotificationCenter.default.post(name: .swapPanesRequested, object: nil)
+                }
+                .keyboardShortcut("\\", modifiers: [.command, .option])
+
+                Button("Mirror Selection to Other Pane") {
+                    NotificationCenter.default.post(name: .mirrorSelectionRequested, object: nil)
+                }
+                .keyboardShortcut(";", modifiers: [.command, .option])
+
+                Divider()
+
+                FavoriteSlotCommands()
             }
         }
 
@@ -147,5 +224,35 @@ private struct ManageConnectionsButton: View {
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Button("Manage Connections…") { openWindow(id: "connections") }
+    }
+}
+
+/// Nine menu items: ⌥⌘1..⌥⌘9 → jump the focused tab to the nth sidebar favorite.
+/// Static slots are simpler than a dynamic per-favorite menu (SwiftUI commands
+/// don't gracefully support runtime-varying shortcut bindings).
+private struct FavoriteSlotCommands: View {
+    var body: some View {
+        Group {
+            slot(1, char: "1")
+            slot(2, char: "2")
+            slot(3, char: "3")
+            slot(4, char: "4")
+            slot(5, char: "5")
+            slot(6, char: "6")
+            slot(7, char: "7")
+            slot(8, char: "8")
+            slot(9, char: "9")
+        }
+    }
+
+    private func slot(_ n: Int, char: Character) -> some View {
+        Button("Go to Favorite \(n)") {
+            NotificationCenter.default.post(
+                name: .favoriteSlotRequested,
+                object: nil,
+                userInfo: ["slot": n - 1]
+            )
+        }
+        .keyboardShortcut(KeyEquivalent(char), modifiers: [.command, .option])
     }
 }

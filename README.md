@@ -25,8 +25,14 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Smart Folders** — save the current search (query, scope, kind) as a one-click sidebar entry; right-click to rename, remove, or apply to the other pane.
 - **Git status badges** decorate every file inside a working tree (M, A, D, U, R, C, I); folder badges aggregate descendant changes.
 - **Tag dots** on files that have macOS user tags applied.
-- **Compare Folders mode** — toolbar toggle that tints rows red (unique to this side) and yellow (same name, different size or date) across the two panes.
+- **Compare Folders mode** — toolbar toggle that tints rows red (unique to this side) and yellow (same name, different size or date) across the two panes; an inline legend appears above the file area so the tints aren't a mystery.
 - **`.app` bundles launch on double-click** — Finder-style package handling. Right-click ▸ Show Package Contents descends into the bundle.
+- **Marquee (drag-rectangle) selection** in both Icon view and the Gallery view's thumbnail strip.
+- **Hover preview popover** in Icon view — pause for ~500 ms on any cell to surface a thumbnail + name, size, modified date, and parent path without opening Quick Look.
+- **Smart relative dates** everywhere — "Today 14:32 / Yesterday 09:12 / Mon 14:32 / 17 May / 17 May 2024" depending on recency.
+- **Loading spinner** appears in the lower-right while a slow network listing is in flight.
+- **List-view column widths persist** across launches — drag a column to your preferred width and it sticks.
+- **Selection floating toolbar** above the path bar surfaces Open / Reveal in Finder / Trash when items are selected.
 
 ### Tabs
 
@@ -79,6 +85,7 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 ### Remote (SFTP / WebDAV / FTP)
 
 - **Connect to Server…** (⌘K) with a protocol picker: **SFTP**, **WebDAV** (HTTP), **WebDAV (HTTPS)**, **FTP**, **FTPS**. Host, user, port (auto-defaults per protocol), optional identity file (SFTP), optional Keychain-saved password; bookmarks land in the sidebar's **Servers** section.
+- **Edit existing bookmarks** — right-click a server in the sidebar ▸ Edit… opens the Connections window pre-selected on that bookmark. Change protocol / host / user / port / identity / starting path, save or clear the Keychain password, see when you last connected, or delete the bookmark (which also wipes the Keychain entry).
 - All file operations (rename, new folder, duplicate, trash, drag-and-drop) route through the right transport so they work on remote tabs.
 - **SFTP** runs through the system `sftp(1)` binary in a PTY wrapper; **WebDAV** uses URLSession with PROPFIND / MKCOL / MOVE / PUT / GET / DELETE; **FTP** shells `/usr/bin/curl` for raw FTP commands and listing.
 - **Eject icon** on connected servers (SFTP only): disconnects the session and moves any tab on that endpoint back to the configured starting directory.

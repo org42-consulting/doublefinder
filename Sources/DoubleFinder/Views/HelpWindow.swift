@@ -169,6 +169,7 @@ extension HelpTopic {
         .undo,
         .commandPalette,
         .imageViewer,
+        .hoverPreview,
         .diskUsage,
         .archiveBrowser,
         .folderSync,
@@ -624,7 +625,15 @@ extension HelpTopic {
                 "**Edit Locally** — see its own topic for the full workflow.",
                 "The **eject icon** in the sidebar disconnects an SFTP session and returns any tab on that endpoint to your configured starting directory. WebDAV and FTP don't have a persistent session, so no eject.",
             ]),
-            HelpSection(heading: "Saved connections", body: "Bookmarked servers appear in the Servers section of the sidebar with a connection-state dot — green when connected, grey when not. **Manage Connections…** (⇧⌘K) opens a dedicated window with rename / delete / edit."),
+            HelpSection(heading: "Saved connections", body: "Bookmarked servers appear in the Servers section of the sidebar with a connection-state dot — green when connected, grey when not. **Manage Connections…** (⇧⌘K) opens a dedicated window, and right-clicking a sidebar entry has an **Edit…** shortcut that pre-selects the bookmark."),
+            HelpSection(heading: "Editing a connection", bullets: [
+                "**Display name** — what shows in the sidebar.",
+                "**Protocol** — swap between SFTP, WebDAV, WebDAV-TLS, FTP, FTPS. The port auto-defaults to the new scheme's standard only if it was previously the old scheme's standard, so user-set ports survive a protocol change.",
+                "**Host / User / Port / Starting path** — what you'd expect; changing the user invalidates the Keychain account match.",
+                "**Identity file** (SFTP only) — pick a private key with the Choose… picker.",
+                "**Password** — Save a new one to Keychain or Clear Saved to force a prompt next time.",
+                "**Delete Connection** — confirms, removes the bookmark, and wipes the Keychain entry in one step.",
+            ]),
             HelpSection(heading: "Caveats by protocol", bullets: [
                 "**WebDAV** authenticates via Basic-Auth only — Digest and Bearer aren't yet supported.",
                 "**FTP** listing parser assumes Unix-style `ls -la` output. Windows IIS servers in MS-DOS mode list mode aren't parsed correctly yet.",
@@ -829,6 +838,21 @@ extension HelpTopic {
             ]),
             HelpSection(heading: "Detection", body: "Files are treated as images when their extension's `UTType` conforms to `.image`. JPEG, PNG, HEIC, GIF, TIFF, WebP, AVIF, BMP, and the macOS RAW types all qualify."),
             HelpSection(heading: "Remote files", body: "The viewer reads files directly via `NSImage(contentsOf:)`. For remote tabs, that triggers an on-demand download into the system's temp area on first access."),
+        ]
+    )
+
+    static let hoverPreview = HelpTopic(
+        id: "hoverPreview",
+        title: "Hover preview",
+        systemImage: "eye.trianglebadge.exclamationmark",
+        sections: [
+            HelpSection(body: "Hover any cell in **Icon view** for ~500 ms and a small popover appears with the file's thumbnail, name, size or \u{201C}Folder\u{201D}, modified date, and parent path. Moving the mouse away dismisses it."),
+            HelpSection(heading: "Why the delay", body: "Cells fire previews only after the cursor has been still for half a second, so brushing through the grid never triggers a popover for items the user wasn't actually looking at."),
+            HelpSection(heading: "Where it works (and where it doesn't)", bullets: [
+                "**Icon view** — yes.",
+                "**List / Column / Gallery** — not yet. List rows would need NSTrackingArea-per-row plumbing on the AppKit side.",
+                "Use the **Inspector** (⌥⌘I) for at-a-glance details in other view modes.",
+            ]),
         ]
     )
 

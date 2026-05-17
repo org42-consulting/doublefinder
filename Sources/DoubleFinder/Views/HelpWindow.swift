@@ -167,6 +167,13 @@ extension HelpTopic {
         .tags,
         .cutPaste,
         .undo,
+        .commandPalette,
+        .imageViewer,
+        .diskUsage,
+        .archiveBrowser,
+        .folderSync,
+        .trashWindow,
+        .shortcutsApp,
         .shortcuts,
         .preferences,
         .persistence,
@@ -587,31 +594,43 @@ extension HelpTopic {
 
     static let remote = HelpTopic(
         id: "remote",
-        title: "Remote (SFTP)",
+        title: "Remote (SFTP / WebDAV / FTP)",
         systemImage: "server.rack",
         sections: [
-            HelpSection(body: "DoubleFinder treats SFTP servers as just another tab. The same toolbar, keyboard shortcuts, drag-and-drop, and context menu work over SSH."),
+            HelpSection(body: "DoubleFinder treats remote servers as just another tab. Pick a protocol from the Connect sheet's picker; every file operation, drag-and-drop, and context menu item works the same way regardless of which one you chose."),
             HelpSection(heading: "Connecting", shortcuts: [
                 ("⌘K", "Connect to Server…"),
                 ("⇧⌘K", "Manage Connections… (saved bookmarks)"),
             ]),
+            HelpSection(heading: "Protocols", bullets: [
+                "**SFTP** — runs through `/usr/bin/sftp` in a PTY wrapper. Default port 22. Identity file + Keychain password.",
+                "**WebDAV (http)** — URLSession + Basic-Auth. Default port 80. Mapped to `webdav://`.",
+                "**WebDAV (https)** — same as above with TLS. Default port 443. Mapped to `webdavs://`.",
+                "**FTP** — `/usr/bin/curl`-driven raw FTP commands and listing. Default port 21.",
+                "**FTPS** — implicit-TLS FTP via curl. Default port 990.",
+            ]),
             HelpSection(heading: "What you can supply", bullets: [
                 "**Host** — required (e.g. `dev.example.com`).",
                 "**User** — defaults to `$USER`.",
-                "**Port** — defaults to 22.",
-                "**Identity file** — optional SSH private key path.",
+                "**Port** — autofills to the default for the chosen protocol; override if your server uses a non-standard port.",
+                "**Identity file** — optional SSH private key path (SFTP only).",
                 "**Password** — optional; can be saved to Keychain.",
                 "**Display name** — optional label for the sidebar.",
             ]),
             HelpSection(heading: "Working with remote tabs", bullets: [
-                "Every file operation routes through the SFTP transport — no special-casing in your workflow.",
+                "Every file operation routes through the right transport for the URL's scheme — no special-casing in your workflow.",
                 "**Copy / Move** handles every combination: local↔local, local↔remote, remote→remote (server-side rename when possible).",
-                "**Open in Terminal** on a remote tab launches `ssh -t user@host` with `cd` to the current remote path — see the **SSH** topic.",
+                "**Open in Terminal** on an SFTP tab launches `ssh -t user@host` with `cd` to the current remote path — see the **SSH** topic.",
                 "**Edit Locally** — see its own topic for the full workflow.",
-                "The **eject icon** in the sidebar disconnects and returns any tab on that endpoint to your configured starting directory.",
+                "The **eject icon** in the sidebar disconnects an SFTP session and returns any tab on that endpoint to your configured starting directory. WebDAV and FTP don't have a persistent session, so no eject.",
             ]),
             HelpSection(heading: "Saved connections", body: "Bookmarked servers appear in the Servers section of the sidebar with a connection-state dot — green when connected, grey when not. **Manage Connections…** (⇧⌘K) opens a dedicated window with rename / delete / edit."),
-            HelpSection(tip: "Connections are refcounted — multiple tabs on the same endpoint share one `sftp(1)` subprocess. The session shuts down only when the last tab leaves."),
+            HelpSection(heading: "Caveats by protocol", bullets: [
+                "**WebDAV** authenticates via Basic-Auth only — Digest and Bearer aren't yet supported.",
+                "**FTP** listing parser assumes Unix-style `ls -la` output. Windows IIS servers in MS-DOS mode list mode aren't parsed correctly yet.",
+                "**FTPS** uses implicit TLS on port 990; explicit FTPS (AUTH TLS on port 21) isn't supported yet.",
+            ]),
+            HelpSection(tip: "SFTP connections are refcounted — multiple tabs on the same endpoint share one `sftp(1)` subprocess. The session shuts down only when the last tab leaves."),
         ]
     )
 
@@ -779,6 +798,128 @@ extension HelpTopic {
         ]
     )
 
+    static let commandPalette = HelpTopic(
+        id: "commandPalette",
+        title: "Command Palette",
+        systemImage: "command",
+        sections: [
+            HelpSection(body: "**⇧⌘P** opens a fuzzy command palette over every menu action, sidebar favourite, smart folder, workspace, and recent location. Type a few letters to narrow the list; arrow keys move the selection; Return invokes; Esc dismisses."),
+            HelpSection(heading: "What's in the palette", bullets: [
+                "Static actions — every menu item that posts a notification (New Tab, Connect to Server, Toggle Hidden Files, Undo, Redo, Save Workspace…).",
+                "Sidebar favourites — opens the favourite in the focused tab.",
+                "Smart folders — applies the saved search to the focused tab.",
+                "Workspaces — loads the named layout into the front-most window.",
+                "Recent locations — last 15 visited folders.",
+            ]),
+            HelpSection(tip: "Whenever you find yourself reaching for a menu you visit often, the palette is usually a faster way in."),
+        ]
+    )
+
+    static let imageViewer = HelpTopic(
+        id: "imageViewer",
+        title: "Image Viewer",
+        systemImage: "photo.on.rectangle",
+        sections: [
+            HelpSection(body: "**⌘Y** opens a full-window dark-background photo browser for the focused tab's images. If you have one or more images selected, the viewer starts there; otherwise it walks every image in the visible listing."),
+            HelpSection(heading: "Controls", shortcuts: [
+                ("← / →", "Previous / next image"),
+                ("↑ / ↓", "Previous / next (alternative)"),
+                ("Space", "Toggle 4-second auto-advance"),
+                ("Esc", "Close"),
+            ]),
+            HelpSection(heading: "Detection", body: "Files are treated as images when their extension's `UTType` conforms to `.image`. JPEG, PNG, HEIC, GIF, TIFF, WebP, AVIF, BMP, and the macOS RAW types all qualify."),
+            HelpSection(heading: "Remote files", body: "The viewer reads files directly via `NSImage(contentsOf:)`. For remote tabs, that triggers an on-demand download into the system's temp area on first access."),
+        ]
+    )
+
+    static let diskUsage = HelpTopic(
+        id: "diskUsage",
+        title: "Disk Usage",
+        systemImage: "chart.pie",
+        sections: [
+            HelpSection(body: "**Edit ▸ Disk Usage…** (⌥⌘D) opens a window rooted at the focused tab's directory and renders a squarified treemap of every folder's total byte count."),
+            HelpSection(heading: "Navigating", bullets: [
+                "**Click a rectangle** — descends into a folder (or reveals a file in Finder).",
+                "**← header button** — walks back up the navigation stack.",
+                "**Reveal in Finder** button — opens the current folder in Finder.",
+            ]),
+            HelpSection(heading: "How it works", bullets: [
+                "`DiskUsageScanner` walks the tree off-main with `Task.checkCancellation` so closing the window aborts the scan immediately.",
+                "Symbolic links are skipped so a recursive symlink doesn't double-count.",
+                "Cells use the Bruls / Huijing / van Wijk **squarified** layout — aspect ratios stay close to 1 instead of degenerating into thin strips.",
+                "Each cell is hue-cycled and labelled with name + size when there's room to read it.",
+            ]),
+            HelpSection(tip: "Use this on your `Downloads` or `Library/Caches` folder to spot space hogs at a glance."),
+        ]
+    )
+
+    static let archiveBrowser = HelpTopic(
+        id: "archiveBrowser",
+        title: "Archive Browser",
+        systemImage: "archivebox",
+        sections: [
+            HelpSection(body: "Right-click any `.zip`, `.tar`, `.tar.gz`, or `.tgz` and pick **Browse Archive** to list its contents without extracting first."),
+            HelpSection(heading: "What you can do", bullets: [
+                "**Filter** — search the entry list by path.",
+                "**Extract All…** — pick a destination folder; the archive's stem becomes the new folder name; on success the result is revealed in Finder.",
+                "**Add Files…** — append files / folders into the open archive in place. Visible for `.zip` and uncompressed `.tar`; hidden for `.tar.gz` because `tar -rf` can't append to a gzipped archive.",
+                "**Reveal in Finder** — surface the archive file itself.",
+            ]),
+            HelpSection(heading: "Implementation", body: "Listing and extraction shell out to `/usr/bin/unzip` and `/usr/bin/tar`. The archive itself never has to be copied or partially extracted to be browsed."),
+        ]
+    )
+
+    static let folderSync = HelpTopic(
+        id: "folderSync",
+        title: "Folder Sync",
+        systemImage: "arrow.triangle.2.circlepath",
+        sections: [
+            HelpSection(body: "While **Compare Folders** is on, the toolbar's circular-arrow button (Sync) opens a preview sheet that plans every operation needed to bring the two pane contents in line. Nothing happens until you click Run."),
+            HelpSection(heading: "Directions", bullets: [
+                "**Left → Right** — bring the right pane into agreement with the left.",
+                "**Right → Left** — the opposite.",
+                "**Two-way (newer wins)** — for each filename present on both sides, the most recently modified copy is propagated; names that only exist on one side get copied to the other; nothing is ever deleted in two-way mode.",
+            ]),
+            HelpSection(heading: "Deletes", body: "Off by default. Tick **Delete files that don't exist on the source side** to make Left→Right and Right→Left mirror operations — files unique to the destination get moved to Trash. The preview shows every operation in red before you run it."),
+            HelpSection(heading: "Limits", body: "Matching is by filename only; sub-directories sync as whole subtrees. Sync is local-only for now — remote tabs aren't supported as either side."),
+        ]
+    )
+
+    static let trashWindow = HelpTopic(
+        id: "trashWindow",
+        title: "Trash manager",
+        systemImage: "trash",
+        sections: [
+            HelpSection(body: "**Edit ▸ Manage Trash…** opens a window listing every item currently in `~/.Trash` — including files trashed by other apps — with its original path, trash date, and size."),
+            HelpSection(heading: "Per-row actions", bullets: [
+                "**Put Back** — restores the file to its original location (read from the `_kMDItemTrashOriginalPath` extended attribute that macOS attaches when it trashes a file). If the original parent is missing it's recreated.",
+                "**Reveal in Finder** — selects the item in Finder.",
+                "**Delete Permanently** — `FileManager.removeItem` directly. No going back.",
+            ]),
+            HelpSection(heading: "Empty Trash", body: "The toolbar button confirms first, then removes everything currently listed."),
+            HelpSection(tip: "Items dropped into Trash from the terminal (`rm`) won't have the original-path attribute set, so Put Back falls back to your Desktop for those."),
+        ]
+    )
+
+    static let shortcutsApp = HelpTopic(
+        id: "shortcutsApp",
+        title: "Shortcuts.app integration",
+        systemImage: "bolt.horizontal.fill",
+        sections: [
+            HelpSection(body: "DoubleFinder ships six **App Intents** that show up in Shortcuts.app, the menu-bar Spotlight, and Siri. Each one targets the currently key DoubleFinder window when multiple are open."),
+            HelpSection(heading: "Available intents", bullets: [
+                "**Open Folder in DoubleFinder** — navigates the focused tab to a supplied folder.",
+                "**Copy Selection to Other Pane** — same as ⌥⌘C.",
+                "**Move Selection to Other Pane** — same as ⌥⌘M.",
+                "**Apply Smart Folder** — runs a saved smart-folder search by name.",
+                "**Load Workspace** — loads a saved layout by name into the front window.",
+                "**Open Disk Usage** — opens the treemap on a supplied folder.",
+            ]),
+            HelpSection(heading: "Multi-window", body: "Each intent's observer checks `WindowState.isFrontMost` via the in-app `WindowRegistry`. With two DoubleFinder windows open, a Shortcut applies to whichever is currently key — not all of them."),
+            HelpSection(tip: "In Shortcuts.app: search for \u{201C}DoubleFinder\u{201D} and drag any intent into a workflow. The intents work in macOS Shortcuts, Quick Actions, the Services menu, and the system Spotlight."),
+        ]
+    )
+
     static let undo = HelpTopic(
         id: "undo",
         title: "Undo",
@@ -797,7 +938,7 @@ extension HelpTopic {
                 "**Permission edits** — `chmod` changes don't track old values yet.",
                 "**Compress / aliases / symlinks** — the inverse is just trashing the new file.",
             ]),
-            HelpSection(heading: "Redo", body: "Redo isn't implemented — the redo slot is intentionally empty in the Edit menu."),
+            HelpSection(heading: "Redo", body: "**⇧⌘Z** replays the most recently undone op. The redo stack is cleared whenever a fresh user action happens, matching standard application Undo semantics."),
             HelpSection(tip: "Undo is per-*window*. Closing a window loses its undo stack."),
         ]
     )

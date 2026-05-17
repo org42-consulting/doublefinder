@@ -19,7 +19,7 @@ struct ServersSidebarSection: View {
                             disconnect(bookmark)
                         } label: {
                             Image(systemName: "eject.fill")
-                                .foregroundStyle(Color.accentColor)
+                                .foregroundStyle(Color.primary)
                         }
                         .buttonStyle(.borderless)
                         .help("Disconnect from \(bookmark.endpoint.defaultDisplayName)")

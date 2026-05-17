@@ -2,7 +2,7 @@
 
 A dual-pane file manager for macOS, built with SwiftUI and AppKit.
 
-DoubleFinder gives you two independent file views side-by-side — each with its own tabs, sort, hidden-files toggle, search, and history. Copy and move between panes with a single keystroke, navigate to remote SFTP servers as easily as local folders, edit remote files in your favourite editor, compare two directories side-by-side, save your favourite searches as Smart Folders, grep across a tree, share with one click, undo file operations, and preview anything with QuickLook — all inside one window.
+DoubleFinder gives you two independent file views side-by-side — each with its own tabs, sort, hidden-files toggle, search, and history. Copy and move between panes with a single keystroke, navigate to remote SFTP / WebDAV / FTP servers as easily as local folders, edit remote files in your favourite editor, compare and sync two directories, browse archives in place, visualise disk usage as a treemap, save your favourite searches as Smart Folders, drive everything with a command palette or Shortcuts.app, and preview anything with QuickLook — all inside one window.
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-blue) ![Swift](https://img.shields.io/badge/swift-6.2-orange) ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -48,8 +48,8 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Calculate Size** — right-click any folder; the recursive size appears in the Size column and Inspector.
 - **Move to Trash** (⌘⌫); for remote files (no Trash on SFTP), a confirmation alert appears before permanent delete.
 - **Cut + Paste-as-Move** (⌥⌘X / ⌥⌘V) — cut items dim in every view until pasted or cleared.
-- **Undo** (⌘Z) for Move, Rename, Trash — including macOS Put-Back for trashed files.
-- **Empty Trash** (⇧⌘⌫) with confirmation.
+- **Undo / Redo** (⌘Z / ⇧⌘Z) for Move, Rename, Trash — including macOS Put-Back for trashed files.
+- **Empty Trash** (⇧⌘⌫) with confirmation, plus a full **Trash manager window** (Edit ▸ Manage Trash…) listing every item with its original path and a per-row Put Back.
 - **Share…** in the context menu — opens the system share sheet (`NSSharingServicePicker`) for the current local selection.
 - **Native drag-and-drop**: drag between panes, into folders in any view, out to Finder or other apps.
 - **Transfer queue** in the toolbar — per-operation progress bars, cancel button, automatic retry hook; long copies / moves never block the UI.
@@ -76,15 +76,16 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Two-pane diff view** — when both panes have a single text file selected, the inspector switches to a side-by-side aligned line diff (LCS-based, cap 2000 lines per file) with red / green tints for removed / added lines.
 - **Get Info** sheet (⌘I) for a heavier inspector-style view with tag editing.
 
-### Remote (SFTP)
+### Remote (SFTP / WebDAV / FTP)
 
-- **Connect to Server…** (⌘K) — host, user, port, identity file, optional saved password; bookmarks listed under the sidebar's **Servers** section.
-- **Eject icon** on connected servers: disconnects the session and moves any tab on that endpoint back to the configured starting directory.
+- **Connect to Server…** (⌘K) with a protocol picker: **SFTP**, **WebDAV** (HTTP), **WebDAV (HTTPS)**, **FTP**, **FTPS**. Host, user, port (auto-defaults per protocol), optional identity file (SFTP), optional Keychain-saved password; bookmarks land in the sidebar's **Servers** section.
 - All file operations (rename, new folder, duplicate, trash, drag-and-drop) route through the right transport so they work on remote tabs.
+- **SFTP** runs through the system `sftp(1)` binary in a PTY wrapper; **WebDAV** uses URLSession with PROPFIND / MKCOL / MOVE / PUT / GET / DELETE; **FTP** shells `/usr/bin/curl` for raw FTP commands and listing.
+- **Eject icon** on connected servers (SFTP only): disconnects the session and moves any tab on that endpoint back to the configured starting directory.
 - **Open SSH Terminal** — for a remote tab, "Open in Terminal" launches `ssh -t user@host` with `cd` to the current remote path.
 - **Edit Locally** — right-click a remote file; DoubleFinder downloads it to a per-endpoint local cache, opens it with your default editor, and re-uploads on every save until you quit.
 - **Copy / Move** transparently handles every combination of local↔local, local↔remote, remote→remote (same-endpoint server-side rename when possible, tunnel-through-local-temp otherwise).
-- **Path bar** accepts `sftp://user@host/path` URLs; remote breadcrumbs render the host at the root.
+- **Path bar** accepts `sftp://`, `webdav://`, `webdavs://`, `ftp://`, `ftps://` URLs; remote breadcrumbs render the host at the root.
 
 ### Context menu
 
@@ -105,6 +106,18 @@ The same menu shape is exposed from list, icon, gallery, and column views — `F
 
 - **Save Current… / Load** named window snapshots (panes, tabs, URLs, view modes, sorts, hidden setting, pinned state, single-pane mode) from the **Workspaces** menu.
 - **Manage Workspaces…** opens a dedicated window where you can rename, reload, or delete saved layouts.
+
+### Tools
+
+- **Command Palette** (⇧⌘P) — fuzzy filter over every menu action, sidebar favourite, smart folder, workspace, and recent location. ↑/↓ to move, Return to invoke, Esc to dismiss.
+- **Image Viewer / slideshow** (⌘Y) — full-window dark-background photo browser. Launches on the selected images (or all images in the tab if nothing is selected). Arrow keys move, Space toggles 4-second auto-advance, Esc closes.
+- **Disk Usage** (⌥⌘D) — opens a squarified treemap rooted at the focused tab's directory. Each rectangle is sized by its descendant byte total; click a folder to descend, click a file to reveal in Finder.
+- **Archive Browser** — right-click any `.zip`, `.tar`, `.tar.gz`, or `.tgz` and pick **Browse Archive** to list contents without extracting. Extract All to a user-chosen destination, or Add Files… to append into an existing zip / tar in place.
+- **Folder Sync** — toolbar button while Compare Folders is on. Plans Left→Right / Right→Left / Two-way copies and replacements with an explicit toggle for deletes; runs them via `FileManager` after you confirm.
+
+### Automation
+
+- **Shortcuts.app integration** — six App Intents are registered: Open Folder in DoubleFinder, Copy / Move Selection to Other Pane, Apply Smart Folder, Load Workspace, Open Disk Usage. Each intent targets the front-most window only when multiple are open.
 
 ### Persistence
 
@@ -213,6 +226,7 @@ iconutil --convert icns Icons/AppIcon.iconset -o Sources/DoubleFinder/Resources/
 | ⌥⌘V | Paste Files (as Move when paired with Cut) |
 | ⇧⌘⌫ | Empty Trash… |
 | ⌘Z | Undo (Move / Rename / Trash) |
+| ⇧⌘Z | Redo |
 | ⌘A | Select All Items |
 
 ### View
@@ -225,12 +239,16 @@ iconutil --convert icns Icons/AppIcon.iconset -o Sources/DoubleFinder/Resources/
 | ⌘I | Get Info |
 | ⌥⌘I | Toggle Inspector |
 | ⌥⌘R | Reveal in Finder |
+| ⌘Y | View Images |
 | Space | Quick Look (icon / gallery / column views) |
 
 ### Tools
 
 | Shortcut | Action |
 | --- | --- |
+| ⇧⌘P | Command Palette |
+| ⌥⌘D | Disk Usage |
+| ⌥⌘S | Save Workspace… |
 | ⌃⌘T | Open in Terminal (local) or `ssh -t user@host` (remote) |
 | ⌃⌘S | Add focused folder to Sidebar |
 
@@ -376,10 +394,10 @@ Contributions, issues, and feature requests are welcome. Notable areas still ope
 
 - Marquee (drag-rectangle) selection in `GalleryView` (IconView already has it).
 - True grid-aware up/down arrow nav in `IconView` (currently uses a screen-width heuristic for the column count).
-- Archive browse-in-place (zip / tar) without extraction.
-- FTP / WebDAV transports alongside SFTP.
-- AppleScript / Shortcuts.app integration.
-- Command palette (⇧⌘P).
+- WebDAV authentication beyond Basic-Auth (Digest, Bearer).
+- FTP listing parser for Windows IIS / MS-DOS style output.
+- Writing into compressed `.tar.gz` / `.tgz` archives (currently only `.zip` and uncompressed `.tar` support append).
+- Network share auto-mount (SMB / AFP).
 - Test target.
 
 If you open a PR, please run `swift build` cleanly before pushing and keep `CLAUDE.md` (the in-repo architecture overview) in sync with any structural changes.

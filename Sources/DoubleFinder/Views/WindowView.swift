@@ -16,6 +16,7 @@ extension FocusedValues {
 struct WindowView: View {
     @StateObject private var state = WindowState()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -37,6 +38,10 @@ struct WindowView: View {
         // Mirror the primitive separately so SwiftUI's diff sees a real change
         // when only this property publishes — see the FocusedValues extension.
         .focusedSceneValue(\.singlePaneMode, state.singlePaneMode)
+        .onReceive(NotificationCenter.default.publisher(for: .openImageViewerWindow)) { note in
+            guard let payload = note.userInfo?["payload"] as? ImageViewerPayload else { return }
+            openWindow(id: "image-viewer", value: payload)
+        }
     }
 
     @ToolbarContentBuilder

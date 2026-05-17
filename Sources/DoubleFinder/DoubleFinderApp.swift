@@ -102,6 +102,11 @@ struct DoubleFinderApp: App {
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
 
+                Button("View Images") {
+                    NotificationCenter.default.post(name: .viewImagesRequested, object: nil)
+                }
+                .keyboardShortcut("y", modifiers: [.command])
+
                 Button("Duplicate") {
                     NotificationCenter.default.post(name: .duplicateSelectionRequested, object: nil)
                 }
@@ -118,6 +123,8 @@ struct DoubleFinderApp: App {
                     NotificationCenter.default.post(name: .emptyTrashRequested, object: nil)
                 }
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])
+
+                ManageTrashButton()
             }
             // SwiftUI already populates a "View" menu via `ToolbarCommands()` (Show
             // Toolbar / Customize…). Adding `CommandMenu("View")` created a *second*
@@ -216,6 +223,20 @@ struct DoubleFinderApp: App {
         }
         .defaultSize(width: 900, height: 620)
 
+        WindowGroup("Trash", id: "trash") {
+            TrashWindow()
+        }
+        .defaultSize(width: 720, height: 480)
+
+        WindowGroup("Image Viewer", id: "image-viewer", for: ImageViewerPayload.self) { $payload in
+            if let p = payload {
+                ImageViewerWindow(payload: p)
+            } else {
+                Color.black
+            }
+        }
+        .defaultSize(width: 1100, height: 800)
+
         Settings {
             SettingsView()
                 .preferredColorScheme(forceDarkMode ? .dark : nil)
@@ -274,6 +295,13 @@ private struct ManageConnectionsButton: View {
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Button("Manage Connections…") { openWindow(id: "connections") }
+    }
+}
+
+private struct ManageTrashButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("Manage Trash…") { openWindow(id: "trash") }
     }
 }
 

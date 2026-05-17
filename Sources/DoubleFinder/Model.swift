@@ -287,6 +287,8 @@ extension Notification.Name {
     static let undoRequested = Notification.Name("df.undoRequested")
     static let redoRequested = Notification.Name("df.redoRequested")
     static let commandPaletteRequested = Notification.Name("df.commandPaletteRequested")
+    static let viewImagesRequested = Notification.Name("df.viewImagesRequested")
+    static let openImageViewerWindow = Notification.Name("df.openImageViewerWindow")
     static let toggleSinglePaneRequested = Notification.Name("df.toggleSinglePaneRequested")
     static let cutFilesRequested = Notification.Name("df.cutFilesRequested")
     static let pasteFilesRequested = Notification.Name("df.pasteFilesRequested")
@@ -1265,6 +1267,12 @@ final class WindowState: ObservableObject {
                 self.commandPalette = CommandPalettePrompt(commands: self.buildPaletteCommands())
             }
         })
+        observerTokens.append(nc.addObserver(forName: .viewImagesRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.openImageViewer()
+            }
+        })
         observerTokens.append(nc.addObserver(forName: .undoRequested, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -1650,6 +1658,31 @@ final class WindowState: ObservableObject {
         }
 
         return out
+    }
+
+    /// Open the Image Viewer on whichever images are currently relevant in the
+    /// focused tab. Preference order:
+    /// 1. Images in the current selection (if any are images).
+    /// 2. All images in the visible listing.
+    /// The opened window starts on the first selected image so the user lands
+    /// on what they were already looking at.
+    func openImageViewer() {
+        let tab = focusedPane.activeTab
+        let allImages = tab.nodes.filter { isImageURL($0.url) && !$0.isDirectory }.map(\.url)
+        guard !allImages.isEmpty else { NSSound.beep(); return }
+        let selectedImages = tab.nodes
+            .filter { tab.selection.contains($0.id) && isImageURL($0.url) && !$0.isDirectory }
+            .map(\.url)
+        let urls = selectedImages.isEmpty ? allImages : selectedImages
+        let startIndex = urls.firstIndex(of: selectedImages.first ?? urls[0]) ?? 0
+        let payload = ImageViewerPayload(urls: urls, startIndex: startIndex)
+        // Posting through NSWorkspace would lose the payload — use a notification
+        // the App layer handles by calling `openWindow(value:)`.
+        NotificationCenter.default.post(
+            name: .openImageViewerWindow,
+            object: nil,
+            userInfo: ["payload": payload]
+        )
     }
 
     func presentRemotePrompt(_ prompt: SFTPPrompt, endpoint: RemoteEndpoint) async -> String? {

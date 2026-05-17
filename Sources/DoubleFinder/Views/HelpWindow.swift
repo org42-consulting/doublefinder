@@ -146,6 +146,7 @@ extension HelpTopic {
         .pathBar,
         .recentLocations,
         .fileOps,
+        .packages,
         .conflicts,
         .transferQueue,
         .dragAndDrop,
@@ -338,7 +339,7 @@ extension HelpTopic {
         title: "Path bar",
         systemImage: "rectangle.compress.vertical",
         sections: [
-            HelpSection(body: "Every pane has a path bar between the tab bar and the file area. It shows breadcrumb buttons for the current path and a clock icon for recent locations."),
+            HelpSection(body: "Every pane has a Finder-style path bar at the bottom of the file area. It shows breadcrumb buttons for the current path and a clock icon for recent locations. The bar's background is colour-scheme aware — white in light mode, the system window background in dark mode — so it reads as a subtle strip without clashing with the rest of the chrome."),
             HelpSection(heading: "Breadcrumb navigation", body: "Click any segment to jump there. The first segment is the volume (or host, for remote tabs)."),
             HelpSection(heading: "Typed-path mode", bullets: [
                 "Click the field portion of the path bar to enter a path manually.",
@@ -391,10 +392,27 @@ extension HelpTopic {
                 "**Make Symbolic Link** — POSIX `symlink(2)`.",
                 "**Calculate Size** — recursive byte total for a folder; result lands in the Size column and Inspector.",
                 "**Share…** — opens the system share sheet (Mail, Messages, AirDrop, etc.) for the selection.",
+                "**Show Package Contents** — `.app`, `.bundle`, `.framework`, `.photoslibrary` and other Launch Services packages launch on double-click; right-click ▸ Show Package Contents descends into the bundle.",
                 "**Open With** — choose any installed application; the system's `LSCopyApplicationURLsForURL` populates the submenu.",
             ]),
             HelpSection(heading: "Empty Trash", body: "⇧⌘⌫ — confirmation dialog before deletion."),
             HelpSection(tip: "Every operation routes through the transport for its tab — local ops use `FileManager`; remote ops shell out to `sftp(1)`. The UI doesn't care."),
+        ]
+    )
+
+    static let packages = HelpTopic(
+        id: "packages",
+        title: "Packages (.app bundles)",
+        systemImage: "shippingbox",
+        sections: [
+            HelpSection(body: "macOS treats certain folders as opaque \u{201C}packages\u{201D} — `.app`, `.bundle`, `.framework`, `.photoslibrary`, `.rtfd`, and many others. DoubleFinder follows Finder's behaviour: packages launch on double-click instead of descending into them."),
+            HelpSection(heading: "Showing the contents", body: "Right-click any package ▸ **Show Package Contents** — the tab descends into the bundle so you can inspect or edit the resources inside."),
+            HelpSection(heading: "What gets hidden in the context menu for packages", bullets: [
+                "**Open in Other Pane** / **Open in New Tab** / **Open in Terminal** are not shown — they don't make sense for a launchable bundle. Show Package Contents replaces them.",
+                "**Open** still works and launches the app via Launch Services.",
+            ]),
+            HelpSection(heading: "Column view", body: "In column view, packages appear as leaf rows with no disclosure chevron — single-click selects them for preview rather than opening a new column. Double-click to launch."),
+            HelpSection(tip: "Detection uses `URLResourceKey.isPackageKey`. Any folder the system flags as a package, including custom document types declared by third-party apps, gets the same treatment."),
         ]
     )
 

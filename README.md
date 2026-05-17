@@ -16,7 +16,7 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 
 - **Two independent panes** in one window, each with multiple tabs.
 - **Four view modes** per tab: List, Icon, Column (with QuickLook preview pane), and Gallery.
-- **Path bar** under every pane for one-click navigation to ancestor folders, with editable typed-path mode that accepts both local paths and `sftp://user@host/path` URLs.
+- **Finder-style path bar** at the bottom of every pane — one-click navigation to ancestor folders, with editable typed-path mode that accepts both local paths and `sftp://user@host/path` URLs. The bar adapts to light / dark mode for visual continuity with the rest of the chrome.
 - **Recent locations dropdown** on the path bar — the 15 most-recent folders you've visited, persisted across launches.
 - **Back / Forward history** (⌘[ / ⌘]) per tab.
 - **Quick filter bar** (⌘/) — incrementally filter the visible listing by name without leaving the folder.
@@ -26,6 +26,7 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Git status badges** decorate every file inside a working tree (M, A, D, U, R, C, I); folder badges aggregate descendant changes.
 - **Tag dots** on files that have macOS user tags applied.
 - **Compare Folders mode** — toolbar toggle that tints rows red (unique to this side) and yellow (same name, different size or date) across the two panes.
+- **`.app` bundles launch on double-click** — Finder-style package handling. Right-click ▸ Show Package Contents descends into the bundle.
 
 ### Tabs
 
@@ -93,7 +94,7 @@ Right-click anywhere in the file area for a Finder-parity menu:
 | --- | --- |
 | Open · Open With · Open in Other Pane / New Tab · Open in Terminal · Open in Finder · Quick Look | New Folder |
 | Get Info · Calculate Size · Rename · Duplicate · Compress · Make Alias · Make Symbolic Link | Get Info on Folder |
-| Edit Locally (remote files) | Open in Terminal |
+| Show Package Contents (on `.app` / packages) · Edit Locally (remote files) | Open in Terminal |
 | Copy to Other Pane · Move to Other Pane · Copy · Copy Path(s) | Show Hidden Files (toggle) |
 | Share… · Tags ▸ | Paste |
 | Move to Trash / Delete (remote) | |
@@ -108,6 +109,7 @@ The same menu shape is exposed from list, icon, gallery, and column views — `F
 ### Persistence
 
 - Window layout (left/right pane tabs + URLs, view modes, sorts, hidden setting, pinned state, single-pane mode), inspector visibility, and sidebar favourites are saved to `~/Library/Application Support/DoubleFinder/state.json` on quit and restored on next launch.
+- Sidebar favourites and inspector visibility persist regardless of the "Restore on startup" setting — only the pane / tab portion is gated by that toggle.
 - Smart folders persist in `UserDefaults`; workspaces are individual JSON files under `~/Library/Application Support/DoubleFinder/workspaces/`.
 - Toggle restore behavior in **DoubleFinder → Settings…**.
 

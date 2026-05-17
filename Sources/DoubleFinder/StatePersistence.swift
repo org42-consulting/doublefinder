@@ -10,9 +10,17 @@ enum StatePersistence {
                 let sortAscending: Bool
                 let showHidden: Bool
                 let isPinned: Bool?         // nil for old snapshots → false
+                let groupID: String?        // UUID string, nil for ungrouped/legacy
+            }
+            struct Group: Codable {
+                let id: String              // UUID string
+                let name: String
+                let color: String           // TabGroupColor.rawValue
+                let collapsed: Bool
             }
             let tabs: [Tab]
             let activeIndex: Int
+            let groups: [Group]?            // nil for old snapshots
         }
         let left: Pane
         let right: Pane

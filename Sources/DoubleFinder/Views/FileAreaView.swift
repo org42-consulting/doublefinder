@@ -8,6 +8,9 @@ struct FileAreaView: View {
     @ObservedObject var tab: TabState
     let side: PaneSide
     @EnvironmentObject var state: WindowState
+    /// Observed so a Cut / paste in another pane re-renders the list views here
+    /// with updated cell alpha (dimmed cut cells).
+    @ObservedObject private var cutClipboard: CutClipboard = .shared
 
     var body: some View {
         switch tab.connectionState {
@@ -70,7 +73,8 @@ struct FileAreaView: View {
                 onDropToTab: { urls in
                     CopyMoveCoordinator.copy(urls, to: tab, from: tab, via: state)
                 },
-                compareStatuses: state.compareMode ? state.compareStatuses : [:]
+                compareStatuses: state.compareMode ? state.compareStatuses : [:],
+                cutURLs: CutClipboard.shared.pendingMove
             )
         case .icon:
             IconView(tab: tab, side: side)

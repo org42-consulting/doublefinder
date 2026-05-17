@@ -167,6 +167,10 @@ enum FileContextMenu {
                 Task { @MainActor in await tab.refresh() }
             })
             menu.addItem(tagsItem)
+
+            addItem(menu, multiple ? "Share \(urls.count) Items…" : "Share…") {
+                share(urls)
+            }
         }
 
         menu.addItem(.separator())
@@ -390,6 +394,10 @@ enum FileContextMenu {
 
             if !allRemote {
                 Divider()
+
+                Button(multiple ? "Share \(urls.count) Items…" : "Share…") {
+                    share(urls)
+                }
 
                 Menu("Tags") {
                     ForEach(Tag.Color.allCases.filter { $0 != .none }, id: \.self) { color in
@@ -618,6 +626,21 @@ enum FileContextMenu {
                 }
             }
         }
+    }
+
+    /// Present the system share sheet for the given local URLs, anchored to the
+    /// current mouse location in the front-most window. NSSharingServicePicker
+    /// requires a positioning view, so we use the window's content view and the
+    /// mouse point converted into its coordinate space.
+    static func share(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        let picker = NSSharingServicePicker(items: urls as [Any])
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
+              let contentView = window.contentView else { return }
+        let mouseInWindow = window.mouseLocationOutsideOfEventStream
+        let mouseInView = contentView.convert(mouseInWindow, from: nil)
+        let anchor = NSRect(x: mouseInView.x, y: mouseInView.y, width: 1, height: 1)
+        picker.show(relativeTo: anchor, of: contentView, preferredEdge: .minY)
     }
 
     /// Open Terminal.app at the given URL. Local URLs use NSWorkspace; remote URLs

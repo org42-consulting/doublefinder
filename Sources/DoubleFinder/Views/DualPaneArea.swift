@@ -80,6 +80,9 @@ struct DualPaneArea: View {
         .sheet(item: $state.batchRenamePrompt) { prompt in
             BatchRenameSheet(prompt: prompt)
         }
+        .sheet(item: $state.contentSearchPrompt) { prompt in
+            ContentSearchSheet(prompt: prompt)
+        }
         .sheet(item: $state.remotePrompt) { prompt in
             Group {
                 switch prompt.prompt {

@@ -227,12 +227,56 @@ struct TabBarView: View {
     var body: some View {
         GlassEffectContainer(spacing: 4) {
             HStack(spacing: 4) {
-                ForEach(pane.tabs) { tab in
-                    tabChip(tab)
+                ForEach(tabBarItems, id: \.id) { item in
+                    switch item {
+                    case .groupHeader(let group, let count):
+                        GroupHeader(group: group, memberCount: count, pane: pane)
+                    case .tab(let tab):
+                        tabChip(tab)
+                    }
                 }
                 newTabButton
                 Spacer()
                 settingsButton
+            }
+        }
+    }
+
+    /// Mixed sequence of group headers and tab chips for the tab bar. Walks
+    /// `pane.tabs` in order, inserting a header before the first tab of each
+    /// run that belongs to the same group. Tabs in a collapsed group are
+    /// omitted (only the header pill renders, with a member count badge).
+    private var tabBarItems: [TabBarItem] {
+        var items: [TabBarItem] = []
+        var currentGroupID: UUID? = .some(UUID()) // sentinel so the first tab triggers a check
+        for tab in pane.tabs {
+            if tab.groupID != currentGroupID {
+                currentGroupID = tab.groupID
+                if let gid = tab.groupID,
+                   let group = pane.tabGroups.first(where: { $0.id == gid }) {
+                    let count = pane.tabs.filter { $0.groupID == gid }.count
+                    items.append(.groupHeader(group, count: count))
+                }
+            }
+            // Hide member tabs of a collapsed group.
+            if let gid = tab.groupID,
+               let group = pane.tabGroups.first(where: { $0.id == gid }),
+               group.collapsed {
+                continue
+            }
+            items.append(.tab(tab))
+        }
+        return items
+    }
+
+    enum TabBarItem: Identifiable {
+        case tab(TabState)
+        case groupHeader(TabGroup, count: Int)
+
+        var id: String {
+            switch self {
+            case .tab(let t): return "tab-\(t.id)"
+            case .groupHeader(let g, _): return "grp-\(g.id)"
             }
         }
     }
@@ -322,6 +366,26 @@ private struct TabChip: View {
             Button(tab.isPinned ? "Unpin Tab" : "Pin Tab") {
                 tab.isPinned.toggle()
             }
+            Divider()
+            Menu("Add to Group") {
+                Button("New Group") {
+                    let n = pane.tabGroups.count + 1
+                    let palette = TabGroupColor.allCases
+                    let color = palette[(n - 1) % palette.count]
+                    pane.createGroup(named: "Group \(n)", color: color, tabIDs: [tab.id])
+                }
+                if !pane.tabGroups.isEmpty {
+                    Divider()
+                    ForEach(pane.tabGroups) { group in
+                        Button(group.name) {
+                            pane.assign(tabID: tab.id, toGroup: group.id)
+                        }
+                    }
+                }
+            }
+            if tab.groupID != nil {
+                Button("Remove from Group") { pane.ungroup(tabID: tab.id) }
+            }
             if pane.tabs.count > 1 && !tab.isPinned {
                 Divider()
                 Button("Close Tab", role: .destructive) { pane.closeTab(tab.id) }
@@ -356,6 +420,84 @@ private struct TabChip: View {
             pane.tabs.insert(item, at: target)
             return true
         }
+    }
+}
+
+/// Clickable header pill that introduces a tab group in the tab bar. Clicking
+/// toggles the group's collapsed flag (hide / show member tabs); right-click
+/// disbands the group.
+private struct GroupHeader: View {
+    let group: TabGroup
+    let memberCount: Int
+    @ObservedObject var pane: PaneState
+
+    var body: some View {
+        Button {
+            pane.toggleGroupCollapsed(group.id)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: group.collapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Circle()
+                    .fill(group.color)
+                    .frame(width: 8, height: 8)
+                Text(group.name)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.primary)
+                if group.collapsed {
+                    Text("\(memberCount)")
+                        .font(.system(size: 9, weight: .semibold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(group.color.opacity(0.25), in: Capsule())
+                        .foregroundStyle(group.color)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(group.color.opacity(0.10), in: Capsule())
+            .overlay(Capsule().stroke(group.color.opacity(0.4), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help(group.collapsed ? "Expand \(group.name)" : "Collapse \(group.name)")
+        .contextMenu {
+            Button("Rename Group…") {
+                promptRenameGroup()
+            }
+            Button("Disband Group", role: .destructive) {
+                for tab in pane.tabs where tab.groupID == group.id {
+                    tab.groupID = nil
+                }
+                pane.pruneEmptyGroups()
+            }
+        }
+        // Drop a dragged tab pill onto the header to add it to this group.
+        // Tab chips use `.draggable(tab.id.uuidString)` so the payload type is String.
+        .dropDestination(for: String.self) { items, _ in
+            guard let first = items.first,
+                  let uuid = UUID(uuidString: first) else { return false }
+            pane.assign(tabID: uuid, toGroup: group.id)
+            return true
+        }
+    }
+
+    /// Show an NSAlert with a text-field accessory pre-filled with the current
+    /// group name. Renames in place; cancel / empty does nothing.
+    private func promptRenameGroup() {
+        let alert = NSAlert()
+        alert.messageText = "Rename Group"
+        alert.alertStyle = .informational
+        let field = NSTextField(string: group.name)
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 22)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let newName = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty,
+              let idx = pane.tabGroups.firstIndex(where: { $0.id == group.id }) else { return }
+        pane.tabGroups[idx].name = newName
     }
 }
 

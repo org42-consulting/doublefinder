@@ -5,11 +5,12 @@ struct BatchRenameSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     enum Mode: String, CaseIterable, Identifiable {
-        case replace, prefix, suffix, sequence
+        case replace, regex, prefix, suffix, sequence
         var id: String { rawValue }
         var title: String {
             switch self {
             case .replace:  return "Find & Replace"
+            case .regex:    return "Regex"
             case .prefix:   return "Add Prefix"
             case .suffix:   return "Add Suffix"
             case .sequence: return "Number Sequence"
@@ -20,6 +21,8 @@ struct BatchRenameSheet: View {
     @State private var mode: Mode = .replace
     @State private var find: String = ""
     @State private var replace: String = ""
+    @State private var regexPattern: String = ""
+    @State private var regexReplacement: String = ""
     @State private var prefix: String = ""
     @State private var suffix: String = ""
     @State private var seqStart: Int = 1
@@ -88,6 +91,34 @@ struct BatchRenameSheet: View {
                     .frame(width: 70, alignment: .trailing)
                     .foregroundStyle(.secondary)
                 TextField("", text: $replace).textFieldStyle(.roundedBorder)
+            }
+        case .regex:
+            HStack {
+                Text("Pattern")
+                    .frame(width: 70, alignment: .trailing)
+                    .foregroundStyle(.secondary)
+                TextField(#"^(\d{4})-(\d{2})"#, text: $regexPattern)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11, design: .monospaced))
+            }
+            HStack {
+                Text("Template")
+                    .frame(width: 70, alignment: .trailing)
+                    .foregroundStyle(.secondary)
+                TextField("$2-$1", text: $regexReplacement)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11, design: .monospaced))
+            }
+            if let err = regexError {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(err)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                .padding(.leading, 78)
             }
         case .prefix:
             HStack {
@@ -182,6 +213,19 @@ struct BatchRenameSheet: View {
         case .replace:
             guard !find.isEmpty else { return url.lastPathComponent }
             return url.lastPathComponent.replacingOccurrences(of: find, with: replace)
+        case .regex:
+            guard !regexPattern.isEmpty,
+                  let regex = try? NSRegularExpression(pattern: regexPattern) else {
+                return url.lastPathComponent
+            }
+            let name = url.lastPathComponent
+            let range = NSRange(name.startIndex..., in: name)
+            return regex.stringByReplacingMatches(
+                in: name,
+                options: [],
+                range: range,
+                withTemplate: regexReplacement
+            )
         case .prefix:
             return prefix + url.lastPathComponent
         case .suffix:
@@ -191,6 +235,18 @@ struct BatchRenameSheet: View {
             let padded = String(format: "%0\(max(0, seqPad))d", n)
             let base = seqUseBaseName ? baseName : seqBase
             return attach("\(base)_\(padded)")
+        }
+    }
+
+    /// Returns nil for a valid (or empty) pattern, or a short error message
+    /// when NSRegularExpression rejects the pattern.
+    private var regexError: String? {
+        guard !regexPattern.isEmpty else { return nil }
+        do {
+            _ = try NSRegularExpression(pattern: regexPattern)
+            return nil
+        } catch {
+            return (error as NSError).localizedDescription
         }
     }
 

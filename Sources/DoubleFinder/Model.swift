@@ -107,6 +107,39 @@ enum SearchKind: Hashable {
     case byTag
 }
 
+// MARK: - Tab groups
+
+/// Named collection of tabs inside a single pane. Tab membership is stored on
+/// `TabState.groupID`; the pane keeps the list of groups (for ordering, name,
+/// color, collapsed state) so groups can persist independent of their members.
+struct TabGroup: Identifiable, Hashable, Codable {
+    var id: UUID = UUID()
+    var name: String
+    var colorRaw: String
+    var collapsed: Bool = false
+
+    var color: Color {
+        TabGroupColor(rawValue: colorRaw)?.color ?? .gray
+    }
+}
+
+enum TabGroupColor: String, CaseIterable, Codable {
+    case blue, green, orange, purple, red, pink, yellow, gray
+
+    var color: Color {
+        switch self {
+        case .blue:   return .blue
+        case .green:  return .green
+        case .orange: return .orange
+        case .purple: return .purple
+        case .red:    return .red
+        case .pink:   return .pink
+        case .yellow: return .yellow
+        case .gray:   return .gray
+        }
+    }
+}
+
 enum ConnectionState: Equatable {
     case local
     case remoteConnected
@@ -172,6 +205,15 @@ struct BatchRenamePrompt: Identifiable {
     let onCommit: ([(URL, String)]) -> Void
 }
 
+/// Identifies a content-search session opened from the focused tab. The sheet
+/// shells out to `grep` against `directory` and reveals matches in the
+/// originating tab via `onReveal`.
+struct ContentSearchPrompt: Identifiable {
+    let id = UUID()
+    let directory: URL
+    let onReveal: (URL) -> Void
+}
+
 // MARK: - Sidebar favourites (drag-to-reorder, persisted)
 
 struct SidebarFavourite: Identifiable, Hashable, Codable {
@@ -234,6 +276,13 @@ extension Notification.Name {
     static let favoriteSlotRequested = Notification.Name("df.favoriteSlotRequested")
     static let undoRequested = Notification.Name("df.undoRequested")
     static let toggleSinglePaneRequested = Notification.Name("df.toggleSinglePaneRequested")
+    static let cutFilesRequested = Notification.Name("df.cutFilesRequested")
+    static let pasteFilesRequested = Notification.Name("df.pasteFilesRequested")
+    static let saveWorkspaceRequested = Notification.Name("df.saveWorkspaceRequested")
+    static let loadWorkspaceRequested = Notification.Name("df.loadWorkspaceRequested")
+    static let deleteWorkspaceRequested = Notification.Name("df.deleteWorkspaceRequested")
+    static let searchContentRequested = Notification.Name("df.searchContentRequested")
+    static let saveSmartFolderRequested = Notification.Name("df.saveSmartFolderRequested")
 }
 
 /// A reversible file operation. Pushed onto `WindowState.undoStack` after each
@@ -294,6 +343,9 @@ final class TabState: ObservableObject, Identifiable {
     /// Pinned tabs survive ⌘W (close-tab is a no-op for them) and always restore
     /// on app launch with their URL. Toggleable via the tab's context menu.
     @Published var isPinned: Bool = false
+    /// Membership in a `TabGroup` owned by the parent PaneState. `nil` means the
+    /// tab is ungrouped and renders directly in the tab strip.
+    @Published var groupID: UUID? = nil
     @Published var searchScope: SearchScope = .folder {
         didSet {
             if isSearching && searchScope != oldValue { runSearch(searchText) }
@@ -367,6 +419,7 @@ final class TabState: ObservableObject, Identifiable {
         self.sortAscending = persisted.sortAscending
         self.showHidden = persisted.showHidden
         self.isPinned = persisted.isPinned ?? false
+        if let gid = persisted.groupID { self.groupID = UUID(uuidString: gid) }
     }
 
     func snapshot() -> StatePersistence.Snapshot.Pane.Tab {
@@ -379,7 +432,8 @@ final class TabState: ObservableObject, Identifiable {
             sortKey: sortKey.rawValue,
             sortAscending: sortAscending,
             showHidden: showHidden,
-            isPinned: isPinned
+            isPinned: isPinned,
+            groupID: groupID?.uuidString
         )
     }
 
@@ -412,6 +466,24 @@ final class TabState: ObservableObject, Identifiable {
             guard !Task.isCancelled else { return }
             self?.startSearchStream(trimmed, scopes: scopes, kind: kind)
         }
+    }
+
+    /// Apply a saved smart folder to this tab in one atomic update. For folder
+    /// scope we first navigate to the folder root so `currentScopeValues()`
+    /// picks up the right URL.
+    func applySmartFolder(_ sf: SmartFolder) {
+        debounceTask?.cancel()
+        searchTask?.cancel()
+        searchEngine.cancel()
+        if sf.scope == .folder, let root = sf.folderURL {
+            navigate(to: root)
+        }
+        searchKind = sf.kind
+        searchScope = sf.scope
+        searchText = sf.query
+        isSearching = true
+        let scopes = currentScopeValues()
+        startSearchStream(sf.query, scopes: scopes, kind: sf.kind)
     }
 
     /// Pivot the active tab to a tag-filtered Spotlight search across Home.
@@ -678,6 +750,10 @@ final class PaneState: ObservableObject, Identifiable {
     let id = UUID()
     @Published var tabs: [TabState]
     @Published var activeTabID: TabState.ID
+    /// Ordered list of named tab groups in this pane. Order controls the
+    /// rendering order of the group headers in the tab bar; tab membership is
+    /// stored on `TabState.groupID`.
+    @Published var tabGroups: [TabGroup] = []
     weak var window: WindowState?
 
     init(url: URL) {
@@ -693,13 +769,20 @@ final class PaneState: ObservableObject, Identifiable {
         self.init(url: safeTabs[idx].url)
         self.tabs = safeTabs
         self.activeTabID = safeTabs[idx].id
+        self.tabGroups = (persisted.groups ?? []).compactMap { g in
+            guard let uuid = UUID(uuidString: g.id) else { return nil }
+            return TabGroup(id: uuid, name: g.name, colorRaw: g.color, collapsed: g.collapsed)
+        }
     }
 
     func snapshot() -> StatePersistence.Snapshot.Pane {
         let activeIndex = tabs.firstIndex(where: { $0.id == activeTabID }) ?? 0
         return .init(
             tabs: tabs.map { $0.snapshot() },
-            activeIndex: activeIndex
+            activeIndex: activeIndex,
+            groups: tabGroups.map { g in
+                .init(id: g.id.uuidString, name: g.name, color: g.colorRaw, collapsed: g.collapsed)
+            }
         )
     }
 
@@ -725,6 +808,49 @@ final class PaneState: ObservableObject, Identifiable {
             let newIdx = max(0, min(idx, tabs.count - 1))
             activeTabID = tabs[newIdx].id
         }
+        pruneEmptyGroups()
+    }
+
+    /// Remove any TabGroup that has no remaining members. Called after closing
+    /// a tab or moving a tab out of a group.
+    func pruneEmptyGroups() {
+        let used = Set(tabs.compactMap(\.groupID))
+        tabGroups.removeAll { !used.contains($0.id) }
+    }
+
+    /// Create a new group with the given color and assign `tabIDs` to it.
+    @discardableResult
+    func createGroup(named name: String, color: TabGroupColor, tabIDs: [TabState.ID]) -> TabGroup {
+        let group = TabGroup(name: name, colorRaw: color.rawValue)
+        tabGroups.append(group)
+        for tab in tabs where tabIDs.contains(tab.id) {
+            tab.groupID = group.id
+        }
+        return group
+    }
+
+    /// Detach a tab from whatever group it's currently in (if any).
+    func ungroup(tabID: TabState.ID) {
+        if let tab = tabs.first(where: { $0.id == tabID }) {
+            tab.groupID = nil
+        }
+        pruneEmptyGroups()
+    }
+
+    /// Move a tab into an existing group.
+    func assign(tabID: TabState.ID, toGroup groupID: UUID) {
+        guard tabGroups.contains(where: { $0.id == groupID }) else { return }
+        if let tab = tabs.first(where: { $0.id == tabID }) {
+            tab.groupID = groupID
+        }
+        pruneEmptyGroups()
+    }
+
+    /// Flip the collapsed flag on a group. When collapsed, the tab bar hides
+    /// the group's member tabs and shows only the header pill + a count badge.
+    func toggleGroupCollapsed(_ groupID: UUID) {
+        guard let i = tabGroups.firstIndex(where: { $0.id == groupID }) else { return }
+        tabGroups[i].collapsed.toggle()
     }
 }
 
@@ -742,6 +868,7 @@ final class WindowState: ObservableObject {
     @Published var goToPrompt: GoToFolderPrompt?
     @Published var getInfoPrompt: GetInfoPrompt?
     @Published var batchRenamePrompt: BatchRenamePrompt?
+    @Published var contentSearchPrompt: ContentSearchPrompt?
     @Published var favourites: [SidebarFavourite] = SidebarFavourite.defaults
     @Published var showInspector: Bool = false
     /// When true, only the currently-focused pane is rendered — the other one is
@@ -883,6 +1010,55 @@ final class WindowState: ObservableObject {
         })
         observerTokens.append(nc.addObserver(forName: .emptyTrashRequested, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { WindowState.emptyTrashWithConfirmation() }
+        })
+        observerTokens.append(nc.addObserver(forName: .saveSmartFolderRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                guard tab.isSearching, !tab.searchText.trimmingCharacters(in: .whitespaces).isEmpty else {
+                    NSSound.beep(); return
+                }
+                let alert = NSAlert()
+                alert.messageText = "Save Smart Folder"
+                alert.informativeText = "Give this saved search a name."
+                alert.alertStyle = .informational
+                let field = NSTextField(string: tab.searchText)
+                field.frame = NSRect(x: 0, y: 0, width: 260, height: 22)
+                alert.accessoryView = field
+                alert.addButton(withTitle: "Save")
+                alert.addButton(withTitle: "Cancel")
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return }
+                let sf = SmartFolder(
+                    name: name,
+                    query: tab.searchText,
+                    kind: tab.searchKind,
+                    scope: tab.searchScope,
+                    folderURL: tab.searchScope == .folder ? tab.url : nil
+                )
+                SmartFolderStore.shared.add(sf)
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .searchContentRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                guard !tab.url.isRemoteSFTP else { NSSound.beep(); return }
+                self.contentSearchPrompt = ContentSearchPrompt(directory: tab.url) { [weak tab] hit in
+                    guard let tab else { return }
+                    let parent = hit.deletingLastPathComponent()
+                    if parent.standardizedFileURL != tab.url.standardizedFileURL {
+                        tab.navigate(to: parent)
+                    }
+                    Task { @MainActor in
+                        await tab.refresh()
+                        if let node = tab.nodes.first(where: { $0.url.standardizedFileURL == hit.standardizedFileURL }) {
+                            tab.selection = [node.id]
+                        }
+                    }
+                }
+            }
         })
         observerTokens.append(nc.addObserver(forName: .getInfoRequested, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -1059,6 +1235,53 @@ final class WindowState: ObservableObject {
         observerTokens.append(nc.addObserver(forName: .toggleSinglePaneRequested, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.singlePaneMode.toggle() }
         })
+        observerTokens.append(nc.addObserver(forName: .cutFilesRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                let urls = tab.selection.compactMap { id in tab.nodes.first(where: { $0.id == id })?.url }
+                guard !urls.isEmpty else { NSSound.beep(); return }
+                CutClipboard.shared.cut(urls)
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .pasteFilesRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                let (urls, isMove) = CutClipboard.shared.readPaste()
+                guard !urls.isEmpty else { NSSound.beep(); return }
+                if isMove {
+                    CopyMoveCoordinator.move(urls, to: tab, from: tab, via: self)
+                    CutClipboard.shared.clear()
+                } else {
+                    CopyMoveCoordinator.copy(urls, to: tab, from: tab, via: self)
+                }
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .saveWorkspaceRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                guard let name = WorkspaceStore.promptForName() else { return }
+                WorkspaceStore.shared.save(name: name, snapshot: self.snapshot())
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .loadWorkspaceRequested, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let name = note.userInfo?["name"] as? String,
+                      let snap = WorkspaceStore.shared.load(name: name) else {
+                    NSSound.beep()
+                    return
+                }
+                self.replaceState(with: snap)
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .deleteWorkspaceRequested, object: nil, queue: .main) { note in
+            MainActor.assumeIsolated {
+                guard let name = note.userInfo?["name"] as? String else { return }
+                WorkspaceStore.shared.delete(name: name)
+            }
+        })
     }
 
     func addFocusedURLToSidebar() {
@@ -1171,6 +1394,30 @@ final class WindowState: ObservableObject {
         if here.size != other.size { return .differs }
         if let a = here.modified, let b = other.modified, abs(a.timeIntervalSince(b)) > 1 { return .differs }
         return .same
+    }
+
+    /// Replace this window's left/right panes, focus, favourites, inspector and
+    /// single-pane state with the given snapshot. Used when loading a workspace —
+    /// the WindowState reference (held by `WindowView` as @StateObject) stays;
+    /// only its observable properties change.
+    func replaceState(with snap: StatePersistence.Snapshot) {
+        let newLeft = PaneState(from: snap.left)
+        let newRight = PaneState(from: snap.right)
+        // Re-wire window pointers so tabs can find their containing window
+        // (used by pinned-tab navigation, session disconnect handling, etc.).
+        for tab in newLeft.tabs { tab.window = self }
+        for tab in newRight.tabs { tab.window = self }
+        newLeft.window = self
+        newRight.window = self
+        self.left = newLeft
+        self.right = newRight
+        self.focus = snap.focus == "right" ? .right : .left
+        if let favs = snap.favourites, !favs.isEmpty { self.favourites = favs }
+        self.showInspector = snap.showInspector ?? showInspector
+        self.singlePaneMode = snap.singlePaneMode ?? false
+        // Clear transient state that doesn't belong to the new layout.
+        undoStack.removeAll()
+        compareStatuses.removeAll()
     }
 
     /// Mirror the active pane's URL onto the other pane's active tab.

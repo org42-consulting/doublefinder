@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import CryptoKit
 
 struct InspectorView: View {
     @EnvironmentObject var state: WindowState
@@ -64,6 +65,10 @@ private struct InspectorContent: View {
     @State private var thumbnail: NSImage?
     @State private var attrs: [URLResourceKey: Any] = [:]
     @State private var tags: [Tag] = []
+    @State private var permissions: Int? = nil       // raw POSIX bits (e.g. 0o644)
+    @State private var hashResult: String? = nil
+    @State private var hashAlgorithm: String? = nil
+    @State private var hashing: Bool = false
 
     private var selectedNode: FSNode? {
         guard let id = tab.selection.first else { return nil }
@@ -85,6 +90,10 @@ private struct InspectorContent: View {
                             thumbView(for: node)
                             details(for: node)
                             tagsRow(for: node)
+                            permissionsRow(for: node)
+                            if !node.isDirectory {
+                                hashRow(for: node)
+                            }
                         }
                         .padding(14)
                     }
@@ -224,10 +233,16 @@ private struct InspectorContent: View {
     }
 
     private func loadInfo() async {
+        // Reset transient state on every selection change so we don't show stale
+        // hashes for the previously-selected file.
+        hashResult = nil
+        hashAlgorithm = nil
+        hashing = false
         guard let node = selectedNode else {
             thumbnail = nil
             attrs = [:]
             tags = []
+            permissions = nil
             return
         }
         thumbnail = await ThumbnailService.shared.thumbnail(for: node.url, size: CGSize(width: 200, height: 200))
@@ -236,6 +251,13 @@ private struct InspectorContent: View {
             .contentModificationDateKey, .creationDateKey, .typeIdentifierKey
         ]).allValues) ?? [:]
         tags = TagStore.tags(for: node.url)
+        if !node.url.isRemoteSFTP,
+           let fmAttrs = try? FileManager.default.attributesOfItem(atPath: node.url.path),
+           let n = fmAttrs[.posixPermissions] as? NSNumber {
+            permissions = n.intValue
+        } else {
+            permissions = nil
+        }
     }
 
     private func kind(of node: FSNode) -> String {
@@ -272,6 +294,152 @@ private struct InspectorContent: View {
     private func dateText(_ key: URLResourceKey) -> String {
         guard let d = attrs[key] as? Date else { return "—" }
         return Self.dateFormatter.string(from: d)
+    }
+
+    // MARK: - Permissions
+
+    /// 9-toggle POSIX permissions matrix (rwx × owner/group/others). Disabled
+    /// when permissions couldn't be read (remote / no-access) and writes go
+    /// through `FileManager.setAttributes` on toggle.
+    @ViewBuilder
+    private func permissionsRow(for node: FSNode) -> some View {
+        if permissions != nil, !node.url.isRemoteSFTP {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Permissions")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 14) {
+                    Text(" ").frame(width: 56, alignment: .trailing)
+                    Text("R").frame(width: 24, alignment: .center).font(.system(size: 9))
+                    Text("W").frame(width: 24, alignment: .center).font(.system(size: 9))
+                    Text("X").frame(width: 24, alignment: .center).font(.system(size: 9))
+                }
+                .foregroundStyle(.tertiary)
+                permRow(label: "Owner",  bits: (0o400, 0o200, 0o100), node: node)
+                permRow(label: "Group",  bits: (0o040, 0o020, 0o010), node: node)
+                permRow(label: "Others", bits: (0o004, 0o002, 0o001), node: node)
+            }
+        }
+    }
+
+    private func permRow(label: String, bits: (Int, Int, Int), node: FSNode) -> some View {
+        HStack(spacing: 14) {
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .frame(width: 56, alignment: .trailing)
+            permToggle(bit: bits.0, node: node)
+            permToggle(bit: bits.1, node: node)
+            permToggle(bit: bits.2, node: node)
+        }
+    }
+
+    private func permToggle(bit: Int, node: FSNode) -> some View {
+        Toggle("", isOn: Binding(
+            get: { (permissions ?? 0) & bit != 0 },
+            set: { newValue in
+                guard var current = permissions else { return }
+                if newValue { current |= bit } else { current &= ~bit }
+                permissions = current
+                do {
+                    try FileManager.default.setAttributes(
+                        [.posixPermissions: NSNumber(value: current)],
+                        ofItemAtPath: node.url.path
+                    )
+                } catch {
+                    NSSound.beep()
+                    // Reload from disk on failure so the UI shows the truth.
+                    Task { await loadInfo() }
+                }
+            }
+        ))
+        .labelsHidden()
+        .frame(width: 24)
+    }
+
+    // MARK: - File hash
+
+    /// Two-button hash row. Pressing MD5 / SHA-256 spawns a detached Task that
+    /// streams the file through CryptoKit. While hashing, both buttons disable
+    /// and a spinner replaces the result text.
+    @ViewBuilder
+    private func hashRow(for node: FSNode) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Hash")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button("MD5") { computeHash(node: node, algorithm: "MD5") }
+                    .controlSize(.small)
+                    .disabled(hashing)
+                Button("SHA-256") { computeHash(node: node, algorithm: "SHA-256") }
+                    .controlSize(.small)
+                    .disabled(hashing)
+                if hashing {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            if let alg = hashAlgorithm, let h = hashResult {
+                HStack(spacing: 4) {
+                    Text(alg)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text(h)
+                        .font(.system(size: 10, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(h, forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 9))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy hash")
+                }
+            }
+        }
+    }
+
+    private func computeHash(node: FSNode, algorithm: String) {
+        hashing = true
+        hashAlgorithm = algorithm
+        hashResult = nil
+        let url = node.url
+        Task.detached(priority: .userInitiated) {
+            let digestHex = (try? streamingHashHex(url: url, algorithm: algorithm)) ?? "—"
+            await MainActor.run {
+                hashResult = digestHex
+                hashing = false
+            }
+        }
+    }
+}
+
+/// Stream `url`'s bytes through the requested hash algorithm, returning the
+/// lowercase hex digest. Reads in 1 MB chunks so multi-GB files don't blow
+/// memory. `algorithm` is "MD5" or "SHA-256".
+private func streamingHashHex(url: URL, algorithm: String) throws -> String {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+    switch algorithm {
+    case "MD5":
+        var hasher = Insecure.MD5()
+        while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    case "SHA-256":
+        var hasher = SHA256()
+        while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    default:
+        return ""
     }
 }
 

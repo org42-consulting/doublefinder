@@ -20,6 +20,9 @@ struct NSTableListView: NSViewRepresentable {
     /// Per-URL compare status from `WindowState.compareStatuses`; empty when compare
     /// mode is off. When non-empty, each row gets a background tint accordingly.
     var compareStatuses: [URL: CompareStatus] = [:]
+    /// URLs currently flagged for Cut → Paste-as-Move. Cells for these URLs render
+    /// dimmed so users see what would move on the next paste.
+    var cutURLs: Set<URL> = []
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -131,6 +134,15 @@ struct NSTableListView: NSViewRepresentable {
             }
         }
 
+        // Cut state changed: reload cells so their alpha picks up the dim.
+        if coord.lastCutURLs != cutURLs {
+            coord.lastCutURLs = cutURLs
+            let allRows = IndexSet(integersIn: 0..<table.numberOfRows)
+            if !allRows.isEmpty {
+                table.reloadData(forRowIndexes: allRows, columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
+            }
+        }
+
         // sync node changes — use granular reload when only cell data changed
         if coord.lastNodes != tab.visibleNodes {
             let old = coord.lastNodes
@@ -185,6 +197,7 @@ struct NSTableListView: NSViewRepresentable {
         weak var table: NSTableView?
         var lastNodes: [FSNode] = []
         var lastCompareStatuses: [URL: CompareStatus] = [:]
+        var lastCutURLs: Set<URL> = []
         var isSyncingSort = false
 
         init(parent: NSTableListView) {
@@ -208,6 +221,8 @@ struct NSTableListView: NSViewRepresentable {
             guard let colID = tableColumn?.identifier, row < nodes.count else { return nil }
             let node = nodes[row]
             let id = ColumnID(rawValue: colID.rawValue) ?? .name
+            let isCut = parent.cutURLs.contains(node.url)
+            let cellAlpha: CGFloat = isCut ? 0.45 : 1.0
 
             switch id {
             case .name:
@@ -215,13 +230,16 @@ struct NSTableListView: NSViewRepresentable {
                 cell.configure(node: node, onCommit: { [weak self] new in
                     self?.commitRename(node: node, to: new)
                 })
+                cell.alphaValue = cellAlpha
                 return cell
             case .date:
                 let cell = makeOrReuse(tableView, identifier: colID, kind: TextCell.self)
+                cell.alphaValue = cellAlpha
                 cell.set(text: node.modified.map { Self.dateFormatter.string(from: $0) } ?? "—")
                 return cell
             case .size:
                 let cell = makeOrReuse(tableView, identifier: colID, kind: TextCell.self)
+                cell.alphaValue = cellAlpha
                 let bytes: Int64? = node.isDirectory ? node.calculatedSize : node.size
                 if let s = bytes {
                     cell.set(text: ByteCountFormatter.string(fromByteCount: s, countStyle: .file))
@@ -231,11 +249,13 @@ struct NSTableListView: NSViewRepresentable {
                 return cell
             case .kind:
                 let cell = makeOrReuse(tableView, identifier: colID, kind: TextCell.self)
+                cell.alphaValue = cellAlpha
                 cell.set(text: node.isDirectory ? "Folder" : (node.ext.isEmpty ? "Document" : node.ext.uppercased()))
                 return cell
             case .tags:
                 let cell = makeOrReuse(tableView, identifier: colID, kind: TagsCell.self)
                 cell.set(tags: node.tags)
+                cell.alphaValue = cellAlpha
                 return cell
             }
         }

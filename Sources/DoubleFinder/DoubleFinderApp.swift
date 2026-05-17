@@ -65,6 +65,25 @@ struct DoubleFinderApp: App {
                 }
                 .keyboardShortcut("/", modifiers: [.command])
 
+                Button("Search File Contents…") {
+                    NotificationCenter.default.post(name: .searchContentRequested, object: nil)
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+
+                Button("Save as Smart Folder…") {
+                    NotificationCenter.default.post(name: .saveSmartFolderRequested, object: nil)
+                }
+
+                Button("Cut Files") {
+                    NotificationCenter.default.post(name: .cutFilesRequested, object: nil)
+                }
+                .keyboardShortcut("x", modifiers: [.command, .option])
+
+                Button("Paste Files") {
+                    NotificationCenter.default.post(name: .pasteFilesRequested, object: nil)
+                }
+                .keyboardShortcut("v", modifiers: [.command, .option])
+
                 Divider()
                 Button("Get Info") {
                     NotificationCenter.default.post(name: .getInfoRequested, object: nil)
@@ -100,6 +119,9 @@ struct DoubleFinderApp: App {
             CommandGroup(after: .toolbar) {
                 Divider()
                 SinglePaneToggleButton()
+            }
+            CommandMenu("Workspaces") {
+                WorkspacesMenu()
             }
             CommandMenu("Go") {
                 Button("Back") {
@@ -174,6 +196,11 @@ struct DoubleFinderApp: App {
         }
         .defaultSize(width: 720, height: 480)
 
+        WindowGroup("Workspaces", id: "workspaces") {
+            WorkspacesManagerWindow()
+        }
+        .defaultSize(width: 480, height: 360)
+
         Settings {
             SettingsView()
                 .preferredColorScheme(forceDarkMode ? .dark : nil)
@@ -235,6 +262,41 @@ private struct ManageConnectionsButton: View {
     }
 }
 
+/// Dynamic menu for the Workspaces top-level menu. Lists every named layout
+/// currently saved on disk and refreshes when `WorkspaceStore.shared.names`
+/// publishes (e.g. after a save or delete).
+private struct WorkspacesMenu: View {
+    @ObservedObject var store = WorkspaceStore.shared
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Save Current…") {
+            NotificationCenter.default.post(name: .saveWorkspaceRequested, object: nil)
+        }
+        .keyboardShortcut("s", modifiers: [.command, .option])
+
+        Button("Manage Workspaces…") {
+            openWindow(id: "workspaces")
+        }
+
+        if store.names.isEmpty {
+            Divider()
+            Text("No saved workspaces").disabled(true)
+        } else {
+            Divider()
+            ForEach(store.names, id: \.self) { name in
+                Button(name) {
+                    NotificationCenter.default.post(
+                        name: .loadWorkspaceRequested,
+                        object: nil,
+                        userInfo: ["name": name]
+                    )
+                }
+            }
+        }
+    }
+}
+
 /// Reads the front-most window's `singlePaneMode` via @FocusedValue. SwiftUI
 /// commands re-evaluate their content when a FocusedValue channel publishes a
 /// different value — and because we mirror the property as a plain Bool (not
@@ -243,7 +305,9 @@ private struct SinglePaneToggleButton: View {
     @FocusedValue(\.singlePaneMode) private var singlePaneMode
 
     var body: some View {
-        Button(singlePaneMode == true ? "Show Two Panes" : "Show One Pane") {
+        // Wrap as LocalizedStringKey so the ternary string still goes through the
+        // localization catalog (a plain String would bypass it and stay English).
+        Button(LocalizedStringKey(singlePaneMode == true ? "Show Two Panes" : "Show One Pane")) {
             NotificationCenter.default.post(name: .toggleSinglePaneRequested, object: nil)
         }
         .disabled(singlePaneMode == nil)

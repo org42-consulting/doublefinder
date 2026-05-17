@@ -1,0 +1,536 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Add Prefix" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Voorvoegsel toevoegen" } }
+      }
+    },
+    "Add Suffix" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Achtervoegsel toevoegen" } }
+      }
+    },
+    "Add to Group" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Aan groep toevoegen" } }
+      }
+    },
+    "Cancel" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Annuleer" } }
+      }
+    },
+    "Clear Recents" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Recente wissen" } }
+      }
+    },
+    "Close Tab" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Tabblad sluiten" } }
+      }
+    },
+    "Compare" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Vergelijk" } }
+      }
+    },
+    "Connect" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Verbind" } }
+      }
+    },
+    "Connect to Server…" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Verbind met server…" } }
+      }
+    },
+    "Cut Files" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Bestanden knippen" } }
+      }
+    },
+    "Delete" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Verwijder" } }
+      }
+    },
+    "Delete Workspace" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Werkruimte verwijderen" } }
+      }
+    },
+    "Disband Group" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Groep opheffen" } }
+      }
+    },
+    "Disconnect" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Verbreek verbinding" } }
+      }
+    },
+    "Duplicate" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Dupliceer" } }
+      }
+    },
+    "Edit Locally" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Lokaal bewerken" } }
+      }
+    },
+    "Empty Trash…" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Leeg prullenmand…" } }
+      }
+    },
+    "Enclosing Folder" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Bovenliggende map" } }
+      }
+    },
+    "Favourites" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Favorieten" } }
+      }
+    },
+    "Find & Replace" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Zoek en vervang" } }
+      }
+    },
+    "Forward" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Vooruit" } }
+      }
+    },
+    "Get Info" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Toon info" } }
+      }
+    },
+    "Go to Folder…" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Ga naar map…" } }
+      }
+    },
+    "Host" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Host" } }
+      }
+    },
+    "Locations" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Locaties" } }
+      }
+    },
+    "Make Alias" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Maak alias" } }
+      }
+    },
+    "Make Symbolic Link" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Maak symbolische link" } }
+      }
+    },
+    "Manage Connections…" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Beheer verbindingen…" } }
+      }
+    },
+    "Mirror Selection to Other Pane" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Selectie spiegelen naar ander paneel" } }
+      }
+    },
+    "Mirror to Other Pane" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Spiegelen naar ander paneel" } }
+      }
+    },
+    "Move to Trash" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Verplaats naar prullenmand" } }
+      }
+    },
+    "New File" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Nieuw bestand" } }
+      }
+    },
+    "New Folder" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Nieuwe map" } }
+      }
+    },
+    "New Group" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Nieuwe groep" } }
+      }
+    },
+    "New Tab" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Nieuw tabblad" } }
+      }
+    },
+    "No recent locations" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Geen recente locaties" } }
+      }
+    },
+    "No saved workspaces" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Geen opgeslagen werkruimtes" } }
+      }
+    },
+    "Number Sequence" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Reeks nummers" } }
+      }
+    },
+    "Open" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Open" } }
+      }
+    },
+    "Open in Finder" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Open in Finder" } }
+      }
+    },
+    "Open in New Tab" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Open in nieuw tabblad" } }
+      }
+    },
+    "Open in Other Pane" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Open in ander paneel" } }
+      }
+    },
+    "Open in Terminal" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Open in Terminal" } }
+      }
+    },
+    "Open Selection" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Open selectie" } }
+      }
+    },
+    "Open With" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Open met" } }
+      }
+    },
+    "Password" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Wachtwoord" } }
+      }
+    },
+    "Paste Files" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Bestanden plakken" } }
+      }
+    },
+    "Pin Tab" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Tabblad vastzetten" } }
+      }
+    },
+    "Quick Filter" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Snel filter" } }
+      }
+    },
+    "Quick Look" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Snelle weergave" } }
+      }
+    },
+    "Recent locations" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Recente locaties" } }
+      }
+    },
+    "Regex" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Regex" } }
+      }
+    },
+    "Remove from Group" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Uit groep halen" } }
+      }
+    },
+    "Rename…" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Wijzig naam…" } }
+      }
+    },
+    "Reveal in Finder" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Toon in Finder" } }
+      }
+    },
+    "Save" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Bewaar" } }
+      }
+    },
+    "Save Current…" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Bewaar huidig…" } }
+      }
+    },
+    "Save Workspace" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Werkruimte bewaren" } }
+      }
+    },
+    "Select All Items" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Selecteer alles" } }
+      }
+    },
+    "Servers" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Servers" } }
+      }
+    },
+    "Show Hidden Files" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Toon verborgen bestanden" } }
+      }
+    },
+    "Show Inspector" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Toon inspecteur" } }
+      }
+    },
+    "Show One Pane" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Toon één paneel" } }
+      }
+    },
+    "Show Two Panes" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Toon twee panelen" } }
+      }
+    },
+    "Swap Panes" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Wissel panelen" } }
+      }
+    },
+    "Tags" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Labels" } }
+      }
+    },
+    "Toggle Hidden Files" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Verborgen bestanden tonen" } }
+      }
+    },
+    "Transfers" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Overdrachten" } }
+      }
+    },
+    "Undo" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Ongedaan" } }
+      }
+    },
+    "Unpin Tab" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Tabblad losmaken" } }
+      }
+    },
+    "User" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Gebruiker" } }
+      }
+    },
+    "Workspaces" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Werkruimtes" } }
+      }
+    },
+    "Apply to active pane" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Toepassen op actief paneel" } }
+      }
+    },
+    "Apply to other pane" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Toepassen op ander paneel" } }
+      }
+    },
+    "Back" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Terug" } }
+      }
+    },
+    "Calculate Size" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Grootte berekenen" } }
+      }
+    },
+    "Close" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Sluit" } }
+      }
+    },
+    "Compress" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Comprimeer" } }
+      }
+    },
+    "Copy" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Kopieer" } }
+      }
+    },
+    "Copy Path" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Pad kopiëren" } }
+      }
+    },
+    "Copy to Other Pane" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Kopieer naar ander paneel" } }
+      }
+    },
+    "Load" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Laad" } }
+      }
+    },
+    "Make Aliases" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Maak aliassen" } }
+      }
+    },
+    "Make Symbolic Links" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Maak symbolische links" } }
+      }
+    },
+    "Manage Workspaces…" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Werkruimtes beheren…" } }
+      }
+    },
+    "Match case" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Hoofdlettergevoelig" } }
+      }
+    },
+    "Move to Other Pane" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Verplaats naar ander paneel" } }
+      }
+    },
+    "Open in active pane" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Open in actief paneel" } }
+      }
+    },
+    "Open in new tab (active pane)" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Open in nieuw tabblad (actief paneel)" } }
+      }
+    },
+    "Open in other pane" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Open in ander paneel" } }
+      }
+    },
+    "Remove" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Verwijder" } }
+      }
+    },
+    "Remove from Sidebar" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Verwijder uit zijbalk" } }
+      }
+    },
+    "Rename" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Hernoem" } }
+      }
+    },
+    "Rename Group" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Hernoem groep" } }
+      }
+    },
+    "Rename Group…" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Hernoem groep…" } }
+      }
+    },
+    "Rename Smart Folder" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Hernoem slimme map" } }
+      }
+    },
+    "Reveal" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Toon" } }
+      }
+    },
+    "Save as Smart Folder…" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Bewaar als slimme map…" } }
+      }
+    },
+    "Save Smart Folder" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Bewaar slimme map" } }
+      }
+    },
+    "Search" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Zoek" } }
+      }
+    },
+    "Search File Contents…" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Zoek in bestandsinhoud…" } }
+      }
+    },
+    "Search file contents…" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Zoek in bestandsinhoud…" } }
+      }
+    },
+    "Searching…" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Aan het zoeken…" } }
+      }
+    },
+    "Share…" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Deel…" } }
+      }
+    },
+    "Smart Folders" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Slimme mappen" } }
+      }
+    },
+    "Stop" : {
+      "localizations" : {
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "Stop" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

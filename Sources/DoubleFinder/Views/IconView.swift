@@ -5,6 +5,7 @@ struct IconView: View {
     @ObservedObject var tab: TabState
     let side: PaneSide
     @EnvironmentObject var state: WindowState
+    @ObservedObject private var cutClipboard: CutClipboard = .shared
 
     private let columns = [GridItem(.adaptive(minimum: 104, maximum: 128), spacing: 18)]
 
@@ -29,6 +30,7 @@ struct IconView: View {
                         IconCell(
                             node: node,
                             isSelected: tab.selection.contains(node.id),
+                            isCut: cutClipboard.pendingMove.contains(node.url),
                             onSelect: { exclusive in
                                 if exclusive { tab.selection = [node.id] }
                                 else if tab.selection.contains(node.id) { tab.selection.remove(node.id) }
@@ -222,6 +224,7 @@ private struct IconCellFramesKey: PreferenceKey {
 private struct IconCell: View {
     let node: FSNode
     let isSelected: Bool
+    let isCut: Bool
     let onSelect: (Bool) -> Void   // exclusive == true → replace selection
     let onOpen: () -> Void
     let onQuickLook: () -> Void
@@ -257,6 +260,7 @@ private struct IconCell: View {
             }
         }
         .frame(width: 100)
+        .opacity(isCut ? 0.45 : 1.0)
         .contentShape(Rectangle())
         .gesture(
             TapGesture(count: 2).onEnded { onOpen() }

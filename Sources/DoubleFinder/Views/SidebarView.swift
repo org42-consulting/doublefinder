@@ -20,6 +20,8 @@ struct SidebarView: View {
     @AppStorage("df.sidebar.iCloudExpanded") private var iCloudExpanded = true
     @AppStorage("df.sidebar.locationsExpanded") private var locationsExpanded = true
     @AppStorage("df.sidebar.tagsExpanded") private var tagsExpanded = true
+    @AppStorage("df.sidebar.smartFoldersExpanded") private var smartFoldersExpanded = true
+    @ObservedObject private var smartFolderStore = SmartFolderStore.shared
 
     private func binding(for sectionTitle: String) -> Binding<Bool> {
         switch sectionTitle {
@@ -88,6 +90,17 @@ struct SidebarView: View {
                 }
             }
 
+            // Smart folders (saved searches)
+            if !smartFolderStore.folders.isEmpty {
+                Section(isExpanded: $smartFoldersExpanded) {
+                    ForEach(smartFolderStore.folders) { sf in
+                        smartFolderRow(sf)
+                    }
+                } header: {
+                    Text("Smart Folders")
+                }
+            }
+
             // Remote servers
             ServersSidebarSection()
         }
@@ -115,6 +128,47 @@ struct SidebarView: View {
                 systemImage: "folder",
                 path: std.path
             ))
+        }
+    }
+
+    @ViewBuilder
+    private func smartFolderRow(_ sf: SmartFolder) -> some View {
+        Button {
+            state.focusedPane.activeTab.applySmartFolder(sf)
+        } label: {
+            Label {
+                Text(sf.name).foregroundStyle(Color.primary)
+            } icon: {
+                Image(systemName: "magnifyingglass.circle")
+                    .foregroundStyle(Color.purple)
+            }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Apply to active pane") {
+                state.focusedPane.activeTab.applySmartFolder(sf)
+            }
+            Button("Apply to other pane") {
+                state.otherPane.activeTab.applySmartFolder(sf)
+            }
+            Divider()
+            Button("Rename…") {
+                let alert = NSAlert()
+                alert.messageText = "Rename Smart Folder"
+                alert.alertStyle = .informational
+                let field = NSTextField(string: sf.name)
+                field.frame = NSRect(x: 0, y: 0, width: 240, height: 22)
+                alert.accessoryView = field
+                alert.addButton(withTitle: "Rename")
+                alert.addButton(withTitle: "Cancel")
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                let new = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !new.isEmpty else { return }
+                smartFolderStore.rename(id: sf.id, to: new)
+            }
+            Button("Remove", role: .destructive) {
+                smartFolderStore.remove(id: sf.id)
+            }
         }
     }
 

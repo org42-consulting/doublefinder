@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="DoubleFinder"
 BUNDLE_ID="com.doublefinder.app"
-VERSION="${VERSION:-1.2}"
+VERSION="${VERSION:-1.3}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 MIN_OS="26.0"
 

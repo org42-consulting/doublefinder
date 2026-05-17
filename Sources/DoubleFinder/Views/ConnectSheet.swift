@@ -36,6 +36,8 @@ struct ConnectSheet: View {
                     Text("SFTP").tag("sftp")
                     Text("WebDAV (http)").tag("webdav")
                     Text("WebDAV (https)").tag("webdavs")
+                    Text("FTP").tag("ftp")
+                    Text("FTPS").tag("ftps")
                 }
                 .onChange(of: scheme) { _, _ in
                     // Snap the port field to the new default if the user hasn't
@@ -110,10 +112,10 @@ struct ConnectSheet: View {
             RemoteServerStore.shared.storePassword(password, for: endpoint)
         }
 
-        // WebDAV doesn't open a session — credentials live in Keychain and the
-        // transport sends Basic-Auth on every request. Build the URL, save the
-        // bookmark, navigate, done.
-        if scheme == "webdav" || scheme == "webdavs" {
+        // WebDAV and FTP don't open a persistent session — credentials live
+        // in Keychain and the transport authenticates each request. Build the
+        // URL, save the bookmark, navigate, done.
+        if scheme == "webdav" || scheme == "webdavs" || scheme == "ftp" || scheme == "ftps" {
             var path = startingPath
             if path.isEmpty || path == "~" { path = "/" }
             if !path.hasPrefix("/") { path = "/" + path }

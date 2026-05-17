@@ -570,6 +570,9 @@ final class TabState: ObservableObject, Identifiable {
         if url.isRemoteWebDAV, let endpoint = url.remoteEndpoint {
             return WebDAVFileTransport(endpoint: endpoint)
         }
+        if (url.scheme == "ftp" || url.scheme == "ftps"), let endpoint = url.remoteEndpoint {
+            return FTPFileTransport(endpoint: endpoint)
+        }
         return LocalFileTransport()
     }
 

@@ -289,6 +289,7 @@ extension Notification.Name {
     static let commandPaletteRequested = Notification.Name("df.commandPaletteRequested")
     static let viewImagesRequested = Notification.Name("df.viewImagesRequested")
     static let openImageViewerWindow = Notification.Name("df.openImageViewerWindow")
+    static let folderSyncRequested = Notification.Name("df.folderSyncRequested")
     static let toggleSinglePaneRequested = Notification.Name("df.toggleSinglePaneRequested")
     static let cutFilesRequested = Notification.Name("df.cutFilesRequested")
     static let pasteFilesRequested = Notification.Name("df.pasteFilesRequested")
@@ -885,6 +886,7 @@ final class WindowState: ObservableObject {
     @Published var batchRenamePrompt: BatchRenamePrompt?
     @Published var contentSearchPrompt: ContentSearchPrompt?
     @Published var commandPalette: CommandPalettePrompt?
+    @Published var syncPrompt: SyncPrompt?
     @Published var favourites: [SidebarFavourite] = SidebarFavourite.defaults
     @Published var showInspector: Bool = false
     /// When true, only the currently-focused pane is rendered — the other one is
@@ -1271,6 +1273,27 @@ final class WindowState: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.openImageViewer()
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .folderSyncRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let lt = self.left.activeTab
+                let rt = self.right.activeTab
+                self.syncPrompt = SyncPrompt(
+                    leftURL: lt.url,
+                    rightURL: rt.url,
+                    leftNodes: lt.nodes,
+                    rightNodes: rt.nodes,
+                    onComplete: { [weak self] in
+                        Task { @MainActor in
+                            guard let self else { return }
+                            await self.left.activeTab.refresh()
+                            await self.right.activeTab.refresh()
+                            self.recomputeCompareStatuses()
+                        }
+                    }
+                )
             }
         })
         observerTokens.append(nc.addObserver(forName: .undoRequested, object: nil, queue: .main) { [weak self] _ in

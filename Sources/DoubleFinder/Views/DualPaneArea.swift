@@ -86,6 +86,9 @@ struct DualPaneArea: View {
         .sheet(item: $state.commandPalette) { prompt in
             CommandPaletteSheet(prompt: prompt)
         }
+        .sheet(item: $state.syncPrompt) { prompt in
+            FolderSyncSheet(prompt: prompt)
+        }
         .sheet(item: $state.remotePrompt) { prompt in
             Group {
                 switch prompt.prompt {

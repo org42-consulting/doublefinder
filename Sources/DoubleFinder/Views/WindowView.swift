@@ -116,6 +116,16 @@ struct WindowView: View {
                   ? "Stop comparing — red = only on this side, yellow = same name but different contents"
                   : "Compare panes — highlights rows that are unique to one side or differ in size/date")
         }
+
+        ToolbarItem(id: "sync", placement: .navigation) {
+            Button {
+                NotificationCenter.default.post(name: .folderSyncRequested, object: nil)
+            } label: {
+                Image(systemName: "arrow.triangle.2.circlepath")
+            }
+            .help("Sync the two pane contents (preview before applying)")
+            .disabled(!state.compareMode)
+        }
     }
 
     @ToolbarContentBuilder

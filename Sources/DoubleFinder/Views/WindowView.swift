@@ -86,6 +86,7 @@ struct WindowView: View {
                 .environmentObject(state)
                 .background(NavTitleRelay(tab: state.focusedPane.activeTab))
                 .toolbar(id: "df-main") { toolbarItems }
+                .overlay { ToastOverlay() }
                 .overlay { FirstRunTour() }
         }
         .navigationSplitViewStyle(.balanced)

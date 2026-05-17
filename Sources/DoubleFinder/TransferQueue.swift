@@ -48,6 +48,7 @@ final class TransferQueue: ObservableObject {
                     progress.completedUnitCount = progress.totalUnitCount
                 }
                 self.postCompletionNotificationIfNeeded(for: op)
+                self.postToast(for: op)
                 if op.error != nil {
                     // keep error rows around briefly so the user sees them
                     Task {
@@ -79,6 +80,24 @@ final class TransferQueue: ObservableObject {
     /// Fire a system notification for a finished op when it took long enough
     /// to be worth a heads-up. Suppress when the app is front-most — the user
     /// already sees the transfer queue update.
+    /// Show an in-window toast for a finished op. Errors get a red glyph
+    /// with the underlying message; successes get a checkmark and the op's
+    /// summary line.
+    private func postToast(for op: TransferOp) {
+        if let err = op.error {
+            ToastCenter.shared.post(Toast(
+                icon: "exclamationmark.triangle.fill",
+                message: "\(op.kind) failed: \(err)",
+                dismissAfter: 4.5
+            ))
+        } else {
+            ToastCenter.shared.post(Toast(
+                icon: "checkmark.circle.fill",
+                message: op.summary
+            ))
+        }
+    }
+
     private func postCompletionNotificationIfNeeded(for op: TransferOp) {
         let duration = Date().timeIntervalSince(op.started)
         guard duration >= notificationThreshold else { return }

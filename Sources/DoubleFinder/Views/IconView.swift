@@ -6,8 +6,16 @@ struct IconView: View {
     let side: PaneSide
     @EnvironmentObject var state: WindowState
     @ObservedObject private var cutClipboard: CutClipboard = .shared
+    /// Icon edge length in points. Slider clamps to [40, 128]; cell + grid
+    /// derive their dimensions from this so the grid adapts uniformly.
+    @AppStorage("df.iconSize") private var iconSize: Double = 64
 
-    private let columns = [GridItem(.adaptive(minimum: 104, maximum: 128), spacing: 18)]
+    private var cellSize: CGFloat { CGFloat(iconSize) + 12 }
+    private var columns: [GridItem] {
+        let minimum = cellSize + 28      // room for label + padding
+        let maximum = minimum + 24
+        return [GridItem(.adaptive(minimum: minimum, maximum: maximum), spacing: 18)]
+    }
 
     // Marquee selection state — coordinates are in the "iconGrid" coordinate space.
     @State private var cellFrames: [FSNode.ID: CGRect] = [:]
@@ -29,6 +37,7 @@ struct IconView: View {
                     ForEach(tab.visibleNodes) { node in
                         IconCell(
                             node: node,
+                            iconEdge: CGFloat(iconSize),
                             isSelected: tab.selection.contains(node.id),
                             isCut: cutClipboard.pendingMove.contains(node.url),
                             onSelect: { exclusive in
@@ -89,7 +98,28 @@ struct IconView: View {
         .coordinateSpace(name: "iconGrid")
         .onPreferenceChange(IconCellFramesKey.self) { cellFrames = $0 }
         .background(Color.clear)
+        // Bottom-trailing inline size slider. AppStorage-backed so the
+        // value persists across launches and across all icon views.
+        .overlay(alignment: .bottomTrailing) {
+            HStack(spacing: 6) {
+                Image(systemName: "square.grid.3x3").font(.system(size: 9)).foregroundStyle(.secondary)
+                Slider(value: $iconSize, in: 40...128)
+                    .controlSize(.mini)
+                    .frame(width: 90)
+                Image(systemName: "square.grid.2x2").font(.system(size: 13)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.regularMaterial, in: Capsule())
+            .padding(.trailing, 14)
+            .padding(.bottom, 56) // clear the path bar
+        }
+        // .focusable() lets the view receive arrow-key events for the grid
+        // navigation, but the system also draws a blue focus ring around the
+        // ScrollView once it has key focus — which collides with the pane's
+        // own focus indicator (the 3-pt top stripe). Suppress the system ring.
         .focusable()
+        .focusEffectDisabled()
         .onKeyPress(.space) {
             let start = tab.selection.first.flatMap { id in tab.nodes.first { $0.id == id }?.url }
             quickLook(start: start)
@@ -223,6 +253,7 @@ private struct IconCellFramesKey: PreferenceKey {
 
 private struct IconCell: View {
     let node: FSNode
+    let iconEdge: CGFloat
     let isSelected: Bool
     let isCut: Bool
     let onSelect: (Bool) -> Void   // exclusive == true → replace selection
@@ -242,9 +273,9 @@ private struct IconCell: View {
                 Image(nsImage: icon ?? FileIconCache.icon(for: node.url))
                     .resizable()
                     .interpolation(.high)
-                    .frame(width: 64, height: 64)
+                    .frame(width: iconEdge, height: iconEdge)
             }
-            .frame(width: 76, height: 76)
+            .frame(width: iconEdge + 12, height: iconEdge + 12)
             VStack(spacing: 2) {
                 Text(node.name)
                     .font(.system(size: 11))
@@ -262,7 +293,7 @@ private struct IconCell: View {
                 }
             }
         }
-        .frame(width: 100)
+        .frame(width: iconEdge + 36)
         .opacity(isCut ? 0.45 : 1.0)
         .contentShape(Rectangle())
         .gesture(

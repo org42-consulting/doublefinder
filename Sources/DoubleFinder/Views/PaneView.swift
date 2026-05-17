@@ -66,6 +66,21 @@ struct PaneView: View {
             PaneInfoBar(tab: pane.activeTab)
             PaneFooter(tab: pane.activeTab)
         }
+        // Make the split-view divider discoverable. HSplitView's native
+        // divider is the same colour as the window background, so users
+        // routinely miss that they can resize the panes. A 1-pt hairline
+        // on the trailing edge of the left pane reveals the boundary; the
+        // pane on the right of the divider gets no edge because the
+        // window's own trailing chrome already provides one.
+        .overlay(alignment: .trailing) {
+            if side == .left {
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.22))
+                    .frame(width: 1)
+                    .padding(.vertical, 4)
+                    .allowsHitTesting(false)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture { state.focus = side }
         .dropDestination(for: URL.self) { urls, _ in

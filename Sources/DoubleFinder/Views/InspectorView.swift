@@ -86,13 +86,21 @@ private struct InspectorContent: View {
                     }
                 } else {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 12) {
                             thumbView(for: node)
-                            details(for: node)
-                            tagsRow(for: node)
-                            permissionsRow(for: node)
+                            AccordionSection(title: "General", defaultsKey: "df.inspector.general") {
+                                details(for: node)
+                            }
+                            AccordionSection(title: "Tags", defaultsKey: "df.inspector.tags") {
+                                tagsRow(for: node)
+                            }
+                            AccordionSection(title: "Permissions", defaultsKey: "df.inspector.permissions") {
+                                permissionsRow(for: node)
+                            }
                             if !node.isDirectory {
-                                hashRow(for: node)
+                                AccordionSection(title: "Hash", defaultsKey: "df.inspector.hash", initiallyExpanded: false) {
+                                    hashRow(for: node)
+                                }
                             }
                         }
                         .padding(14)
@@ -183,9 +191,6 @@ private struct InspectorContent: View {
     @ViewBuilder
     private func tagsRow(for node: FSNode) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Tags")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 ForEach(Tag.Color.allCases.filter { $0 != .none }, id: \.rawValue) { color in
                     let on = tags.contains { $0.color == color }
@@ -305,9 +310,6 @@ private struct InspectorContent: View {
     private func permissionsRow(for node: FSNode) -> some View {
         if permissions != nil, !node.url.isRemoteSFTP {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Permissions")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
                 HStack(spacing: 14) {
                     Text(" ").frame(width: 56, alignment: .trailing)
                     Text("R").frame(width: 24, alignment: .center).font(.system(size: 9))
@@ -365,9 +367,6 @@ private struct InspectorContent: View {
     @ViewBuilder
     private func hashRow(for node: FSNode) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Hash")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 Button("MD5") { computeHash(node: node, algorithm: "MD5") }
                     .controlSize(.small)
@@ -462,6 +461,52 @@ private struct RemoteFileInspectorRows: View {
         HStack(alignment: .top) {
             Text(k).foregroundStyle(.secondary).frame(width: 80, alignment: .trailing)
             Text(v).textSelection(.enabled)
+        }
+    }
+}
+
+/// Collapsible inspector section. Open/closed state is remembered per section
+/// in `UserDefaults` so users can permanently hide the slower bits (e.g. Hash).
+struct AccordionSection<Content: View>: View {
+    let title: String
+    let defaultsKey: String
+    let initiallyExpanded: Bool
+    @ViewBuilder var content: () -> Content
+    @State private var expanded: Bool
+
+    init(title: String, defaultsKey: String, initiallyExpanded: Bool = true, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.defaultsKey = defaultsKey
+        self.initiallyExpanded = initiallyExpanded
+        self.content = content
+        let stored = UserDefaults.standard.object(forKey: defaultsKey) as? Bool
+        _expanded = State(initialValue: stored ?? initiallyExpanded)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                expanded.toggle()
+                UserDefaults.standard.set(expanded, forKey: defaultsKey)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Text(title)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                content()
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
     }
 }

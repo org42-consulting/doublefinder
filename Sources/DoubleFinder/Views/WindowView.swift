@@ -86,6 +86,7 @@ struct WindowView: View {
                 .environmentObject(state)
                 .background(NavTitleRelay(tab: state.focusedPane.activeTab))
                 .toolbar(id: "df-main") { toolbarItems }
+                .overlay { FirstRunTour() }
         }
         .navigationSplitViewStyle(.balanced)
         // `.focusedSceneValue` (not `.focusedValue`) so the menu command can read

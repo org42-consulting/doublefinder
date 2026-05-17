@@ -53,6 +53,7 @@ struct PaneView: View {
 
             Divider().opacity(0.5)
 
+            PaneInfoBar(tab: pane.activeTab)
             PaneFooter(tab: pane.activeTab)
         }
         .contentShape(Rectangle())
@@ -175,6 +176,80 @@ private struct PaneFilterBar: View {
             guard state.focus == side else { return }
             focused = true
         }
+    }
+}
+
+// MARK: - Info bar — single-selection details surface
+
+/// Compact one-line strip between the file area and the footer that surfaces
+/// extra detail about the current selection. Visible only when exactly one
+/// item is selected (the footer already aggregates multi-select counts).
+private struct PaneInfoBar: View {
+    @ObservedObject var tab: TabState
+
+    var body: some View {
+        Group {
+            if let node = singleSelection {
+                HStack(spacing: 6) {
+                    Image(nsImage: FileIconCache.icon(for: node.url, size: NSSize(width: 14, height: 14)))
+                    Text(node.name)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if let target = symlinkTarget(of: node.url) {
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                        Text((target.path as NSString).abbreviatingWithTildeInPath)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    Text(detailText(for: node))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                Divider().opacity(0.5)
+            }
+        }
+    }
+
+    private var singleSelection: FSNode? {
+        guard tab.selection.count == 1,
+              let id = tab.selection.first,
+              let node = tab.nodes.first(where: { $0.id == id }) else { return nil }
+        return node
+    }
+
+    /// Resolves a symlink's target. Returns nil for non-links or when the
+    /// destination can't be read (e.g. dangling symlink, remote URL).
+    private func symlinkTarget(of url: URL) -> URL? {
+        guard !url.isRemote else { return nil }
+        let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
+        guard values?.isSymbolicLink == true,
+              let dest = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path) else { return nil }
+        if dest.hasPrefix("/") {
+            return URL(fileURLWithPath: dest)
+        }
+        return url.deletingLastPathComponent().appendingPathComponent(dest)
+    }
+
+    private func detailText(for node: FSNode) -> String {
+        var parts: [String] = []
+        if let size = node.size, !node.isDirectory {
+            parts.append(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+        }
+        if let mod = node.modified {
+            let f = DateFormatter()
+            f.dateStyle = .medium
+            f.timeStyle = .short
+            parts.append(f.string(from: mod))
+        }
+        return parts.joined(separator: " · ")
     }
 }
 

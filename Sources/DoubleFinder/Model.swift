@@ -290,6 +290,8 @@ extension Notification.Name {
     static let viewImagesRequested = Notification.Name("df.viewImagesRequested")
     static let openImageViewerWindow = Notification.Name("df.openImageViewerWindow")
     static let folderSyncRequested = Notification.Name("df.folderSyncRequested")
+    static let diskUsageRequested = Notification.Name("df.diskUsageRequested")
+    static let openDiskUsageWindow = Notification.Name("df.openDiskUsageWindow")
     static let toggleSinglePaneRequested = Notification.Name("df.toggleSinglePaneRequested")
     static let cutFilesRequested = Notification.Name("df.cutFilesRequested")
     static let pasteFilesRequested = Notification.Name("df.pasteFilesRequested")
@@ -1273,6 +1275,18 @@ final class WindowState: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.openImageViewer()
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .diskUsageRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let url = self.focusedPane.activeTab.url
+                guard !url.isRemoteSFTP else { NSSound.beep(); return }
+                NotificationCenter.default.post(
+                    name: .openDiskUsageWindow,
+                    object: nil,
+                    userInfo: ["url": url]
+                )
             }
         })
         observerTokens.append(nc.addObserver(forName: .folderSyncRequested, object: nil, queue: .main) { [weak self] _ in

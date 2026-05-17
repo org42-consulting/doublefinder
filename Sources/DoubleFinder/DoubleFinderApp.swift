@@ -107,6 +107,11 @@ struct DoubleFinderApp: App {
                 }
                 .keyboardShortcut("y", modifiers: [.command])
 
+                Button("Disk Usage…") {
+                    NotificationCenter.default.post(name: .diskUsageRequested, object: nil)
+                }
+                .keyboardShortcut("d", modifiers: [.command, .option])
+
                 Button("Duplicate") {
                     NotificationCenter.default.post(name: .duplicateSelectionRequested, object: nil)
                 }
@@ -236,6 +241,15 @@ struct DoubleFinderApp: App {
             }
         }
         .defaultSize(width: 1100, height: 800)
+
+        WindowGroup("Disk Usage", id: "disk-usage", for: URL.self) { $url in
+            if let u = url {
+                DiskUsageWindow(rootURL: u)
+            } else {
+                Text("No URL")
+            }
+        }
+        .defaultSize(width: 900, height: 600)
 
         Settings {
             SettingsView()

@@ -293,6 +293,11 @@ extension Notification.Name {
     static let diskUsageRequested = Notification.Name("df.diskUsageRequested")
     static let openDiskUsageWindow = Notification.Name("df.openDiskUsageWindow")
     static let openArchiveBrowser = Notification.Name("df.openArchiveBrowser")
+    // App Intents → app
+    static let openFolderRequested = Notification.Name("df.openFolderRequested")
+    static let copyToOtherPaneIntent = Notification.Name("df.copyToOtherPaneIntent")
+    static let moveToOtherPaneIntent = Notification.Name("df.moveToOtherPaneIntent")
+    static let applySmartFolderIntent = Notification.Name("df.applySmartFolderIntent")
     static let toggleSinglePaneRequested = Notification.Name("df.toggleSinglePaneRequested")
     static let cutFilesRequested = Notification.Name("df.cutFilesRequested")
     static let pasteFilesRequested = Notification.Name("df.pasteFilesRequested")
@@ -1276,6 +1281,41 @@ final class WindowState: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.openImageViewer()
+            }
+        })
+        // App Intents → notification bridge. Each one routes into existing
+        // UI affordances so Shortcuts.app users get parity with the keyboard.
+        observerTokens.append(nc.addObserver(forName: .openFolderRequested, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let url = note.userInfo?["url"] as? URL else { return }
+                self.focusedPane.activeTab.navigate(to: url)
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .copyToOtherPaneIntent, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let src = self.focusedPane.activeTab
+                let urls = src.nodes.filter { src.selection.contains($0.id) }.map(\.url)
+                guard !urls.isEmpty else { NSSound.beep(); return }
+                CopyMoveCoordinator.copy(urls, to: self.otherPane.activeTab, from: src, via: self)
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .moveToOtherPaneIntent, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let src = self.focusedPane.activeTab
+                let urls = src.nodes.filter { src.selection.contains($0.id) }.map(\.url)
+                guard !urls.isEmpty else { NSSound.beep(); return }
+                CopyMoveCoordinator.move(urls, to: self.otherPane.activeTab, from: src, via: self)
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .applySmartFolderIntent, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let name = note.userInfo?["name"] as? String,
+                      let sf = SmartFolderStore.shared.folders.first(where: { $0.name == name }) else {
+                    NSSound.beep(); return
+                }
+                self.focusedPane.activeTab.applySmartFolder(sf)
             }
         })
         observerTokens.append(nc.addObserver(forName: .diskUsageRequested, object: nil, queue: .main) { [weak self] _ in

@@ -20,7 +20,6 @@ struct PaneView: View {
                 .padding(.top, 6)
                 .padding(.bottom, 4)
 
-            PanePathBar(tab: pane.activeTab)
             PaneFilterBar(tab: pane.activeTab, side: side)
 
             ZStack {
@@ -42,6 +41,15 @@ struct PaneView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.12), value: isDropTarget)
+            // Finder-style path bar: floats on top of the file area at the
+            // bottom edge so scrolled content shows through behind it. A thin
+            // divider on top gives the visual separation Finder has.
+            .overlay(alignment: .bottom) {
+                VStack(spacing: 0) {
+                    Divider().opacity(0.4)
+                    PanePathBar(tab: pane.activeTab)
+                }
+            }
 
             Divider().opacity(0.5)
 
@@ -83,17 +91,28 @@ struct PaneView: View {
 
 }
 
-// MARK: - Path bar (sits above the file area, observes the tab so it stays live)
+// MARK: - Path bar (Finder-style: sits below the file area, above the footer)
 
 private struct PanePathBar: View {
     @ObservedObject var tab: TabState
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         PathBarView(url: tab.url) { url in
             tab.navigate(to: url)
         }
         .frame(height: 24)
-        .padding(.bottom, 4)
+        .padding(.vertical, 2)
+        // Flat tint instead of a frosted material — materials pick up a grey
+        // cast from underlying content. White in light mode, and the system
+        // window-background colour (a soft dark grey, not black) in dark mode
+        // so the path bar matches the rest of the app's dark chrome.
+        .background(
+            (colorScheme == .dark
+                ? Color(nsColor: .windowBackgroundColor)
+                : Color.white)
+            .opacity(0.9)
+        )
     }
 }
 

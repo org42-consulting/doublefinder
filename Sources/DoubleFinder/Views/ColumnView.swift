@@ -180,8 +180,12 @@ struct ColumnView: NSViewRepresentable {
             guard row < kids.count else { return }
             let child = kids[row]
             cell.title = child.lastPathComponent
-            let isDir = (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-            cell.isLeaf = !isDir
+            let resVals = try? child.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
+            let isDir = resVals?.isDirectory ?? false
+            let isPackage = resVals?.isPackage ?? false
+            // Treat .app bundles and other Launch Services packages as leaves
+            // so NSBrowser doesn't open a disclosure column into them.
+            cell.isLeaf = !isDir || isPackage
             let icon = NSWorkspace.shared.icon(forFile: child.path)
             icon.size = NSSize(width: 16, height: 16)
             cell.image = icon
@@ -228,7 +232,8 @@ struct ColumnView: NSViewRepresentable {
             var isDirFlag: ObjCBool = false
             FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirFlag)
             let isDir = isDirFlag.boolValue
-            if isDir {
+            let isPackage = (try? target.resourceValues(forKeys: [.isPackageKey]))?.isPackage ?? false
+            if isDir && !isPackage {
                 tab.navigate(to: target)
             } else {
                 NSWorkspace.shared.open(target)
@@ -410,18 +415,19 @@ struct ColumnView: NSViewRepresentable {
             let options: FileManager.DirectoryEnumerationOptions = tab.showHidden ? [] : [.skipsHiddenFiles]
             let contents = (try? fm.contentsOfDirectory(
                 at: url,
-                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey],
+                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isPackageKey],
                 options: options
             )) ?? []
 
             let nodes: [FSNode] = contents.map { u in
-                let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
+                let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isPackageKey])
                 return FSNode(
                     url: u,
                     isDirectory: v?.isDirectory ?? false,
                     size: v?.fileSize.map(Int64.init),
                     modified: v?.contentModificationDate,
-                    tags: []
+                    tags: [],
+                    isPackage: v?.isPackage ?? false
                 )
             }
             let sorted = TabState.sorted(nodes, by: tab.sortKey, ascending: tab.sortAscending)

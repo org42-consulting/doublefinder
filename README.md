@@ -105,10 +105,6 @@ The same menu shape is exposed from list, icon, gallery, and column views — `F
 - **Save Current… / Load** named window snapshots (panes, tabs, URLs, view modes, sorts, hidden setting, pinned state, single-pane mode) from the **Workspaces** menu.
 - **Manage Workspaces…** opens a dedicated window where you can rename, reload, or delete saved layouts.
 
-### Localization
-
-- English (base) and Dutch ship in `Localizable.xcstrings`. Strings cover every menu item, context menu, sidebar section, and modal sheet (104 strings and counting).
-
 ### Persistence
 
 - Window layout (left/right pane tabs + URLs, view modes, sorts, hidden setting, pinned state, single-pane mode), inspector visibility, and sidebar favourites are saved to `~/Library/Application Support/DoubleFinder/state.json` on quit and restored on next launch.

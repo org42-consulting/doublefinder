@@ -52,39 +52,43 @@ struct NSTableListView: NSViewRepresentable {
         table.menu = NSMenu()
         table.menu?.delegate = coord
 
-        // columns
+        // Columns. minWidth values are kept small so all five columns fit in
+        // even a narrow pane — uniformColumnAutoresizingStyle scales the
+        // initial widths down proportionally, but it can't go below the sum
+        // of the minimums. With 80+60+44+50+20 (+ intercell) the table can
+        // shrink to ~280pt before the horizontal scroller would kick in.
         let nameCol = NSTableColumn(identifier: .name)
         nameCol.title = "Name"
         nameCol.width = 280
-        nameCol.minWidth = 120
+        nameCol.minWidth = 80
         nameCol.sortDescriptorPrototype = NSSortDescriptor(key: ColumnID.name.rawValue, ascending: true)
         table.addTableColumn(nameCol)
 
         let dateCol = NSTableColumn(identifier: .date)
         dateCol.title = "Date Modified"
         dateCol.width = 160
-        dateCol.minWidth = 80
+        dateCol.minWidth = 60
         dateCol.sortDescriptorPrototype = NSSortDescriptor(key: ColumnID.date.rawValue, ascending: false)
         table.addTableColumn(dateCol)
 
         let sizeCol = NSTableColumn(identifier: .size)
         sizeCol.title = "Size"
         sizeCol.width = 80
-        sizeCol.minWidth = 60
+        sizeCol.minWidth = 44
         sizeCol.sortDescriptorPrototype = NSSortDescriptor(key: ColumnID.size.rawValue, ascending: false)
         table.addTableColumn(sizeCol)
 
         let kindCol = NSTableColumn(identifier: .kind)
         kindCol.title = "Kind"
         kindCol.width = 100
-        kindCol.minWidth = 60
+        kindCol.minWidth = 50
         kindCol.sortDescriptorPrototype = NSSortDescriptor(key: ColumnID.kind.rawValue, ascending: true)
         table.addTableColumn(kindCol)
 
         let tagsCol = NSTableColumn(identifier: .tags)
         tagsCol.title = "Tags"
         tagsCol.width = 80
-        tagsCol.minWidth = 30
+        tagsCol.minWidth = 20
         table.addTableColumn(tagsCol)
 
         table.sortDescriptors = [NSSortDescriptor(key: ColumnID.name.rawValue, ascending: true)]
@@ -98,6 +102,31 @@ struct NSTableListView: NSViewRepresentable {
         scroll.borderType = .noBorder
         scroll.automaticallyAdjustsContentInsets = false
         scroll.contentInsets = NSEdgeInsets(top: 4, left: 0, bottom: 60, right: 0)
+
+        // `.uniformColumnAutoresizingStyle` only scales *deltas* in width, so
+        // if the table was first laid out narrower than the sum of column
+        // widths the trailing columns stay clipped forever. We explicitly
+        // re-fit columns whenever the scroll view's content area changes.
+        scroll.postsFrameChangedNotifications = true
+        scroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            forName: NSView.frameDidChangeNotification,
+            object: scroll,
+            queue: .main
+        ) { [weak coord, weak scroll, weak table] _ in
+            MainActor.assumeIsolated {
+                guard let table, let scroll else { return }
+                coord?.fitColumnsToWidth(table: table, scroll: scroll)
+            }
+        }
+        // Initial fit once the view has a real size — SwiftUI hands geometry
+        // to the NSViewRepresentable after `makeNSView` returns.
+        DispatchQueue.main.async { [weak coord, weak scroll, weak table] in
+            MainActor.assumeIsolated {
+                guard let table, let scroll else { return }
+                coord?.fitColumnsToWidth(table: table, scroll: scroll)
+            }
+        }
         return scroll
     }
 
@@ -206,6 +235,25 @@ struct NSTableListView: NSViewRepresentable {
 
         var nodes: [FSNode] { parent.tab.visibleNodes }
 
+        /// Distribute the scroll view's visible content width across all
+        /// columns proportionally, respecting each column's `minWidth`. Called
+        /// on initial layout and on every frame change of the scroll view so
+        /// columns always fit the pane — `uniformColumnAutoresizingStyle`
+        /// alone misbehaves when the initial frame is smaller than the column
+        /// width sum.
+        func fitColumnsToWidth(table: NSTableView, scroll: NSScrollView) {
+            let available = scroll.contentSize.width
+                - table.intercellSpacing.width * CGFloat(max(0, table.numberOfColumns - 1))
+            guard available > 0 else { return }
+            let cols = table.tableColumns
+            let totalCurrent = cols.reduce(CGFloat(0)) { $0 + $1.width }
+            guard totalCurrent > 0 else { return }
+            let scale = available / totalCurrent
+            for col in cols {
+                col.width = max(col.minWidth, col.width * scale)
+            }
+        }
+
         /// Compare-folders row view: tints the row background using `CompareStatus`.
         func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
             guard row < nodes.count else { return nil }
@@ -311,7 +359,7 @@ struct NSTableListView: NSViewRepresentable {
             let row = table.clickedRow
             guard row >= 0, row < nodes.count else { return }
             let node = nodes[row]
-            if node.isDirectory {
+            if node.isOpenableDirectory {
                 parent.tab.navigate(to: node.url)
             } else {
                 NSWorkspace.shared.open(node.url)

@@ -3,7 +3,6 @@ import PackageDescription
 
 let package = Package(
     name: "DoubleFinder",
-    defaultLocalization: "en",
     platforms: [.macOS(.v26)],
     targets: [
         .target(
@@ -17,8 +16,7 @@ let package = Package(
             path: "Sources/DoubleFinder",
             resources: [
                 .copy("Resources/DoubleFinder.icns"),
-                .copy("Resources/doublefinder.png"),
-                .process("Resources/Localizable.xcstrings")
+                .copy("Resources/doublefinder.png")
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v5)

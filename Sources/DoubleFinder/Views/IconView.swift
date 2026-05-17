@@ -38,7 +38,7 @@ struct IconView: View {
                                 state.focus = side
                             },
                             onOpen: {
-                                if node.isDirectory {
+                                if node.isOpenableDirectory {
                                     tab.navigate(to: node.url)
                                 } else {
                                     NSWorkspace.shared.open(node.url)
@@ -153,7 +153,7 @@ struct IconView: View {
     private func openSelection() {
         guard let id = tab.selection.first,
               let node = navNodes.first(where: { $0.id == id }) else { return }
-        if node.isDirectory {
+        if node.isOpenableDirectory {
             tab.navigate(to: node.url)
         } else {
             NSWorkspace.shared.open(node.url)

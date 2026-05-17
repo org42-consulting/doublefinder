@@ -15,13 +15,13 @@ swift run                           # launches the app
 
 # Release .app bundle (signed ad-hoc, output: build/DoubleFinder.app)
 ./scripts/package.sh
-VERSION=1.2.0 BUILD_NUMBER=4 ./scripts/package.sh
+VERSION=1.3.0 BUILD_NUMBER=4 ./scripts/package.sh
 
 # Open packaged app
 open build/DoubleFinder.app
 ```
 
-`Package.swift` declares `.copy("Resources/DoubleFinder.icns")` so the icon ships as a SwiftPM resource bundle. `scripts/package.sh` re-wraps any `*.bundle` produced under `.build/release/` into a proper macOS bundle layout inside `Contents/MacOS/`, copies the icon to `Contents/Resources/AppIcon.icns`, writes `Info.plist` (with Desktop/Documents/Downloads usage strings), and runs `codesign --force --deep --sign -`. Don't change the resource layout without updating that script.
+`Package.swift` declares `.copy("Resources/DoubleFinder.icns")` so the icon ships as a SwiftPM resource bundle. `scripts/package.sh` re-wraps any `*.bundle` produced under `.build/release/` into a proper macOS bundle layout inside `Contents/MacOS/`, copies the icon to `Contents/Resources/AppIcon.icns`, writes `Info.plist` (Desktop/Documents/Downloads usage strings), and runs `codesign --force --deep --sign -`. Don't change the resource layout without updating that script.
 
 ## Architecture
 

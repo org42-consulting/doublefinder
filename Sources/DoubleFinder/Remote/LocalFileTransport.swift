@@ -9,11 +9,11 @@ struct LocalFileTransport: FileTransport {
             let fm = FileManager.default
             let contents = try fm.contentsOfDirectory(
                 at: url,
-                includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
+                includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isPackageKey],
                 options: []
             )
             return contents.map { u in
-                let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isPackageKey])
                 var isDir: ObjCBool = false
                 fm.fileExists(atPath: u.path, isDirectory: &isDir)
                 return FSNode(
@@ -22,7 +22,8 @@ struct LocalFileTransport: FileTransport {
                     size: v?.fileSize.map(Int64.init),
                     modified: v?.contentModificationDate,
                     tags: TagStore.tags(for: u),
-                    gitStatus: nil
+                    gitStatus: nil,
+                    isPackage: v?.isPackage ?? false
                 )
             }
         }.value

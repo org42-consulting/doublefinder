@@ -169,7 +169,6 @@ extension HelpTopic {
         .shortcuts,
         .preferences,
         .persistence,
-        .localization,
         .troubleshooting,
         .about,
     ]
@@ -874,18 +873,6 @@ extension HelpTopic {
             HelpSection(heading: "Server bookmarks", body: "`~/Library/Application Support/DoubleFinder/servers.json` — host, user, port, identity file, display name. Passwords live in Keychain under the `com.org42.doublefinder.sftp` service identifier."),
             HelpSection(heading: "Edit-locally cache", body: "`~/Library/Caches/DoubleFinder/RemoteEdits/<endpoint>/<path>` — local copies of files opened via Edit Locally. Safe to delete; rebuilt on next use."),
             HelpSection(heading: "Settings", body: "`UserDefaults` (`net.org42.doublefinder`) — see the **Preferences** topic."),
-        ]
-    )
-
-    static let localization = HelpTopic(
-        id: "localization",
-        title: "Localization",
-        systemImage: "globe",
-        sections: [
-            HelpSection(body: "DoubleFinder ships English (base) and Dutch translations. The catalog lives in `Localizable.xcstrings` and currently covers 104 strings — every menu item, context menu, sidebar section, and modal sheet."),
-            HelpSection(heading: "How macOS picks the language", body: "Apps follow the order in **System Settings ▸ General ▸ Language & Region**. If your first preferred language is Dutch (or English), DoubleFinder uses that catalog; any other language falls back to English."),
-            HelpSection(heading: "Force a language", body: "From a terminal:\n\n```\ndefaults write net.org42.doublefinder AppleLanguages '(\"nl\")'\n```\n\nThen relaunch. Remove the override with `defaults delete net.org42.doublefinder AppleLanguages`."),
-            HelpSection(heading: "Contributing translations", body: "The xcstrings format is plain JSON. Pull requests adding a new locale block to each string entry are welcome — see `Sources/DoubleFinder/Resources/Localizable.xcstrings`."),
         ]
     )
 

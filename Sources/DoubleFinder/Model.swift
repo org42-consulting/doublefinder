@@ -17,10 +17,20 @@ struct FSNode: Identifiable, Hashable {
     /// Recursive folder size, populated on-demand by the "Calculate Size" action.
     /// Cleared on the next `tab.refresh()` since the listing replaces all nodes.
     var calculatedSize: Int64? = nil
+    /// Launch Services flag for bundle directories — `.app`, `.bundle`, `.framework`,
+    /// `.photoslibrary`, etc. Default false so call sites that don't supply it (or
+    /// that operate on remote URLs where the concept doesn't apply) behave like
+    /// regular folders.
+    var isPackage: Bool = false
 
     var id: URL { url }
     var name: String { url.lastPathComponent }
     var ext: String { url.pathExtension }
+
+    /// True for folders that should be navigable as directories. .app bundles
+    /// and other Launch Services packages return false so a double-click
+    /// launches the app instead of descending into it.
+    var isOpenableDirectory: Bool { isDirectory && !isPackage }
 }
 
 enum GitFileState: String, Hashable {
@@ -522,7 +532,7 @@ final class TabState: ObservableObject, Identifiable {
         let hidden = showHidden
         let mapped: [FSNode] = urls.compactMap { u in
             if !hidden && u.lastPathComponent.hasPrefix(".") { return nil }
-            let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isPackageKey])
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: u.path, isDirectory: &isDir) else { return nil }
             return FSNode(
@@ -530,7 +540,8 @@ final class TabState: ObservableObject, Identifiable {
                 isDirectory: isDir.boolValue,
                 size: v?.fileSize.map(Int64.init),
                 modified: v?.contentModificationDate,
-                tags: TagStore.tags(for: u)
+                tags: TagStore.tags(for: u),
+                isPackage: v?.isPackage ?? false
             )
         }
         self.nodes = sorted(mapped)
@@ -921,21 +932,16 @@ final class WindowState: ObservableObject {
         let startingPath = defaults.string(forKey: SettingsKey.startingDirectoryPath)
             ?? FileManager.default.homeDirectoryForCurrentUser.path
 
-        if restoreOnStartup, let snap = StatePersistence.load() {
+        // Snapshot is loaded regardless of `restoreOnStartup` so user
+        // customisations (favourites, inspector visibility) survive across
+        // launches even when pane/tab restoration is disabled. Only the
+        // *window* portion (panes, tabs, single-pane mode) is gated by the
+        // toggle.
+        let snap = StatePersistence.load()
+        if restoreOnStartup, let snap {
             self.left = PaneState(from: snap.left)
             self.right = PaneState(from: snap.right)
             self.focus = snap.focus == "right" ? .right : .left
-            if let favs = snap.favourites, !favs.isEmpty {
-                // Strip legacy placeholders (AirDrop / Recents pointing at ~) — they were
-                // dead links and have been removed from the defaults.
-                let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
-                self.favourites = favs.filter { fav in
-                    let isHome = fav.url.standardizedFileURL == home
-                    let legacy = isHome && (fav.title == "AirDrop" || fav.title == "Recents")
-                    return !legacy
-                }
-            }
-            self.showInspector = snap.showInspector ?? false
             self.singlePaneMode = snap.singlePaneMode ?? false
         } else {
             let startURL = URL(fileURLWithPath: (startingPath as NSString).expandingTildeInPath)
@@ -944,6 +950,19 @@ final class WindowState: ObservableObject {
                 : FileManager.default.homeDirectoryForCurrentUser
             self.left = PaneState(url: safe)
             self.right = PaneState(url: safe)
+        }
+        if let snap {
+            if let favs = snap.favourites, !favs.isEmpty {
+                // Strip legacy placeholders (AirDrop / Recents pointing at ~)
+                // — they were dead links and have been removed from the defaults.
+                let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+                self.favourites = favs.filter { fav in
+                    let isHome = fav.url.standardizedFileURL == home
+                    let legacy = isHome && (fav.title == "AirDrop" || fav.title == "Recents")
+                    return !legacy
+                }
+            }
+            self.showInspector = snap.showInspector ?? false
         }
         for tab in left.tabs { tab.window = self }
         for tab in right.tabs { tab.window = self }
@@ -1090,7 +1109,7 @@ final class WindowState: ObservableObject {
                 let tab = self.focusedPane.activeTab
                 guard let id = tab.selection.first,
                       let node = tab.nodes.first(where: { $0.id == id }) else { return }
-                if node.isDirectory {
+                if node.isOpenableDirectory {
                     tab.navigate(to: node.url)
                 } else {
                     NSWorkspace.shared.open(node.url)

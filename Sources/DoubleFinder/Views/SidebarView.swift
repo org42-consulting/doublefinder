@@ -140,7 +140,7 @@ struct SidebarView: View {
                 Text(sf.name).foregroundStyle(Color.primary)
             } icon: {
                 Image(systemName: "magnifyingglass.circle")
-                    .foregroundStyle(Color.purple)
+                    .foregroundStyle(Color.primary)
             }
         }
         .buttonStyle(.plain)
@@ -182,7 +182,7 @@ struct SidebarView: View {
                     .foregroundStyle(Color.primary)
             } icon: {
                 Image(systemName: fav.systemImage)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Color.primary)
             }
         }
         .buttonStyle(.plain)
@@ -245,7 +245,10 @@ struct SidebarView: View {
     }
 
     private func tintFor(section: String, title: String) -> Color {
-        guard section == "Tags" else { return .accentColor }
+        // Tag rows keep their colour dot; every other section uses the
+        // primary label colour so icons read black in light mode and white
+        // in dark mode, matching Finder's sidebar.
+        guard section == "Tags" else { return .primary }
         return Tag.Color.allCases
             .first { $0.displayName == title }?
             .swiftUI ?? .gray

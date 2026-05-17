@@ -35,6 +35,14 @@ enum FileContextMenu {
             }
             return (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
         }
+        // Single-selection package (.app, .bundle, …) — drives the "Show
+        // Package Contents" item and excludes the descend-into-folder items.
+        let singlePackageURL: URL? = {
+            guard !multiple, let url = urls.first, !url.isRemoteSFTP else { return nil }
+            let v = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
+            return (v?.isDirectory == true && v?.isPackage == true) ? url : nil
+        }()
+        let isOpenableDir = isDir && singlePackageURL == nil
 
         addItem(menu, "Open") {
             for u in urls {
@@ -44,8 +52,9 @@ enum FileContextMenu {
                     }
                     continue
                 }
-                let dir = (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                if dir { tab.navigate(to: u); break }
+                let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
+                let isOpenableDirectory = (v?.isDirectory ?? false) && !(v?.isPackage ?? false)
+                if isOpenableDirectory { tab.navigate(to: u); break }
                 NSWorkspace.shared.open(u)
             }
         }
@@ -64,7 +73,7 @@ enum FileContextMenu {
             }
         }
 
-        if isDir, !multiple, let url = urls.first {
+        if isOpenableDir, !multiple, let url = urls.first {
             addItem(menu, "Open in Other Pane") {
                 state.otherPane.activeTab.navigate(to: url)
             }
@@ -73,7 +82,15 @@ enum FileContextMenu {
             }
         }
 
-        if isDir, !multiple, let url = urls.first {
+        // Finder-parity: a .app / package gets a "Show Package Contents" entry
+        // that bypasses Launch Services and descends into the bundle.
+        if let pkg = singlePackageURL {
+            addItem(menu, "Show Package Contents") {
+                tab.navigate(to: pkg)
+            }
+        }
+
+        if isOpenableDir, !multiple, let url = urls.first {
             addItem(menu, "Open in Terminal") {
                 openTerminal(at: url)
             }
@@ -279,6 +296,12 @@ enum FileContextMenu {
                 }
                 return (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
             }
+            let singlePackageURL: URL? = {
+                guard !multiple, let url = urls.first, !url.isRemoteSFTP else { return nil }
+                let v = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
+                return (v?.isDirectory == true && v?.isPackage == true) ? url : nil
+            }()
+            let allOpenableDirs = allDirs && singlePackageURL == nil
             let refresh: () -> Void = { Task { @MainActor in await tab.refresh() } }
 
             Button("Open") {
@@ -289,8 +312,9 @@ enum FileContextMenu {
                         }
                         continue
                     }
-                    let dir = (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                    if dir { tab.navigate(to: u); break }
+                    let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
+                    let isOpenableDirectory = (v?.isDirectory ?? false) && !(v?.isPackage ?? false)
+                    if isOpenableDirectory { tab.navigate(to: u); break }
                     NSWorkspace.shared.open(u)
                 }
             }
@@ -313,10 +337,13 @@ enum FileContextMenu {
                     Button("Other…") { chooseApp(for: urls) }
                 }
             }
-            if allDirs, !multiple, let url = urls.first {
+            if allOpenableDirs, !multiple, let url = urls.first {
                 Button("Open in Other Pane") { state.otherPane.activeTab.navigate(to: url) }
                 Button("Open in New Tab") { state.focusedPane.addTab(url: url) }
                 Button("Open in Terminal") { openTerminal(at: url) }
+            }
+            if let pkg = singlePackageURL {
+                Button("Show Package Contents") { tab.navigate(to: pkg) }
             }
             if !allRemote {
                 Button("Open in Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }

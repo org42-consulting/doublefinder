@@ -40,6 +40,15 @@ struct PaneView: View {
                         .allowsHitTesting(false)
                         .transition(.opacity)
                 }
+
+                // Floating action capsule above the path bar when something
+                // is selected. Sits inside the file-area ZStack so it appears
+                // over (not next to) the listing.
+                VStack {
+                    Spacer()
+                    SelectionFloatingBar(tab: pane.activeTab)
+                        .padding(.bottom, 56) // clear the path bar + a margin
+                }
             }
             .animation(.easeInOut(duration: 0.12), value: isDropTarget)
             // Finder-style path bar: floats on top of the file area at the
@@ -177,6 +186,56 @@ private struct PaneFilterBar: View {
             guard state.focus == side else { return }
             focused = true
         }
+    }
+}
+
+// MARK: - Selection floating bar — quick actions when items are selected
+
+/// Centered capsule with Open / Reveal / Trash. Visible only while the tab
+/// has a non-empty selection so it doesn't take up space the rest of the time.
+private struct SelectionFloatingBar: View {
+    @ObservedObject var tab: TabState
+    @EnvironmentObject var state: WindowState
+
+    var body: some View {
+        let selected = tab.nodes.filter { tab.selection.contains($0.id) }
+        if !selected.isEmpty {
+            HStack(spacing: 4) {
+                Text("\(selected.count) selected")
+                    .font(.system(size: 11, weight: .medium))
+                    .padding(.leading, 8)
+                Divider().frame(height: 14).padding(.horizontal, 4)
+                actionButton("Open", "arrow.up.right.square") {
+                    NotificationCenter.default.post(name: .openSelectionRequested, object: nil)
+                }
+                actionButton("Reveal", "magnifyingglass") {
+                    NSWorkspace.shared.activateFileViewerSelecting(selected.map(\.url))
+                }
+                actionButton("Trash", "trash") {
+                    NotificationCenter.default.post(name: .trashSelectionRequested, object: nil)
+                }
+                .help("Move selection to Trash")
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, 4)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    @ViewBuilder
+    private func actionButton(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 11))
+                .labelStyle(.titleAndIcon)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+        }
+        .buttonStyle(.plain)
+        .help(title)
     }
 }
 

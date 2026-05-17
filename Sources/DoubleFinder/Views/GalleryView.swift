@@ -6,11 +6,27 @@ struct GalleryView: View {
     let side: PaneSide
     @EnvironmentObject var state: WindowState
 
+    // Marquee state for the thumbnail strip. Coordinates are in the named
+    // "galleryStrip" coordinate space published by the strip's background.
+    @State private var stripFrames: [FSNode.ID: CGRect] = [:]
+    @State private var marqueeStart: CGPoint? = nil
+    @State private var marqueeCurrent: CGPoint? = nil
+
     private func urlsForMenu(targeting node: FSNode) -> [URL] {
         if tab.selection.contains(node.id), tab.selection.count > 1 {
             return tab.selection.compactMap { id in tab.nodes.first { $0.id == id }?.url }
         }
         return [node.url]
+    }
+
+    private var currentMarqueeRect: CGRect? {
+        guard let s = marqueeStart, let c = marqueeCurrent else { return nil }
+        return CGRect(
+            x: min(s.x, c.x),
+            y: min(s.y, c.y),
+            width: abs(c.x - s.x),
+            height: abs(c.y - s.y)
+        )
     }
 
     var body: some View {
@@ -92,7 +108,14 @@ struct GalleryView: View {
 
     private var strip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            ZStack(alignment: .topLeading) {
+                // Background catches drags that start in empty space so a
+                // marquee can begin from any gap between cells.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .gesture(marqueeGesture)
+                HStack(spacing: 8) {
                 ForEach(tab.visibleNodes) { node in
                     StripCell(
                         node: node,
@@ -107,6 +130,14 @@ struct GalleryView: View {
                             } else {
                                 NSWorkspace.shared.open(node.url)
                             }
+                        }
+                    )
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: GalleryStripFramesKey.self,
+                                value: [node.id: geo.frame(in: .named("galleryStrip"))]
+                            )
                         }
                     )
                     .contextMenu {
@@ -125,10 +156,55 @@ struct GalleryView: View {
                         )
                     }
                 }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+
+                if let rect = currentMarqueeRect {
+                    Rectangle()
+                        .fill(Color.accentColor.opacity(0.12))
+                        .overlay(Rectangle().strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1))
+                        .frame(width: rect.width, height: rect.height)
+                        .position(x: rect.midX, y: rect.midY)
+                        .allowsHitTesting(false)
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
         }
+        .coordinateSpace(name: "galleryStrip")
+        .onPreferenceChange(GalleryStripFramesKey.self) { stripFrames = $0 }
+    }
+
+    private var marqueeGesture: some Gesture {
+        DragGesture(minimumDistance: 6, coordinateSpace: .named("galleryStrip"))
+            .onChanged { value in
+                if marqueeStart == nil {
+                    marqueeStart = value.startLocation
+                    state.focus = side
+                }
+                marqueeCurrent = value.location
+                applyMarqueeSelection()
+            }
+            .onEnded { _ in
+                marqueeStart = nil
+                marqueeCurrent = nil
+            }
+    }
+
+    private func applyMarqueeSelection() {
+        guard let rect = currentMarqueeRect else { return }
+        var hits: Set<FSNode.ID> = []
+        for (id, frame) in stripFrames where rect.intersects(frame) {
+            hits.insert(id)
+        }
+        if tab.selection != hits { tab.selection = hits }
+    }
+}
+
+/// Frames published by each strip cell so the marquee gesture can hit-test.
+private struct GalleryStripFramesKey: PreferenceKey {
+    static var defaultValue: [FSNode.ID: CGRect] = [:]
+    static func reduce(value: inout [FSNode.ID: CGRect], nextValue: () -> [FSNode.ID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
 

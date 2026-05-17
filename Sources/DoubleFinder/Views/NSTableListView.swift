@@ -242,6 +242,10 @@ struct NSTableListView: NSViewRepresentable {
         /// alone misbehaves when the initial frame is smaller than the column
         /// width sum.
         func fitColumnsToWidth(table: NSTableView, scroll: NSScrollView) {
+            // Apply any saved widths first so the proportional fit starts from
+            // the user's preferred ratios rather than the hard-coded initial
+            // values.
+            applySavedWidths(table)
             let available = scroll.contentSize.width
                 - table.intercellSpacing.width * CGFloat(max(0, table.numberOfColumns - 1))
             guard available > 0 else { return }
@@ -249,8 +253,35 @@ struct NSTableListView: NSViewRepresentable {
             let totalCurrent = cols.reduce(CGFloat(0)) { $0 + $1.width }
             guard totalCurrent > 0 else { return }
             let scale = available / totalCurrent
+            suppressSave = true
             for col in cols {
                 col.width = max(col.minWidth, col.width * scale)
+            }
+            suppressSave = false
+        }
+
+        /// Capture user-driven column resizes (we suppress while we're the
+        /// ones programmatically tiling). Persisted widths are absolute pt
+        /// values keyed by column identifier; on next launch we apply them
+        /// as the starting point before the fit pass scales to the visible
+        /// width.
+        var suppressSave = false
+        private static let widthsKey = "df.listColumnWidths"
+
+        func tableViewColumnDidResize(_ notification: Notification) {
+            guard !suppressSave,
+                  let col = notification.userInfo?["NSTableColumn"] as? NSTableColumn else { return }
+            var widths = UserDefaults.standard.dictionary(forKey: Self.widthsKey) as? [String: CGFloat] ?? [:]
+            widths[col.identifier.rawValue] = col.width
+            UserDefaults.standard.set(widths, forKey: Self.widthsKey)
+        }
+
+        private func applySavedWidths(_ table: NSTableView) {
+            guard let widths = UserDefaults.standard.dictionary(forKey: Self.widthsKey) as? [String: CGFloat] else { return }
+            for col in table.tableColumns {
+                if let saved = widths[col.identifier.rawValue], saved > 0 {
+                    col.width = max(col.minWidth, saved)
+                }
             }
         }
 

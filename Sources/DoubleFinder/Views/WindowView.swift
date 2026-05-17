@@ -102,6 +102,10 @@ struct WindowView: View {
             guard let payload = note.userInfo?["payload"] as? ImageViewerPayload else { return }
             openWindow(id: "image-viewer", value: payload)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .trashSelectionRequested)) { _ in
+            // Only the front-most window's WindowView should react.
+            if state.isFrontMost { trashFocused() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .openDiskUsageWindow)) { note in
             guard let url = note.userInfo?["url"] as? URL else { return }
             openWindow(id: "disk-usage", value: url)

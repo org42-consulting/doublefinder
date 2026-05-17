@@ -36,6 +36,52 @@ enum ArchiveBrowser {
         }
     }
 
+    /// True when this archive format supports appending new entries in place.
+    /// `.zip` always supports appends; `.tar` only does so when uncompressed
+    /// (gzipped tars would have to be decompressed first).
+    static func canAppend(_ url: URL) -> Bool {
+        switch detect(url: url) {
+        case .zip: return true
+        case .tar: return url.lastPathComponent.lowercased().hasSuffix(".tar")
+        case .none: return false
+        }
+    }
+
+    /// Append `files` to an existing archive in place. The archive must satisfy
+    /// `canAppend`. Sub-directories are added recursively for both formats.
+    static func addFiles(_ files: [URL], to archive: URL) async throws {
+        guard !files.isEmpty else { return }
+        switch detect(url: archive) {
+        case .zip:
+            // `zip -r archive entries...` appends if the archive already exists.
+            var args = ["-r", "-q", archive.path]
+            args.append(contentsOf: files.map(\.path))
+            try await run("/usr/bin/zip", args)
+        case .tar:
+            guard archive.lastPathComponent.lowercased().hasSuffix(".tar") else {
+                throw NSError(domain: "DoubleFinder.Archive", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: "Cannot append to a compressed .tar.gz / .tgz archive — extract and recreate instead."
+                ])
+            }
+            // `tar -rf archive entries...` appends to an uncompressed tar.
+            // Strip the parent component from each entry path so the archive
+            // doesn't grow ".."/absolute-path prefixes.
+            var args = ["-rf", archive.path]
+            // tar needs `-C parentDir entryName` pairs for each file to keep
+            // entry names relative.
+            for f in files {
+                args.append("-C")
+                args.append(f.deletingLastPathComponent().path)
+                args.append(f.lastPathComponent)
+            }
+            try await run("/usr/bin/tar", args)
+        case .none:
+            throw NSError(domain: "DoubleFinder.Archive", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Not a supported archive format."
+            ])
+        }
+    }
+
     /// Extract the entire archive to `destination`. Returns when the spawned
     /// process exits.
     static func extractAll(_ url: URL, to destination: URL) async throws {

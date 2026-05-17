@@ -90,6 +90,12 @@ struct ArchiveBrowserWindow: View {
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([archiveURL])
             }
+            if ArchiveBrowser.canAppend(archiveURL) {
+                Button("Add Files…") {
+                    Task { await addFiles() }
+                }
+                .disabled(loading || extracting || error != nil)
+            }
             Button("Extract All…") {
                 Task { await extractAll() }
             }
@@ -97,6 +103,23 @@ struct ArchiveBrowserWindow: View {
             .disabled(loading || extracting || error != nil)
         }
         .padding(10)
+    }
+
+    private func addFiles() async {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.prompt = "Add"
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        extracting = true
+        do {
+            try await ArchiveBrowser.addFiles(panel.urls, to: archiveURL)
+            await reload()
+        } catch {
+            self.error = error.localizedDescription
+        }
+        extracting = false
     }
 
     private func reload() async {

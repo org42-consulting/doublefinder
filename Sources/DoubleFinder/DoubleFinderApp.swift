@@ -123,6 +123,9 @@ struct DoubleFinderApp: App {
             CommandMenu("Workspaces") {
                 WorkspacesMenu()
             }
+            CommandGroup(replacing: .help) {
+                HelpMenuButton()
+            }
             CommandMenu("Go") {
                 Button("Back") {
                     NotificationCenter.default.post(name: .backRequested, object: nil)
@@ -201,6 +204,11 @@ struct DoubleFinderApp: App {
         }
         .defaultSize(width: 480, height: 360)
 
+        WindowGroup("DoubleFinder Help", id: "help") {
+            HelpWindow()
+        }
+        .defaultSize(width: 900, height: 620)
+
         Settings {
             SettingsView()
                 .preferredColorScheme(forceDarkMode ? .dark : nil)
@@ -259,6 +267,17 @@ private struct ManageConnectionsButton: View {
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Button("Manage Connections…") { openWindow(id: "connections") }
+    }
+}
+
+/// Replaces the default Help-menu items (search + auto-`<App> Help`) with a
+/// single button that opens our in-app Help window. The button has to live in a
+/// view so it can pull `openWindow` from the environment.
+private struct HelpMenuButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("DoubleFinder Help") { openWindow(id: "help") }
+            .keyboardShortcut("?", modifiers: [.command])
     }
 }
 

@@ -2,7 +2,7 @@
 
 A dual-pane file manager for macOS, built with SwiftUI and AppKit.
 
-DoubleFinder gives you two independent file views side-by-side — each with its own tabs, sort, hidden-files toggle, search, and history. Copy and move between panes with a single keystroke, navigate to remote SFTP servers as easily as local folders, edit remote files in your favourite editor, compare two directories side-by-side, undo file operations, and preview anything with QuickLook — all inside one window.
+DoubleFinder gives you two independent file views side-by-side — each with its own tabs, sort, hidden-files toggle, search, and history. Copy and move between panes with a single keystroke, navigate to remote SFTP servers as easily as local folders, edit remote files in your favourite editor, compare two directories side-by-side, save your favourite searches as Smart Folders, grep across a tree, share with one click, undo file operations, and preview anything with QuickLook — all inside one window.
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-blue) ![Swift](https://img.shields.io/badge/swift-6.2-orange) ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -21,7 +21,8 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Back / Forward history** (⌘[ / ⌘]) per tab.
 - **Quick filter bar** (⌘/) — incrementally filter the visible listing by name without leaving the folder.
 - **Single-pane / two-pane toggle** in the View menu — hide one pane to give the other full width; toggling back redistributes evenly.
-- **Sidebar** with reorderable favourites (drag in to add, drag out to remove), collapsable Locations / Tags / Servers sections, and an **eject icon** on connected servers.
+- **Sidebar** with reorderable favourites (drag in to add, drag out to remove), collapsable Locations / Tags / Smart Folders / Servers sections, and an **eject icon** on connected servers.
+- **Smart Folders** — save the current search (query, scope, kind) as a one-click sidebar entry; right-click to rename, remove, or apply to the other pane.
 - **Git status badges** decorate every file inside a working tree (M, A, D, U, R, C, I); folder badges aggregate descendant changes.
 - **Tag dots** on files that have macOS user tags applied.
 - **Compare Folders mode** — toolbar toggle that tints rows red (unique to this side) and yellow (same name, different size or date) across the two panes.
@@ -31,6 +32,7 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Multiple tabs per pane** with `⌘T` new tab, `⌘W` close tab.
 - **Drag tabs** within the tab bar to reorder.
 - **Pinned tabs** — right-click a tab → Pin. Pinned tabs survive `⌘W`, restore on app launch, and *don't change directory*: opening a folder in a pinned tab spawns a new sibling tab instead, leaving the pinned one in place.
+- **Tab groups** — group tabs by color; right-click the group header to rename, disband, or drag a tab onto a header to assign it.
 - **Sync** the focused pane's URL onto the other pane (⌥⌘=).
 - **Swap** the two panes' tab lists entirely (⌥⌘\\).
 - **Mirror Selection** (⌥⌘;) — select files in one pane, then select the same-named files in the other; pairs nicely with Compare mode.
@@ -44,8 +46,10 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **New Folder** (⇧⌘N).
 - **Calculate Size** — right-click any folder; the recursive size appears in the Size column and Inspector.
 - **Move to Trash** (⌘⌫); for remote files (no Trash on SFTP), a confirmation alert appears before permanent delete.
+- **Cut + Paste-as-Move** (⌥⌘X / ⌥⌘V) — cut items dim in every view until pasted or cleared.
 - **Undo** (⌘Z) for Move, Rename, Trash — including macOS Put-Back for trashed files.
 - **Empty Trash** (⇧⌘⌫) with confirmation.
+- **Share…** in the context menu — opens the system share sheet (`NSSharingServicePicker`) for the current local selection.
 - **Native drag-and-drop**: drag between panes, into folders in any view, out to Finder or other apps.
 - **Transfer queue** in the toolbar — per-operation progress bars, cancel button, automatic retry hook; long copies / moves never block the UI.
 
@@ -54,6 +58,8 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Spotlight-backed**, scoped to **This Folder**, **Home**, or **This Mac**.
 - **Debounced** at 250 ms.
 - **Honors the active sort** and **Show Hidden Files** setting on results; git-decorated for folder-scoped queries.
+- **Save as Smart Folder…** — turn the active search into a persistent sidebar entry.
+- **Content search** (⇧⌘F) — streamed `grep -rIn` over the current folder; click a hit to reveal the file in the originating tab.
 - **Esc** / **⊗ button** clears; empty-state view explains when nothing matched.
 
 ### Tags
@@ -64,6 +70,8 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 ### Inspector
 
 - Toggleable right-hand inspector (⌥⌘I) showing thumbnail, kind, size, dates, path, and tag chips for the focused selection; survives app restart.
+- **Editable POSIX permissions** — user / group / other read-write-execute matrix with live `chmod`.
+- **File hash** — on-demand MD5 and SHA-256 (streaming, CryptoKit) for the focused file.
 - **Two-pane diff view** — when both panes have a single text file selected, the inspector switches to a side-by-side aligned line diff (LCS-based, cap 2000 lines per file) with red / green tints for removed / added lines.
 - **Get Info** sheet (⌘I) for a heavier inspector-style view with tag editing.
 
@@ -87,14 +95,24 @@ Right-click anywhere in the file area for a Finder-parity menu:
 | Get Info · Calculate Size · Rename · Duplicate · Compress · Make Alias · Make Symbolic Link | Get Info on Folder |
 | Edit Locally (remote files) | Open in Terminal |
 | Copy to Other Pane · Move to Other Pane · Copy · Copy Path(s) | Show Hidden Files (toggle) |
-| Tags ▸ | Paste |
+| Share… · Tags ▸ | Paste |
 | Move to Trash / Delete (remote) | |
 
 The same menu shape is exposed from list, icon, gallery, and column views — `FileContextMenu` is the single source of truth.
 
+### Workspaces
+
+- **Save Current… / Load** named window snapshots (panes, tabs, URLs, view modes, sorts, hidden setting, pinned state, single-pane mode) from the **Workspaces** menu.
+- **Manage Workspaces…** opens a dedicated window where you can rename, reload, or delete saved layouts.
+
+### Localization
+
+- English (base) and Dutch ship in `Localizable.xcstrings`. Strings cover every menu item, context menu, sidebar section, and modal sheet (104 strings and counting).
+
 ### Persistence
 
 - Window layout (left/right pane tabs + URLs, view modes, sorts, hidden setting, pinned state, single-pane mode), inspector visibility, and sidebar favourites are saved to `~/Library/Application Support/DoubleFinder/state.json` on quit and restored on next launch.
+- Smart folders persist in `UserDefaults`; workspaces are individual JSON files under `~/Library/Application Support/DoubleFinder/workspaces/`.
 - Toggle restore behavior in **DoubleFinder → Settings…**.
 
 ## Requirements
@@ -193,6 +211,8 @@ iconutil --convert icns Icons/AppIcon.iconset -o Sources/DoubleFinder/Resources/
 | ⌘D | Duplicate |
 | ⌘⏎ | Rename (or batch rename if multi-selected) |
 | ⌘⌫ | Move to Trash |
+| ⌥⌘X | Cut Files |
+| ⌥⌘V | Paste Files (as Move when paired with Cut) |
 | ⇧⌘⌫ | Empty Trash… |
 | ⌘Z | Undo (Move / Rename / Trash) |
 | ⌘A | Select All Items |
@@ -203,6 +223,7 @@ iconutil --convert icns Icons/AppIcon.iconset -o Sources/DoubleFinder/Resources/
 | --- | --- |
 | ⇧⌘. | Toggle Hidden Files |
 | ⌘/ | Quick Filter |
+| ⇧⌘F | Search File Contents… |
 | ⌘I | Get Info |
 | ⌥⌘I | Toggle Inspector |
 | ⌥⌘R | Reveal in Finder |
@@ -356,11 +377,12 @@ Independent of Spotlight. `TabState.quickFilter` (`@Published`) is applied as a 
 Contributions, issues, and feature requests are welcome. Notable areas still open to improvement:
 
 - Marquee (drag-rectangle) selection in `GalleryView` (IconView already has it).
-- Smart-folder support beyond the sidebar tag filters.
 - True grid-aware up/down arrow nav in `IconView` (currently uses a screen-width heuristic for the column count).
-- Cut + Paste-as-Move (`⌘X` / `⌘V`).
+- Archive browse-in-place (zip / tar) without extraction.
+- FTP / WebDAV transports alongside SFTP.
 - AppleScript / Shortcuts.app integration.
-- Localization.
+- Command palette (⇧⌘P).
+- Test target.
 
 If you open a PR, please run `swift build` cleanly before pushing and keep `CLAUDE.md` (the in-repo architecture overview) in sync with any structural changes.
 

@@ -446,6 +446,64 @@ struct NSTableListView: NSViewRepresentable {
             return nodes[row].url as NSURL
         }
 
+        /// Custom drag image: the first row's icon, plus a small numeric
+        /// badge over the top-right corner showing the total drag size when
+        /// it's more than one item. Without this the system would draw all
+        /// thumbnails spread out, which looks busy for large selections.
+        func tableView(
+            _ tableView: NSTableView,
+            draggingImageFor dragColumns: [NSTableColumn],
+            in rowIndexes: IndexSet,
+            dragImageOffset offset: UnsafeMutablePointer<NSPoint>
+        ) -> NSImage {
+            let count = rowIndexes.count
+            let firstURL: URL? = rowIndexes.first.flatMap { idx in idx < nodes.count ? nodes[idx].url : nil }
+            let base = firstURL.map { FileIconCache.icon(for: $0, size: NSSize(width: 64, height: 64)) }
+                ?? NSImage(systemSymbolName: "doc", accessibilityDescription: nil)!
+
+            // For single-item drags we keep the bare icon — no badge.
+            guard count > 1 else { return base }
+
+            let canvas = NSImage(size: NSSize(width: 72, height: 72))
+            canvas.lockFocus()
+            // Slightly offset shadow stack: draw a translucent copy behind
+            // the real icon so users get a "stack of files" feel.
+            base.draw(in: NSRect(x: 6, y: 0, width: 60, height: 60),
+                      from: .zero, operation: .sourceOver, fraction: 0.55)
+            base.draw(in: NSRect(x: 3, y: 3, width: 60, height: 60),
+                      from: .zero, operation: .sourceOver, fraction: 0.75)
+            base.draw(in: NSRect(x: 0, y: 6, width: 60, height: 60),
+                      from: .zero, operation: .sourceOver, fraction: 1.0)
+
+            // Count badge in the top-right.
+            let label = "\(count)" as NSString
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11, weight: .bold),
+                .foregroundColor: NSColor.white
+            ]
+            let textSize = label.size(withAttributes: attrs)
+            let badgeRadius = max(textSize.width, textSize.height) / 2 + 5
+            let badgeCenter = NSPoint(x: 72 - badgeRadius, y: 72 - badgeRadius)
+            let badgeRect = NSRect(
+                x: badgeCenter.x - badgeRadius,
+                y: badgeCenter.y - badgeRadius,
+                width: badgeRadius * 2,
+                height: badgeRadius * 2
+            )
+            NSColor.systemBlue.setFill()
+            NSBezierPath(ovalIn: badgeRect).fill()
+            NSColor.white.withAlphaComponent(0.85).setStroke()
+            let stroke = NSBezierPath(ovalIn: badgeRect.insetBy(dx: 1, dy: 1))
+            stroke.lineWidth = 1
+            stroke.stroke()
+            label.draw(at: NSPoint(
+                x: badgeCenter.x - textSize.width / 2,
+                y: badgeCenter.y - textSize.height / 2
+            ), withAttributes: attrs)
+            canvas.unlockFocus()
+            return canvas
+        }
+
         // MARK: drop
 
         func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {

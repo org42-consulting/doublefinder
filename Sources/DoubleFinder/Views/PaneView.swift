@@ -427,19 +427,57 @@ struct TabBarView: View {
     var body: some View {
         GlassEffectContainer(spacing: 4) {
             HStack(spacing: 4) {
-                ForEach(tabBarItems, id: \.id) { item in
-                    switch item {
-                    case .groupHeader(let group, let count):
-                        GroupHeader(group: group, memberCount: count, pane: pane)
-                    case .tab(let tab):
-                        tabChip(tab)
+                // Horizontal ScrollView so tabs that don't fit can be reached
+                // by scrolling instead of being silently clipped. Hidden
+                // scrollbar keeps the bar visually clean.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(tabBarItems, id: \.id) { item in
+                            switch item {
+                            case .groupHeader(let group, let count):
+                                GroupHeader(group: group, memberCount: count, pane: pane)
+                            case .tab(let tab):
+                                tabChip(tab)
+                            }
+                        }
                     }
                 }
                 newTabButton
+                // Overflow chevron — appears once a tab bar has 5+ tabs so
+                // the user can jump directly to any tab without scrolling.
+                if pane.tabs.count >= 5 {
+                    tabOverflowMenu
+                }
                 Spacer()
                 settingsButton
             }
         }
+    }
+
+    /// "…" menu that lists every tab in the pane and activates the one the
+    /// user picks. Useful when the bar overflows but also handy as a quick
+    /// jump-to-tab index for any pane with many tabs.
+    private var tabOverflowMenu: some View {
+        Menu {
+            ForEach(pane.tabs) { tab in
+                Button {
+                    pane.activeTabID = tab.id
+                    state.focus = side
+                } label: {
+                    Label(tab.displayTitle, systemImage: tab.id == pane.activeTabID ? "checkmark" : "")
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 26, height: 26)
+        .glassEffect(in: Circle())
+        .help("All tabs in this pane")
     }
 
     /// Mixed sequence of group headers and tab chips for the tab bar. Walks
@@ -547,6 +585,9 @@ private struct TabChip: View {
     let pane: PaneState
     @EnvironmentObject var state: WindowState
     @State private var hovering: Bool = false
+    /// Highlighted while another tab is being dragged over this pill; used to
+    /// render the insertion indicator (a thin accent bar on the leading edge).
+    @State private var isDropTarget: Bool = false
 
     var body: some View {
         let title = tab.displayTitle
@@ -626,7 +667,21 @@ private struct TabChip: View {
             .padding(.vertical, 5)
             .background(.regularMaterial, in: Capsule())
         }
+        .overlay(alignment: .leading) {
+            // Insertion-point indicator: a thin accent-coloured bar on the
+            // leading edge of the target tab while another tab is being
+            // dragged over it.
+            if isDropTarget {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(width: 2)
+                    .padding(.vertical, 2)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.1), value: isDropTarget)
         .dropDestination(for: String.self) { items, _ in
+            isDropTarget = false
             guard let droppedID = items.first,
                   let droppedUUID = UUID(uuidString: droppedID),
                   droppedUUID != tab.id,
@@ -640,6 +695,8 @@ private struct TabChip: View {
             let target = (from < to) ? max(to - 1, 0) : to
             pane.tabs.insert(item, at: target)
             return true
+        } isTargeted: { targeted in
+            isDropTarget = targeted
         }
     }
 }

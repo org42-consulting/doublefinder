@@ -32,12 +32,16 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Smart relative dates** everywhere — "Today 14:32 / Yesterday 09:12 / Mon 14:32 / 17 May / 17 May 2024" depending on recency.
 - **Loading spinner** appears in the lower-right while a slow network listing is in flight.
 - **List-view column widths persist** across launches — drag a column to your preferred width and it sticks.
+- **Adjustable icon size** — inline slider in Icon view (lower-right) sets the cell edge from 40-128 pt; persisted in `@AppStorage`.
 - **Selection floating toolbar** above the path bar surfaces Open / Reveal in Finder / Trash when items are selected.
+- **Confirmation toasts** — ephemeral "Moved 3 files to Documents" capsule appears at the bottom of the window when a copy / move / trash finishes; click to dismiss or reveal.
+- **Visible pane divider** — a 1-pt hairline marks the splitter between panes so its draggable nature isn't a secret.
 
 ### Tabs
 
 - **Multiple tabs per pane** with `⌘T` new tab, `⌘W` close tab.
-- **Drag tabs** within the tab bar to reorder.
+- **Drag tabs** within the tab bar to reorder; an accent-coloured insertion line shows where the dragged tab will land.
+- **Overflow menu** — when 5+ tabs are open, an "…" button in the tab bar surfaces every tab with a checkmark on the active one for fast jump-to-tab.
 - **Pinned tabs** — right-click a tab → Pin. Pinned tabs survive `⌘W`, restore on app launch, and *don't change directory*: opening a folder in a pinned tab spawns a new sibling tab instead, leaving the pinned one in place.
 - **Tab groups** — group tabs by color; right-click the group header to rename, disband, or drag a tab onto a header to assign it.
 - **Sync** the focused pane's URL onto the other pane (⌥⌘=).
@@ -57,7 +61,7 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Undo / Redo** (⌘Z / ⇧⌘Z) for Move, Rename, Trash — including macOS Put-Back for trashed files.
 - **Empty Trash** (⇧⌘⌫) with confirmation, plus a full **Trash manager window** (Edit ▸ Manage Trash…) listing every item with its original path and a per-row Put Back.
 - **Share…** in the context menu — opens the system share sheet (`NSSharingServicePicker`) for the current local selection.
-- **Native drag-and-drop**: drag between panes, into folders in any view, out to Finder or other apps.
+- **Native drag-and-drop**: drag between panes, into folders in any view, out to Finder or other apps. Multi-file drags render as a stacked-icon preview with a "+N" count badge.
 - **Transfer queue** in the toolbar — per-operation progress bars, cancel button, automatic retry hook; long copies / moves never block the UI.
 
 ### Search

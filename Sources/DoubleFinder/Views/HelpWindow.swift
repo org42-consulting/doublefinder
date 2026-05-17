@@ -264,7 +264,8 @@ extension HelpTopic {
                 ("⌘T", "New tab in the focused pane"),
                 ("⌘W", "Close active tab (refuses on pinned tabs)"),
             ]),
-            HelpSection(heading: "Drag-to-reorder", body: "Click and drag a tab pill within the tab bar to reorder it. Tab order is per-pane and persisted in the window snapshot."),
+            HelpSection(heading: "Drag-to-reorder", body: "Click and drag a tab pill within the tab bar to reorder it. An accent-coloured insertion bar lights up on the leading edge of the target tab to show where the dragged tab will land. Tab order is per-pane and persisted in the window snapshot."),
+            HelpSection(heading: "Overflow menu", body: "Once a pane has 5 or more tabs, an **…** button at the right end of the tab bar surfaces the full list — useful when chips have scrolled off-screen, or as a quick jump-to-tab index. The active tab is marked with a checkmark."),
             HelpSection(heading: "Tab groups", body: "Right-click a tab and choose **Add to Group ▸ New Group** to start a color-coded group. The group header appears in the tab bar and collapses with a chevron."),
             HelpSection(heading: "Managing groups", bullets: [
                 "**Drag a tab onto a group header** — assigns the tab to that group.",
@@ -305,11 +306,12 @@ extension HelpTopic {
         systemImage: "square.grid.2x2",
         sections: [
             HelpSection(heading: "Four view modes per tab", bullets: [
-                "**List** — high-density columns; inline rename; type-to-select; persistent column sizes. Backed by `NSTableView`.",
-                "**Icon** — `LazyVGrid` with marquee (drag-rectangle) selection and arrow-key navigation; native draggable cells.",
+                "**List** — high-density columns; inline rename; type-to-select; user-resized column widths persist across launches. Backed by `NSTableView`.",
+                "**Icon** — `LazyVGrid` with marquee (drag-rectangle) selection, arrow-key navigation, and an inline icon-size slider in the lower-right corner (40-128 pt, persisted in `AppStorage`).",
                 "**Column** — Finder-style miller columns plus a `QLPreviewView` pane. Backed by `NSBrowser` with a custom cell that draws tag dots and git status.",
-                "**Gallery** — large preview with a thumbnail strip.",
+                "**Gallery** — large preview with a thumbnail strip; the strip supports marquee selection.",
             ]),
+            HelpSection(heading: "Mode-switch animation", body: "Switching between List, Icon, Column, and Gallery cross-fades over 150 ms so the transition feels deliberate."),
             HelpSection(heading: "Switching modes", body: "Use the segmented control in the toolbar. View mode is per-tab — every tab remembers its own choice."),
             HelpSection(heading: "Column view specifics", body: "Selecting a row in any non-first column **updates only the preview pane**, not the selection used by toolbar Copy / Move / Trash. Those always operate on column 0, where the tab's main selection lives."),
             HelpSection(heading: "Sorting", bullets: [
@@ -449,9 +451,11 @@ extension HelpTopic {
         sections: [
             HelpSection(body: "Long-running file operations (copy, move, trash, batch rename, calculate size, hash) run on a background queue. The toolbar's transfer button surfaces them."),
             HelpSection(heading: "What the button shows", bullets: [
-                "**Operation count** — number of active or recently-completed ops.",
-                "**Aggregate progress bar** — sums in-flight ops.",
+                "**Progress ring** around the icon that fills with the mean fraction across active ops.",
+                "**Count badge** in the top-right with the active op count.",
                 "**Popover** — lists each op with its own progress, summary, and cancel button.",
+                "**Dock badge** mirrors the active op count when DoubleFinder isn't front-most.",
+                "**Confirmation toast** appears at the bottom of the window when an op finishes; failed ops stay 4.5 s with the error message.",
             ]),
             HelpSection(heading: "Cancellation", body: "Click the **X** on any row to cancel. Cancellation is checked inside the work closure, so the underlying `Progress` instance interrupts the operation at the next checkpoint."),
             HelpSection(heading: "Errors", body: "Failed ops stay in the list with a red triangle and an error description. Dismiss them by hovering and clicking the X."),
@@ -470,6 +474,7 @@ extension HelpTopic {
                 "**Onto a tab pill** — drops into that tab's current directory.",
                 "**Hold ⌘ to move**, plain drag is a copy (standard Finder convention).",
             ]),
+            HelpSection(heading: "Drag preview", body: "List-view drags render as a stacked-icon preview with a blue **\"+N\"** count badge when more than one row is dragged, so you can see how many items are moving even after the source rows scroll off."),
             HelpSection(heading: "To other apps", body: "Drag items out of DoubleFinder into Finder, Mail attachments, Messages, Terminal, code editors — the dragged URLs use the standard `NSFilePromiseProvider` so any app that expects file drops works."),
             HelpSection(heading: "From other apps", body: "Drop URLs from any app into a DoubleFinder pane to copy them in. Drop folders onto the sidebar to favourite them."),
             HelpSection(heading: "Remote drag", body: "Drags involving remote tabs work transparently — the `CopyMoveCoordinator` picks the right transport per side and either does an in-place server-side rename (remote→remote, same endpoint) or a tunnel-through-local-temp copy."),

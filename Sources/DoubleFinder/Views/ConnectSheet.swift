@@ -6,6 +6,7 @@ struct ConnectSheet: View {
     @EnvironmentObject var state: WindowState
     let onDismiss: () -> Void
 
+    @State private var scheme: String = "sftp"
     @State private var host = ""
     @State private var user = NSUserName()
     @State private var port = "22"
@@ -17,16 +18,40 @@ struct ConnectSheet: View {
     @State private var displayName = ""
     @State private var connecting = false
 
+    private var defaultPort: Int {
+        switch scheme {
+        case "webdav": return 80
+        case "webdavs": return 443
+        case "ftp": return 21
+        case "ftps": return 990
+        default: return 22
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Connect to Server").font(.headline)
             Form {
+                Picker("Protocol", selection: $scheme) {
+                    Text("SFTP").tag("sftp")
+                    Text("WebDAV (http)").tag("webdav")
+                    Text("WebDAV (https)").tag("webdavs")
+                }
+                .onChange(of: scheme) { _, _ in
+                    // Snap the port field to the new default if the user hasn't
+                    // typed a custom one yet.
+                    if let n = Int(port), [22, 80, 443, 21, 990].contains(n) {
+                        port = String(defaultPort)
+                    }
+                }
                 TextField("Host", text: $host).textFieldStyle(.roundedBorder)
                 TextField("User", text: $user).textFieldStyle(.roundedBorder)
                 TextField("Port", text: $port).textFieldStyle(.roundedBorder).frame(maxWidth: 80)
-                HStack {
-                    TextField("Identity file (optional)", text: $identityPath).textFieldStyle(.roundedBorder)
-                    Button("Choose…") { pickIdentityFile() }
+                if scheme == "sftp" {
+                    HStack {
+                        TextField("Identity file (optional)", text: $identityPath).textFieldStyle(.roundedBorder)
+                        Button("Choose…") { pickIdentityFile() }
+                    }
                 }
                 SecureField("Password (optional)", text: $password)
                     .textFieldStyle(.roundedBorder)
@@ -69,19 +94,46 @@ struct ConnectSheet: View {
     private func connect() async {
         connecting = true
         defer { connecting = false }
-        let portInt = Int(port) ?? 22
+        let portInt = Int(port) ?? defaultPort
         let endpoint = RemoteEndpoint(
             host: host,
             user: user,
             port: portInt,
             identityFile: identityPath.isEmpty ? nil : URL(fileURLWithPath: identityPath),
-            displayName: displayName.isEmpty ? nil : displayName
+            displayName: displayName.isEmpty ? nil : displayName,
+            scheme: scheme
         )
         // Pre-seed Keychain so the reactive prompt handler can reply silently.
         // Always removed on failure so a wrong password isn't replayed.
         let didPreSeed = !password.isEmpty
         if didPreSeed {
             RemoteServerStore.shared.storePassword(password, for: endpoint)
+        }
+
+        // WebDAV doesn't open a session — credentials live in Keychain and the
+        // transport sends Basic-Auth on every request. Build the URL, save the
+        // bookmark, navigate, done.
+        if scheme == "webdav" || scheme == "webdavs" {
+            var path = startingPath
+            if path.isEmpty || path == "~" { path = "/" }
+            if !path.hasPrefix("/") { path = "/" + path }
+            var comps = URLComponents()
+            comps.scheme = scheme
+            comps.user = user
+            comps.host = host
+            if portInt != defaultPort { comps.port = portInt }
+            comps.path = path
+            guard let url = comps.url else { onDismiss(); return }
+            if saveAsBookmark {
+                let bookmark = RemoteBookmark(endpoint: endpoint, startingPath: startingPath, lastConnected: Date())
+                RemoteServerStore.shared.addBookmark(bookmark)
+            }
+            if didPreSeed && !savePasswordToKeychain {
+                RemoteServerStore.shared.deletePassword(for: endpoint)
+            }
+            state.focusedPane.activeTab.navigate(to: url)
+            onDismiss()
+            return
         }
 
         do {

@@ -567,6 +567,9 @@ final class TabState: ObservableObject, Identifiable {
         if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
             return SFTPFileTransport(endpoint: endpoint)
         }
+        if url.isRemoteWebDAV, let endpoint = url.remoteEndpoint {
+            return WebDAVFileTransport(endpoint: endpoint)
+        }
         return LocalFileTransport()
     }
 

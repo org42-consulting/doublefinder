@@ -8,13 +8,17 @@ struct RemoteEndpoint: Codable, Hashable, Sendable {
     var port: Int                  // 22 if unspecified
     var identityFile: URL?         // optional explicit -i
     var displayName: String?       // user-chosen label (UI only)
+    /// One of "sftp", "webdav", "webdavs", "ftp", "ftps". Default "sftp" so
+    /// existing on-disk bookmarks load unchanged.
+    var scheme: String = "sftp"
 
-    init(host: String, user: String, port: Int = 22, identityFile: URL? = nil, displayName: String? = nil) {
+    init(host: String, user: String, port: Int = 22, identityFile: URL? = nil, displayName: String? = nil, scheme: String = "sftp") {
         self.host = host
         self.user = user
         self.port = port
         self.identityFile = identityFile
         self.displayName = displayName
+        self.scheme = scheme
     }
 
     /// "user@host" or "user@host:port" when port != 22. Used for Keychain account key, sheet titles.
@@ -39,6 +43,26 @@ struct RemoteEndpoint: Codable, Hashable, Sendable {
 extension URL {
     /// True when this URL refers to an SFTP location.
     var isRemoteSFTP: Bool { scheme == "sftp" }
+
+    /// True when this URL refers to a WebDAV location (plain or TLS).
+    var isRemoteWebDAV: Bool { scheme == "webdav" || scheme == "webdavs" }
+
+    /// True for any remote scheme DoubleFinder supports.
+    var isRemote: Bool { isRemoteSFTP || isRemoteWebDAV || scheme == "ftp" || scheme == "ftps" }
+
+    /// Returns the endpoint encoded in this URL for any supported remote
+    /// scheme, or nil for local file URLs.
+    var remoteEndpoint: RemoteEndpoint? {
+        guard let s = scheme, let host, let user else { return nil }
+        switch s {
+        case "sftp": return RemoteEndpoint(host: host, user: user, port: port ?? 22, scheme: s)
+        case "webdav": return RemoteEndpoint(host: host, user: user, port: port ?? 80, scheme: s)
+        case "webdavs": return RemoteEndpoint(host: host, user: user, port: port ?? 443, scheme: s)
+        case "ftp": return RemoteEndpoint(host: host, user: user, port: port ?? 21, scheme: s)
+        case "ftps": return RemoteEndpoint(host: host, user: user, port: port ?? 990, scheme: s)
+        default: return nil
+        }
+    }
 
     /// Returns the endpoint encoded in this URL, or nil if not an sftp:// URL.
     /// Note: identityFile and displayName are never carried in URLs.

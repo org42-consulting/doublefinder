@@ -990,6 +990,7 @@ final class WindowState: ObservableObject {
         right.window = self
         registerCommandObservers()
         registerPersistenceHook()
+        WindowRegistry.shared.register(self)
     }
 
     func snapshot() -> StatePersistence.Snapshot {
@@ -1028,6 +1029,8 @@ final class WindowState: ObservableObject {
         for token in observerTokens {
             NotificationCenter.default.removeObserver(token)
         }
+        let weakSelf = self
+        Task { @MainActor in WindowRegistry.shared.unregister(weakSelf) }
     }
 
     private func registerCommandObservers() {
@@ -1285,15 +1288,17 @@ final class WindowState: ObservableObject {
         })
         // App Intents → notification bridge. Each one routes into existing
         // UI affordances so Shortcuts.app users get parity with the keyboard.
+        // The `isFrontMost` gate ensures multi-window setups don't apply the
+        // same intent to every open window.
         observerTokens.append(nc.addObserver(forName: .openFolderRequested, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
-                guard let self, let url = note.userInfo?["url"] as? URL else { return }
+                guard let self, self.isFrontMost, let url = note.userInfo?["url"] as? URL else { return }
                 self.focusedPane.activeTab.navigate(to: url)
             }
         })
         observerTokens.append(nc.addObserver(forName: .copyToOtherPaneIntent, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, self.isFrontMost else { return }
                 let src = self.focusedPane.activeTab
                 let urls = src.nodes.filter { src.selection.contains($0.id) }.map(\.url)
                 guard !urls.isEmpty else { NSSound.beep(); return }
@@ -1302,7 +1307,7 @@ final class WindowState: ObservableObject {
         })
         observerTokens.append(nc.addObserver(forName: .moveToOtherPaneIntent, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, self.isFrontMost else { return }
                 let src = self.focusedPane.activeTab
                 let urls = src.nodes.filter { src.selection.contains($0.id) }.map(\.url)
                 guard !urls.isEmpty else { NSSound.beep(); return }
@@ -1311,7 +1316,8 @@ final class WindowState: ObservableObject {
         })
         observerTokens.append(nc.addObserver(forName: .applySmartFolderIntent, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
-                guard let self, let name = note.userInfo?["name"] as? String,
+                guard let self, self.isFrontMost,
+                      let name = note.userInfo?["name"] as? String,
                       let sf = SmartFolderStore.shared.folders.first(where: { $0.name == name }) else {
                     NSSound.beep(); return
                 }
@@ -1736,6 +1742,14 @@ final class WindowState: ObservableObject {
         }
 
         return out
+    }
+
+    /// True when this WindowState owns the front-most NSWindow. Used by App
+    /// Intent observers so a Shortcut targets exactly one window. With zero
+    /// windows registered (extremely briefly during launch), the first window
+    /// to register is treated as front so the intent isn't dropped.
+    var isFrontMost: Bool {
+        WindowRegistry.shared.frontMost === self
     }
 
     /// Open the Image Viewer on whichever images are currently relevant in the

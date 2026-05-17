@@ -116,7 +116,7 @@ private struct TreemapCanvas: View {
     let onTap: (UUID) -> Void
 
     private var layouts: [(node: DiskUsageNode, rect: CGRect)] {
-        Self.sliceAndDice(rect: frame, children: node.children, total: node.size)
+        Self.squarify(rect: frame, children: node.children, total: node.size)
     }
 
     var body: some View {
@@ -135,30 +135,92 @@ private struct TreemapCanvas: View {
         Double((idx * 47) % 360) / 360.0
     }
 
-    /// Slice the parent rect along its longer side, allocating one strip per
-    /// child proportional to its size. Cheap (O(n)) but produces stripy
-    /// results; squarified treemap is a future improvement.
-    static func sliceAndDice(rect: CGRect, children: [DiskUsageNode], total: Int64) -> [(DiskUsageNode, CGRect)] {
-        guard total > 0 else { return [] }
+    /// Squarified treemap (Bruls / Huijing / van Wijk, 1999): pack children
+    /// into rows along the shorter side of the remaining rectangle, choosing
+    /// row sizes that minimise the worst aspect ratio of any cell. Produces
+    /// cells whose aspect ratios cluster around 1, which is much more legible
+    /// than the strip-style output of slice-and-dice.
+    static func squarify(rect: CGRect, children: [DiskUsageNode], total: Int64) -> [(DiskUsageNode, CGRect)] {
+        guard total > 0, !children.isEmpty else { return [] }
+        // Scale weights so they sum to the rectangle's area — cells then carve
+        // up area shares directly.
+        let area = Double(rect.width) * Double(rect.height)
+        guard area > 0 else { return [] }
+        let scale = area / Double(total)
+        var weights: [(node: DiskUsageNode, weight: Double)] = children.map {
+            ($0, max(0.0001, Double($0.size) * scale))
+        }
+        // Algorithm assumes weights sorted descending — children already are,
+        // but enforce here for safety.
+        weights.sort { $0.weight > $1.weight }
+
         var out: [(DiskUsageNode, CGRect)] = []
         out.reserveCapacity(children.count)
-        var origin = rect.origin
-        let horizontal = rect.width >= rect.height
-        for child in children {
-            let frac = Double(child.size) / Double(total)
-            let cellRect: CGRect
-            if horizontal {
-                let w = rect.width * frac
-                cellRect = CGRect(x: origin.x, y: rect.origin.y, width: w, height: rect.height)
-                origin.x += w
+        var remaining = rect
+        var row: [(node: DiskUsageNode, weight: Double)] = []
+        var idx = 0
+        while idx < weights.count {
+            let next = weights[idx]
+            let side = min(remaining.width, remaining.height)
+            let candidate = row + [next]
+            if row.isEmpty || worst(candidate, sideLength: side) <= worst(row, sideLength: side) {
+                row = candidate
+                idx += 1
             } else {
-                let h = rect.height * frac
-                cellRect = CGRect(x: rect.origin.x, y: origin.y, width: rect.width, height: h)
-                origin.y += h
+                remaining = layoutRow(row, in: remaining, into: &out)
+                row.removeAll()
             }
-            out.append((child, cellRect))
+        }
+        if !row.isEmpty {
+            _ = layoutRow(row, in: remaining, into: &out)
         }
         return out
+    }
+
+    /// Worst aspect ratio if `row` is laid out along a slab of length `s`.
+    /// Returns 1 (the best possible) for an empty row to make the squarify
+    /// loop's "is adding next better" test trivially true on the first item.
+    private static func worst(_ row: [(node: DiskUsageNode, weight: Double)], sideLength s: Double) -> Double {
+        guard !row.isEmpty else { return 1 }
+        let sum = row.reduce(0.0) { $0 + $1.weight }
+        let smax = row.map(\.weight).max() ?? sum
+        let smin = row.map(\.weight).min() ?? sum
+        let s2 = s * s
+        let sum2 = sum * sum
+        return max((s2 * smax) / sum2, sum2 / (s2 * smin))
+    }
+
+    /// Lay out one squarify row along the shorter side of `remaining` and
+    /// return the rectangle left over after the row is consumed.
+    private static func layoutRow(
+        _ row: [(node: DiskUsageNode, weight: Double)],
+        in remaining: CGRect,
+        into out: inout [(DiskUsageNode, CGRect)]
+    ) -> CGRect {
+        let rowSum = row.reduce(0.0) { $0 + $1.weight }
+        let horizontalShortest = remaining.width <= remaining.height
+        if horizontalShortest {
+            // Row stacks along the top, full width; height = rowSum / width.
+            let h = CGFloat(rowSum / Double(remaining.width))
+            var x = remaining.minX
+            for item in row {
+                let w = CGFloat(item.weight / Double(remaining.width) * Double(remaining.width) / rowSum) * remaining.width
+                let cellW = CGFloat(item.weight / rowSum) * remaining.width
+                _ = w
+                out.append((item.node, CGRect(x: x, y: remaining.minY, width: cellW, height: h)))
+                x += cellW
+            }
+            return CGRect(x: remaining.minX, y: remaining.minY + h, width: remaining.width, height: remaining.height - h)
+        } else {
+            let w = CGFloat(rowSum / Double(remaining.height))
+            var y = remaining.minY
+            for item in row {
+                let cellH = CGFloat(item.weight / rowSum) * remaining.height
+                out.append((item.node, CGRect(x: remaining.minX, y: y, width: w, height: cellH)))
+                y += cellH
+            }
+            return CGRect(x: remaining.minX + w, y: remaining.minY, width: remaining.width - w, height: remaining.height)
+        }
     }
 }
 

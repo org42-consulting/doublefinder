@@ -13,6 +13,64 @@ extension FocusedValues {
     @Entry var singlePaneMode: Bool? = nil
 }
 
+/// Hidden helper view that tracks the containing NSWindow's key state and
+/// updates `WindowRegistry` so App Intent observers know which window is the
+/// current target.
+private struct WindowFocusTracker: NSViewRepresentable {
+    let state: WindowState
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        let state = state
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                context.coordinator.attach(to: view, state: state)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        let state = state
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                context.coordinator.attach(to: nsView, state: state)
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var token: NSObjectProtocol?
+        weak var window: NSWindow?
+
+        @MainActor
+        func attach(to view: NSView, state: WindowState) {
+            let w = view.window
+            guard w !== window else { return }
+            window = w
+            if let token { NotificationCenter.default.removeObserver(token); self.token = nil }
+            guard let w else { return }
+            if w.isKeyWindow {
+                WindowRegistry.shared.bringFront(state)
+            }
+            token = NotificationCenter.default.addObserver(
+                forName: NSWindow.didBecomeKeyNotification,
+                object: w,
+                queue: .main
+            ) { [weak state] _ in
+                MainActor.assumeIsolated {
+                    guard let state else { return }
+                    WindowRegistry.shared.bringFront(state)
+                }
+            }
+        }
+
+        deinit { if let token { NotificationCenter.default.removeObserver(token) } }
+    }
+}
+
 struct WindowView: View {
     @StateObject private var state = WindowState()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
@@ -38,6 +96,7 @@ struct WindowView: View {
         // Mirror the primitive separately so SwiftUI's diff sees a real change
         // when only this property publishes — see the FocusedValues extension.
         .focusedSceneValue(\.singlePaneMode, state.singlePaneMode)
+        .background(WindowFocusTracker(state: state))
         .onReceive(NotificationCenter.default.publisher(for: .openImageViewerWindow)) { note in
             guard let payload = note.userInfo?["payload"] as? ImageViewerPayload else { return }
             openWindow(id: "image-viewer", value: payload)

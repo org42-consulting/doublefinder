@@ -59,6 +59,9 @@ struct ArchiveBrowserWindow: View {
             Table(filtered) {
                 TableColumn("Path") { entry in
                     HStack(spacing: 6) {
+                        // Archive entries don't have a real file on disk, so we
+                        // fall back to SF Symbols here — Launch Services can't
+                        // give us a representative icon without extracting.
                         Image(systemName: entry.isDirectory ? "folder.fill" : "doc")
                             .foregroundStyle(.secondary)
                         Text(entry.path)

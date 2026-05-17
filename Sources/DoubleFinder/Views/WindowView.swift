@@ -169,6 +169,7 @@ struct WindowView: View {
             }
             .help("Swap left and right panes (⌥⌘\\)")
         }
+        .defaultCustomization(.hidden)
 
         ToolbarItem(id: "compare", placement: .navigation) {
             Button {
@@ -183,8 +184,12 @@ struct WindowView: View {
                   ? "Stop comparing — red = only on this side, yellow = same name but different contents"
                   : "Compare panes — highlights rows that are unique to one side or differ in size/date")
         }
+        .defaultCustomization(.hidden)
 
-        ToolbarItem(id: "sync", placement: .navigation) {
+        // Folder Sync (separate from "sync panes" above — this opens the
+        // preview sheet of operations to bring the two folders into agreement
+        // when Compare mode is on).
+        ToolbarItem(id: "folder-sync", placement: .navigation) {
             Button {
                 NotificationCenter.default.post(name: .folderSyncRequested, object: nil)
             } label: {
@@ -193,6 +198,7 @@ struct WindowView: View {
             .help("Sync the two pane contents (preview before applying)")
             .disabled(!state.compareMode)
         }
+        .defaultCustomization(.hidden)
     }
 
     @ToolbarContentBuilder
@@ -235,6 +241,7 @@ struct WindowView: View {
             .keyboardShortcut(.return, modifiers: [.command])
             .help(tab.selection.count > 1 ? "Batch Rename" : "Rename (⌘⏎)")
         }
+        .defaultCustomization(.hidden)
 
         ToolbarItem(id: "newfolder", placement: .navigation) {
             Button {

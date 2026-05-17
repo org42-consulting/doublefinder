@@ -594,7 +594,10 @@ private final class NameCell: NSTableCellView, NSTextFieldDelegate {
     func configure(node: FSNode, onCommit: @escaping (String) -> Void) {
         self.onCommit = onCommit
         name.stringValue = node.name
-        icon.image = NSWorkspace.shared.icon(forFile: node.url.path)
+        // Bucket by extension for plain files; preserve unique icons for
+        // .app and other Launch Services packages.
+        let isPackage = (try? node.url.resourceValues(forKeys: [.isPackageKey]))?.isPackage ?? false
+        icon.image = isPackage ? FileIconCache.iconExact(for: node.url) : FileIconCache.icon(for: node.url)
         gitBadge.state = node.gitStatus
     }
 

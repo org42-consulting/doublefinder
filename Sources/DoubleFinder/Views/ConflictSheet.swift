@@ -24,9 +24,7 @@ struct ConflictSheet: View {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(prompt.conflicts, id: \.self) { url in
                         HStack(spacing: 6) {
-                            Image(systemName: "doc")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
+                            Image(nsImage: FileIconCache.icon(for: url, size: NSSize(width: 14, height: 14)))
                             Text(url.lastPathComponent)
                                 .font(.system(size: 11))
                         }

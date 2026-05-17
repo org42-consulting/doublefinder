@@ -29,8 +29,7 @@ struct TrashWindow: View {
                 Table(filtered, selection: $selection) {
                     TableColumn("Name") { item in
                         HStack(spacing: 6) {
-                            Image(systemName: item.isDirectory ? "folder.fill" : "doc")
-                                .foregroundStyle(.secondary)
+                            Image(nsImage: FileIconCache.icon(for: item.url, size: NSSize(width: 16, height: 16)))
                             Text(item.name).lineLimit(1).truncationMode(.middle)
                         }
                     }

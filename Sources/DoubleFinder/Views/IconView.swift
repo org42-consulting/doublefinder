@@ -236,7 +236,7 @@ private struct IconCell: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isSelected ? Color.accentColor.opacity(0.20) : Color.clear)
-                Image(nsImage: icon ?? NSWorkspace.shared.icon(forFile: node.url.path))
+                Image(nsImage: icon ?? FileIconCache.icon(for: node.url))
                     .resizable()
                     .interpolation(.high)
                     .frame(width: 64, height: 64)
@@ -270,7 +270,10 @@ private struct IconCell: View {
         )
         .draggable(node.url)
         .task(id: node.url) {
-            icon = NSWorkspace.shared.icon(forFile: node.url.path)
+            // .app and other packages get their unique icon; everything else
+            // is bucketed by extension via the cache.
+            let isPackage = (try? node.url.resourceValues(forKeys: [.isPackageKey]))?.isPackage ?? false
+            icon = isPackage ? FileIconCache.iconExact(for: node.url) : FileIconCache.icon(for: node.url)
         }
     }
 }

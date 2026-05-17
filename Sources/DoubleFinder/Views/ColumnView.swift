@@ -186,8 +186,10 @@ struct ColumnView: NSViewRepresentable {
             // Treat .app bundles and other Launch Services packages as leaves
             // so NSBrowser doesn't open a disclosure column into them.
             cell.isLeaf = !isDir || isPackage
-            let icon = NSWorkspace.shared.icon(forFile: child.path)
-            icon.size = NSSize(width: 16, height: 16)
+            // Cached per-extension lookup; column-view rows are 20-pt high.
+            let icon = isPackage
+                ? FileIconCache.iconExact(for: child, size: NSSize(width: 16, height: 16))
+                : FileIconCache.icon(for: child, size: NSSize(width: 16, height: 16))
             cell.image = icon
 
             cell.tagColors = TagStore.tags(for: child).map { NSColor($0.color.swiftUI) }

@@ -4,6 +4,7 @@ struct ServersSidebarSection: View {
     @ObservedObject var store: RemoteServerStore = .shared
     @ObservedObject var sessions: RemoteSessionManager = .shared
     @EnvironmentObject var window: WindowState
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Section {
@@ -31,6 +32,18 @@ struct ServersSidebarSection: View {
                     Button("Connect") { Task { await connect(bookmark) } }
                     if connected {
                         Button("Disconnect") { disconnect(bookmark) }
+                    }
+                    Button("Edit…") {
+                        openWindow(id: "connections")
+                        // Defer one runloop turn so the window's view hierarchy
+                        // exists when we ask it to select the bookmark.
+                        DispatchQueue.main.async {
+                            NotificationCenter.default.post(
+                                name: .editBookmarkRequested,
+                                object: nil,
+                                userInfo: ["id": bookmark.id]
+                            )
+                        }
                     }
                     Divider()
                     Button("Delete", role: .destructive) { store.removeBookmark(bookmark.id) }

@@ -299,6 +299,7 @@ extension Notification.Name {
     static let moveToOtherPaneIntent = Notification.Name("df.moveToOtherPaneIntent")
     static let applySmartFolderIntent = Notification.Name("df.applySmartFolderIntent")
     static let trashSelectionRequested = Notification.Name("df.trashSelectionRequested")
+    static let editBookmarkRequested = Notification.Name("df.editBookmarkRequested")
     static let toggleSinglePaneRequested = Notification.Name("df.toggleSinglePaneRequested")
     static let cutFilesRequested = Notification.Name("df.cutFilesRequested")
     static let pasteFilesRequested = Notification.Name("df.pasteFilesRequested")

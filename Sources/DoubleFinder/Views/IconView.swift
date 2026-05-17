@@ -230,6 +230,9 @@ private struct IconCell: View {
     let onQuickLook: () -> Void
 
     @State private var icon: NSImage?
+    @State private var hoverActive: Bool = false
+    @State private var showPreview: Bool = false
+    @State private var hoverTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 6) {
@@ -269,11 +272,80 @@ private struct IconCell: View {
             TapGesture(count: 1).onEnded { onSelect(true) }
         )
         .draggable(node.url)
+        .onHover { hovering in
+            hoverActive = hovering
+            hoverTask?.cancel()
+            if hovering {
+                hoverTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard !Task.isCancelled, hoverActive else { return }
+                    showPreview = true
+                }
+            } else {
+                showPreview = false
+            }
+        }
+        .popover(isPresented: $showPreview, arrowEdge: .top) {
+            HoverPreviewCard(node: node)
+        }
         .task(id: node.url) {
             // .app and other packages get their unique icon; everything else
             // is bucketed by extension via the cache.
             let isPackage = (try? node.url.resourceValues(forKeys: [.isPackageKey]))?.isPackage ?? false
             icon = isPackage ? FileIconCache.iconExact(for: node.url) : FileIconCache.icon(for: node.url)
+        }
+    }
+}
+
+/// Compact metadata popover surfaced when the user hovers an icon-view cell
+/// for 500 ms. Mirrors the bits of the Inspector that are useful at a glance:
+/// thumbnail, name, kind, size, dates.
+private struct HoverPreviewCard: View {
+    let node: FSNode
+    @State private var thumbnail: NSImage?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                if let thumbnail {
+                    Image(nsImage: thumbnail)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .frame(width: 96, height: 96)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 6))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(node.name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                Group {
+                    if let size = node.size, !node.isDirectory {
+                        Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                    } else if node.isDirectory {
+                        Text("Folder")
+                    }
+                    if let modified = node.modified {
+                        Text("Modified \(SmartDateFormatter.string(from: modified))")
+                    }
+                    Text((node.url.deletingLastPathComponent().path as NSString)
+                        .abbreviatingWithTildeInPath)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: 240, alignment: .leading)
+        }
+        .padding(12)
+        .task(id: node.url) {
+            thumbnail = await ThumbnailService.shared.thumbnail(for: node.url, size: CGSize(width: 192, height: 192))
         }
     }
 }

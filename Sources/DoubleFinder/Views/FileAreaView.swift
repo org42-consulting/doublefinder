@@ -17,6 +17,8 @@ struct FileAreaView: View {
         case .local, .remoteConnected:
             ZStack {
                 content
+                    .id(tab.viewMode)
+                    .transition(.opacity)
                 if showEmptyState {
                     ContentUnavailableView {
                         Label("No results", systemImage: "magnifyingglass")
@@ -25,7 +27,29 @@ struct FileAreaView: View {
                     }
                     .allowsHitTesting(false)
                 }
+                // Subtle loading indicator while the active refresh is waiting
+                // on the transport. Lower-right corner so it doesn't get in
+                // the way of the listing it sits over.
+                if tab.isLoading {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                                .controlSize(.small)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(.regularMaterial, in: Capsule())
+                                .padding(.trailing, 14)
+                                .padding(.bottom, 14)
+                                .allowsHitTesting(false)
+                                .transition(.opacity)
+                        }
+                    }
+                }
             }
+            .animation(.easeInOut(duration: 0.15), value: tab.viewMode)
+            .animation(.easeInOut(duration: 0.2), value: tab.isLoading)
         case .remoteReconnecting, .remoteDisconnected:
             RemoteDisconnectedPlaceholder(tab: tab)
         }

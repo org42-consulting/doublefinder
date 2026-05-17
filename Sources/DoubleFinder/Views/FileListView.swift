@@ -26,7 +26,7 @@ struct FileListView: View {
             .width(min: 160, ideal: 260)
 
             TableColumn("Date Modified") { (node: FSNode) in
-                Text(node.modified.map { Self.dateFormatter.string(from: $0) } ?? "—")
+                Text(node.modified.map { SmartDateFormatter.string(from: $0) } ?? "—")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -183,10 +183,4 @@ struct FileListView: View {
         return n.ext.uppercased()
     }
 
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f
-    }()
 }

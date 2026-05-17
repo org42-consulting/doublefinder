@@ -16,8 +16,11 @@ final class TransferQueue: ObservableObject {
     private let notificationThreshold: TimeInterval = 2.0
 
     private init() {
-        // Ask once at first launch. Denials are silently accepted; the rest of
-        // the app keeps working without notifications.
+        // UNUserNotificationCenter requires a registered bundle (CFBundleIdentifier
+        // in Info.plist) — calling it from `swift run`, which has no bundle,
+        // throws NSInternalInconsistencyException and aborts the process.
+        // Gate the request on a real bundle so dev runs stay usable.
+        guard Bundle.main.bundleIdentifier != nil else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
@@ -79,6 +82,7 @@ final class TransferQueue: ObservableObject {
     private func postCompletionNotificationIfNeeded(for op: TransferOp) {
         let duration = Date().timeIntervalSince(op.started)
         guard duration >= notificationThreshold else { return }
+        guard Bundle.main.bundleIdentifier != nil else { return } // swift run has no bundle
         if NSApp.isActive, NSApp.keyWindow != nil { return }
         let content = UNMutableNotificationContent()
         if let err = op.error {

@@ -41,7 +41,7 @@ struct TrashWindow: View {
                             .truncationMode(.middle)
                     }
                     TableColumn("Trashed") { item in
-                        Text(item.trashedDate.map(Self.dateFormatter.string(from:)) ?? "—")
+                        Text(item.trashedDate.map { SmartDateFormatter.string(from: $0) } ?? "—")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
@@ -117,10 +117,4 @@ struct TrashWindow: View {
         store.emptyTrash()
     }
 
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f
-    }()
 }

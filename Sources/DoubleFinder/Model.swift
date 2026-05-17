@@ -349,6 +349,10 @@ final class TabState: ObservableObject, Identifiable {
     /// Bumped/decremented by `CopyMoveCoordinator` around its TransferQueue
     /// enqueue so the tab pill can show a pulsing dot while work happens.
     @Published var pendingOps: Int = 0
+    /// True while `refresh()` is awaiting a transport listing. Used by the
+    /// file area to show a small spinner overlay so slow network listings
+    /// don't look broken.
+    @Published var isLoading: Bool = false
     @Published var searchText: String = ""
     @Published var isSearching: Bool = false
     @Published var renameRequest: FSNode.ID?
@@ -687,6 +691,8 @@ final class TabState: ObservableObject, Identifiable {
     func refresh() async {
         let target = url
         let useHiddenFilter = !showHidden
+        isLoading = true
+        defer { isLoading = false }
         do {
             let raw = try await transport.list(target)
             let filtered = useHiddenFilter ? raw.filter { !$0.name.hasPrefix(".") } : raw

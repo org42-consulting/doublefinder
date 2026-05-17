@@ -283,7 +283,7 @@ struct NSTableListView: NSViewRepresentable {
             case .date:
                 let cell = makeOrReuse(tableView, identifier: colID, kind: TextCell.self)
                 cell.alphaValue = cellAlpha
-                cell.set(text: node.modified.map { Self.dateFormatter.string(from: $0) } ?? "—")
+                cell.set(text: node.modified.map { SmartDateFormatter.string(from: $0) } ?? "—")
                 return cell
             case .size:
                 let cell = makeOrReuse(tableView, identifier: colID, kind: TextCell.self)
@@ -468,12 +468,6 @@ struct NSTableListView: NSViewRepresentable {
             }
         }
 
-        private static let dateFormatter: DateFormatter = {
-            let f = DateFormatter()
-            f.dateStyle = .medium
-            f.timeStyle = .short
-            return f
-        }()
     }
 }
 

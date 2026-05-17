@@ -21,6 +21,7 @@ struct PaneView: View {
                 .padding(.bottom, 4)
 
             PaneFilterBar(tab: pane.activeTab, side: side)
+            CompareLegendBar()
 
             ZStack {
                 FileAreaView(tab: pane.activeTab, side: side)
@@ -179,6 +180,40 @@ private struct PaneFilterBar: View {
     }
 }
 
+// MARK: - Compare legend — explains the row tints when Compare mode is on
+
+private struct CompareLegendBar: View {
+    @EnvironmentObject var state: WindowState
+
+    var body: some View {
+        if state.compareMode {
+            HStack(spacing: 12) {
+                LegendChip(color: .red.opacity(0.55), label: "Unique to this side")
+                LegendChip(color: .yellow.opacity(0.65), label: "Same name, differs")
+                Spacer()
+            }
+            .font(.system(size: 10))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.06))
+            Divider().opacity(0.5)
+        }
+    }
+}
+
+private struct LegendChip: View {
+    let color: Color
+    let label: String
+    var body: some View {
+        HStack(spacing: 4) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(color)
+                .frame(width: 10, height: 10)
+            Text(label).foregroundStyle(.secondary)
+        }
+    }
+}
+
 // MARK: - Info bar — single-selection details surface
 
 /// Compact one-line strip between the file area and the footer that surfaces
@@ -244,10 +279,7 @@ private struct PaneInfoBar: View {
             parts.append(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
         }
         if let mod = node.modified {
-            let f = DateFormatter()
-            f.dateStyle = .medium
-            f.timeStyle = .short
-            parts.append(f.string(from: mod))
+            parts.append(SmartDateFormatter.string(from: mod))
         }
         return parts.joined(separator: " · ")
     }

@@ -1,11 +1,25 @@
 import Foundation
 import SwiftUI
+import AppKit
+import UserNotifications
 
 @MainActor
 final class TransferQueue: ObservableObject {
     static let shared = TransferQueue()
 
-    @Published private(set) var ops: [TransferOp] = []
+    @Published private(set) var ops: [TransferOp] = [] {
+        didSet { updateDockBadge() }
+    }
+
+    /// Notifications shorter than this stay silent — copy a single file from
+    /// the same disk and the OS doesn't need to interrupt the user.
+    private let notificationThreshold: TimeInterval = 2.0
+
+    private init() {
+        // Ask once at first launch. Denials are silently accepted; the rest of
+        // the app keeps working without notifications.
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
 
     func enqueue(
         kind: String,
@@ -30,6 +44,7 @@ final class TransferQueue: ObservableObject {
                 if op.error == nil {
                     progress.completedUnitCount = progress.totalUnitCount
                 }
+                self.postCompletionNotificationIfNeeded(for: op)
                 if op.error != nil {
                     // keep error rows around briefly so the user sees them
                     Task {
@@ -51,6 +66,35 @@ final class TransferQueue: ObservableObject {
 
     private func removeOp(_ op: TransferOp) {
         ops.removeAll { $0.id == op.id }
+    }
+
+    /// Reflect active op count on the Dock tile. Empty string clears the badge.
+    private func updateDockBadge() {
+        NSApp.dockTile.badgeLabel = ops.isEmpty ? nil : "\(ops.count)"
+    }
+
+    /// Fire a system notification for a finished op when it took long enough
+    /// to be worth a heads-up. Suppress when the app is front-most — the user
+    /// already sees the transfer queue update.
+    private func postCompletionNotificationIfNeeded(for op: TransferOp) {
+        let duration = Date().timeIntervalSince(op.started)
+        guard duration >= notificationThreshold else { return }
+        if NSApp.isActive, NSApp.keyWindow != nil { return }
+        let content = UNMutableNotificationContent()
+        if let err = op.error {
+            content.title = "\(op.kind) failed"
+            content.body = err
+        } else {
+            content.title = "\(op.kind) finished"
+            content.body = op.summary
+        }
+        content.sound = nil
+        let request = UNNotificationRequest(
+            identifier: "df.transfer.\(op.id.uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 }
 

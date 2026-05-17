@@ -9,11 +9,27 @@ struct TransferQueueButton: View {
             showing.toggle()
         } label: {
             ZStack {
-                Image(systemName: "arrow.up.arrow.down.circle")
+                // Progress ring sits behind the icon so the icon stays visible
+                // while filling — Circle().trim with a state-driven endpoint
+                // shows aggregate progress across active ops.
                 if !queue.ops.isEmpty {
                     Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 8, height: 8)
+                        .stroke(Color.secondary.opacity(0.25), lineWidth: 2)
+                        .frame(width: 18, height: 18)
+                    Circle()
+                        .trim(from: 0, to: aggregateFraction)
+                        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .frame(width: 18, height: 18)
+                        .rotationEffect(.degrees(-90))
+                        .animation(.easeInOut(duration: 0.2), value: aggregateFraction)
+                }
+                Image(systemName: "arrow.up.arrow.down.circle")
+                if !queue.ops.isEmpty {
+                    Text("\(queue.ops.count)")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 12, minHeight: 12)
+                        .background(Circle().fill(Color.accentColor))
                         .offset(x: 9, y: -9)
                 }
             }
@@ -25,6 +41,14 @@ struct TransferQueueButton: View {
                 .environmentObject(queue)
                 .frame(width: 340)
         }
+    }
+
+    /// Mean fraction across every active op. We re-evaluate on every body
+    /// computation; TransferQueue publishes when ops update.
+    private var aggregateFraction: CGFloat {
+        guard !queue.ops.isEmpty else { return 0 }
+        let total = queue.ops.reduce(0.0) { $0 + $1.progress.fractionCompleted }
+        return CGFloat(total / Double(queue.ops.count))
     }
 }
 

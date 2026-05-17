@@ -345,6 +345,10 @@ final class TabState: ObservableObject, Identifiable {
     @Published var sortKey: SortKey = .name
     @Published var sortAscending: Bool = true
     @Published var loadError: String?
+    /// Counter of in-flight ops this tab is the source or destination of.
+    /// Bumped/decremented by `CopyMoveCoordinator` around its TransferQueue
+    /// enqueue so the tab pill can show a pulsing dot while work happens.
+    @Published var pendingOps: Int = 0
     @Published var searchText: String = ""
     @Published var isSearching: Bool = false
     @Published var renameRequest: FSNode.ID?

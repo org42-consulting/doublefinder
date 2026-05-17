@@ -341,6 +341,24 @@ struct TabBarView: View {
     }
 }
 
+/// Small orange dot that pulses while a tab has a file operation in flight.
+private struct BusyDot: View {
+    @State private var pulse: Bool = false
+    var body: some View {
+        Circle()
+            .fill(Color.orange)
+            .frame(width: 6, height: 6)
+            .opacity(pulse ? 0.3 : 1.0)
+            .scaleEffect(pulse ? 0.7 : 1.0)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+                    pulse = true
+                }
+            }
+            .help("File operation in progress")
+    }
+}
+
 private struct TabChip: View {
     @ObservedObject var tab: TabState
     let active: Bool
@@ -359,6 +377,9 @@ private struct TabChip: View {
                 .font(.system(size: 12, weight: active ? .semibold : .regular))
                 .lineLimit(1)
                 .foregroundStyle(active ? Color.accentColor : Color.primary)
+            if tab.pendingOps > 0 {
+                BusyDot()
+            }
             if pane.tabs.count > 1, !tab.isPinned, hovering || active {
                 Button {
                     pane.closeTab(tab.id)

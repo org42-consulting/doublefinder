@@ -50,6 +50,11 @@ enum CopyMoveCoordinator {
         via state: WindowState
     ) {
         let summary = summaryFor(kind: kind, urls: urls, dest: dest, label: label)
+        // Mark tabs as busy so their pills can pulse. We track both ends: the
+        // destination tab (which is going to refresh on completion) and, for
+        // moves, the source tab (which also refreshes).
+        dst?.pendingOps += 1
+        if kind == .move { src.pendingOps += 1 }
         TransferQueue.shared.enqueue(
             kind: label,
             summary: summary,
@@ -68,6 +73,8 @@ enum CopyMoveCoordinator {
             },
             completion: {
                 Task { @MainActor in
+                    dst?.pendingOps = max(0, (dst?.pendingOps ?? 1) - 1)
+                    if kind == .move { src.pendingOps = max(0, src.pendingOps - 1) }
                     if let dst { await dst.refresh() }
                     if kind == .move { await src.refresh() }
                 }

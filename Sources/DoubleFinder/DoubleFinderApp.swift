@@ -251,6 +251,15 @@ struct DoubleFinderApp: App {
         }
         .defaultSize(width: 900, height: 600)
 
+        WindowGroup("Archive", id: "archive-browser", for: URL.self) { $url in
+            if let u = url {
+                ArchiveBrowserWindow(archiveURL: u)
+            } else {
+                Text("No archive")
+            }
+        }
+        .defaultSize(width: 720, height: 480)
+
         Settings {
             SettingsView()
                 .preferredColorScheme(forceDarkMode ? .dark : nil)

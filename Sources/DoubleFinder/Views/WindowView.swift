@@ -46,6 +46,10 @@ struct WindowView: View {
             guard let url = note.userInfo?["url"] as? URL else { return }
             openWindow(id: "disk-usage", value: url)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openArchiveBrowser)) { note in
+            guard let url = note.userInfo?["url"] as? URL else { return }
+            openWindow(id: "archive-browser", value: url)
+        }
     }
 
     @ToolbarContentBuilder

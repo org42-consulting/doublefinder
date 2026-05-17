@@ -99,6 +99,11 @@ enum FileContextMenu {
             addItem(menu, "Open in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting(urls)
             }
+            if !multiple, let url = urls.first, ArchiveBrowser.detect(url: url) != nil {
+                addItem(menu, "Browse Archive") {
+                    NotificationCenter.default.post(name: .openArchiveBrowser, object: nil, userInfo: ["url": url])
+                }
+            }
         }
         addItem(menu, "Quick Look" + (multiple ? "" : " \u{201C}\(firstName)\u{201D}"), key: " ") {
             onQuickLook(urls)
@@ -347,6 +352,11 @@ enum FileContextMenu {
             }
             if !allRemote {
                 Button("Open in Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+                if !multiple, let url = urls.first, ArchiveBrowser.detect(url: url) != nil {
+                    Button("Browse Archive") {
+                        NotificationCenter.default.post(name: .openArchiveBrowser, object: nil, userInfo: ["url": url])
+                    }
+                }
             }
             Button(multiple ? "Quick Look" : "Quick Look \u{201C}\(firstName)\u{201D}") { onQuickLook(urls) }
 

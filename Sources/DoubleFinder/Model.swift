@@ -292,6 +292,7 @@ extension Notification.Name {
     static let folderSyncRequested = Notification.Name("df.folderSyncRequested")
     static let diskUsageRequested = Notification.Name("df.diskUsageRequested")
     static let openDiskUsageWindow = Notification.Name("df.openDiskUsageWindow")
+    static let openArchiveBrowser = Notification.Name("df.openArchiveBrowser")
     static let toggleSinglePaneRequested = Notification.Name("df.toggleSinglePaneRequested")
     static let cutFilesRequested = Notification.Name("df.cutFilesRequested")
     static let pasteFilesRequested = Notification.Name("df.pasteFilesRequested")

@@ -285,6 +285,8 @@ extension Notification.Name {
     static let mirrorSelectionRequested = Notification.Name("df.mirrorSelectionRequested")
     static let favoriteSlotRequested = Notification.Name("df.favoriteSlotRequested")
     static let undoRequested = Notification.Name("df.undoRequested")
+    static let redoRequested = Notification.Name("df.redoRequested")
+    static let commandPaletteRequested = Notification.Name("df.commandPaletteRequested")
     static let toggleSinglePaneRequested = Notification.Name("df.toggleSinglePaneRequested")
     static let cutFilesRequested = Notification.Name("df.cutFilesRequested")
     static let pasteFilesRequested = Notification.Name("df.pasteFilesRequested")
@@ -880,6 +882,7 @@ final class WindowState: ObservableObject {
     @Published var getInfoPrompt: GetInfoPrompt?
     @Published var batchRenamePrompt: BatchRenamePrompt?
     @Published var contentSearchPrompt: ContentSearchPrompt?
+    @Published var commandPalette: CommandPalettePrompt?
     @Published var favourites: [SidebarFavourite] = SidebarFavourite.defaults
     @Published var showInspector: Bool = false
     /// When true, only the currently-focused pane is rendered — the other one is
@@ -894,6 +897,11 @@ final class WindowState: ObservableObject {
     @Published var compareStatuses: [URL: CompareStatus] = [:]
     /// Undo stack of recent file operations. Bounded so it doesn't grow forever.
     @Published var undoStack: [UndoableOp] = []
+    /// Mirrors `undoStack`: when `performUndo` runs, it pushes the *inverse* op
+    /// here so ⇧⌘Z can re-apply the original action. Cleared whenever a new
+    /// `pushUndo` happens — once the user does something else, the redo path
+    /// is no longer meaningful.
+    @Published var redoStack: [UndoableOp] = []
     private static let maxUndoStack = 50
 
     private var observerTokens: [NSObjectProtocol] = []
@@ -1245,6 +1253,18 @@ final class WindowState: ObservableObject {
                 self.focusedPane.activeTab.navigate(to: self.favourites[slot].url)
             }
         })
+        observerTokens.append(nc.addObserver(forName: .redoRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                Task { @MainActor in await self.performRedo() }
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .commandPaletteRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.commandPalette = CommandPalettePrompt(commands: self.buildPaletteCommands())
+            }
+        })
         observerTokens.append(nc.addObserver(forName: .undoRequested, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -1447,24 +1467,46 @@ final class WindowState: ObservableObject {
         target.navigate(to: source.url)
     }
 
-    /// Record an undoable operation. Caps the stack at `maxUndoStack`.
+    /// Record an undoable operation. Caps the stack at `maxUndoStack`. Any
+    /// fresh user action invalidates the redo path, so we clear `redoStack`.
     func pushUndo(_ op: UndoableOp) {
         undoStack.append(op)
         if undoStack.count > Self.maxUndoStack {
             undoStack.removeFirst(undoStack.count - Self.maxUndoStack)
         }
+        redoStack.removeAll()
     }
 
-    /// Pop the most recent op and run its inverse. Refreshes every tab in both
-    /// panes afterward so the UI reflects the result regardless of where the
-    /// original operation happened.
+    /// Pop the most recent op and run its inverse. The forward direction is
+    /// re-recorded onto `redoStack` so ⇧⌘Z can replay it.
     @MainActor
     func performUndo() async {
         guard let op = undoStack.popLast() else { NSSound.beep(); return }
+        await apply(inverseOf: op)
+        redoStack.append(op)
+        if redoStack.count > Self.maxUndoStack {
+            redoStack.removeFirst(redoStack.count - Self.maxUndoStack)
+        }
+        await refreshAllPanes()
+    }
+
+    /// Pop the most recent undone op and re-apply it. Pushes back onto
+    /// `undoStack` so ⌘Z can reverse again.
+    @MainActor
+    func performRedo() async {
+        guard let op = redoStack.popLast() else { NSSound.beep(); return }
+        await apply(forward: op)
+        undoStack.append(op)
+        if undoStack.count > Self.maxUndoStack {
+            undoStack.removeFirst(undoStack.count - Self.maxUndoStack)
+        }
+        await refreshAllPanes()
+    }
+
+    /// Run the inverse of an op (used by undo).
+    private func apply(inverseOf op: UndoableOp) async {
         switch op {
         case .move(let items):
-            // Process in reverse so chained moves unwind in the same order as the
-            // original. Each iteration moves dest/file back to source's parent.
             for (src, destDir) in items.reversed() {
                 let moved = destDir.appendingPathComponent(src.lastPathComponent)
                 _ = try? await FileOps.move([moved], to: src.deletingLastPathComponent())
@@ -1475,11 +1517,32 @@ final class WindowState: ObservableObject {
             }
         case .trash(let items):
             for (original, trashed) in items.reversed() {
-                guard let trashed else { continue } // remote: nothing to put back
+                guard let trashed else { continue }
                 try? FileManager.default.moveItem(at: trashed, to: original)
             }
         }
-        // Refresh all tabs in both panes — the affected files may live anywhere.
+    }
+
+    /// Re-apply the original direction of an op (used by redo). Trash is
+    /// re-trashed (a new trash URL is allocated, so the recorded URL becomes
+    /// stale — fine, that path is now in the new Trash entry).
+    private func apply(forward op: UndoableOp) async {
+        switch op {
+        case .move(let items):
+            for (src, destDir) in items {
+                _ = try? await FileOps.move([src], to: destDir)
+            }
+        case .rename(let items):
+            for (from, to) in items {
+                _ = try? await FileOps.rename(from, to: to.lastPathComponent)
+            }
+        case .trash(let items):
+            let urls = items.map(\.original)
+            _ = try? await FileOps.trash(urls, progress: nil)
+        }
+    }
+
+    private func refreshAllPanes() async {
         for pane in [left, right] {
             for tab in pane.tabs { await tab.refresh() }
         }
@@ -1505,6 +1568,88 @@ final class WindowState: ObservableObject {
         left.activeTabID = right.activeTabID
         right.tabs = leftTabs
         right.activeTabID = leftActive
+    }
+
+    /// Build the full command list for the palette. Includes static actions
+    /// (anything that posts a notification), sidebar favourites, smart folders,
+    /// workspaces, and recent locations. Order: actions first, then dynamic
+    /// entries grouped by category so the user sees consistent ordering.
+    func buildPaletteCommands() -> [PaletteCommand] {
+        var out: [PaletteCommand] = []
+
+        func action(_ title: String, _ icon: String, _ shortcut: String? = nil, post note: Notification.Name) {
+            out.append(PaletteCommand(title: title, systemImage: icon, shortcut: shortcut) {
+                NotificationCenter.default.post(name: note, object: nil)
+            })
+        }
+
+        action("New Tab", "plus.rectangle.on.rectangle", "⌘T", post: .newTabRequested)
+        action("Close Tab", "xmark.rectangle", "⌘W", post: .closeTabRequested)
+        action("New File", "doc.badge.plus", "⌥⌘N", post: .newFileRequested)
+        // New Folder is bound to the background context-menu rather than a
+        // notification, so it isn't surfaced in the palette yet.
+        action("Go to Folder…", "arrow.right.circle", "⇧⌘G", post: .goToFolderRequested)
+        action("Connect to Server…", "network", "⌘K", post: .connectToServerRequested)
+        action("Quick Filter", "line.3.horizontal.decrease", "⌘/", post: .quickFilterFocusRequested)
+        action("Search File Contents…", "doc.text.magnifyingglass", "⇧⌘F", post: .searchContentRequested)
+        action("Toggle Hidden Files", "eye", "⇧⌘.", post: .toggleHiddenFilesRequested)
+        action("Toggle Inspector", "sidebar.right", "⌥⌘I", post: .toggleInspectorRequested)
+        action("Show / Hide One Pane", "rectangle.split.2x1", nil, post: .toggleSinglePaneRequested)
+        action("Mirror to Other Pane", "arrow.left.and.right", "⌥⌘=", post: .syncPanesRequested)
+        action("Swap Panes", "arrow.left.arrow.right", "⌥⌘\\", post: .swapPanesRequested)
+        action("Mirror Selection", "checklist", "⌥⌘;", post: .mirrorSelectionRequested)
+        action("Reveal in Finder", "magnifyingglass", "⌥⌘R", post: .revealInFinderRequested)
+        action("Open in Terminal", "terminal", "⌃⌘T", post: .openTerminalRequested)
+        action("Add to Sidebar", "sidebar.left", "⌃⌘S", post: .addToSidebarRequested)
+        action("Get Info", "info.circle", "⌘I", post: .getInfoRequested)
+        action("Empty Trash…", "trash", "⇧⌘⌫", post: .emptyTrashRequested)
+        action("Save as Smart Folder…", "magnifyingglass.circle.fill", nil, post: .saveSmartFolderRequested)
+        action("Save Workspace…", "rectangle.stack.badge.plus", "⌥⌘S", post: .saveWorkspaceRequested)
+        action("Undo", "arrow.uturn.backward", "⌘Z", post: .undoRequested)
+        action("Redo", "arrow.uturn.forward", "⇧⌘Z", post: .redoRequested)
+
+        for fav in favourites {
+            out.append(PaletteCommand(
+                title: fav.title,
+                subtitle: "Favourite · \(fav.url.path)",
+                systemImage: fav.systemImage
+            ) { [weak self] in
+                self?.focusedPane.activeTab.navigate(to: fav.url)
+            })
+        }
+        for sf in SmartFolderStore.shared.folders {
+            out.append(PaletteCommand(
+                title: sf.name,
+                subtitle: "Smart Folder · \(sf.query)",
+                systemImage: "magnifyingglass.circle"
+            ) { [weak self] in
+                self?.focusedPane.activeTab.applySmartFolder(sf)
+            })
+        }
+        for name in WorkspaceStore.shared.names {
+            out.append(PaletteCommand(
+                title: name,
+                subtitle: "Workspace",
+                systemImage: "rectangle.stack"
+            ) {
+                NotificationCenter.default.post(
+                    name: .loadWorkspaceRequested,
+                    object: nil,
+                    userInfo: ["name": name]
+                )
+            })
+        }
+        for url in RecentLocationsStore.shared.recents.prefix(15) {
+            out.append(PaletteCommand(
+                title: url.lastPathComponent.isEmpty ? url.path : url.lastPathComponent,
+                subtitle: "Recent · \(url.path)",
+                systemImage: "clock"
+            ) { [weak self] in
+                self?.focusedPane.activeTab.navigate(to: url)
+            })
+        }
+
+        return out
     }
 
     func presentRemotePrompt(_ prompt: SFTPPrompt, endpoint: RemoteEndpoint) async -> String? {

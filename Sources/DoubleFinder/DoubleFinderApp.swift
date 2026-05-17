@@ -51,8 +51,10 @@ struct DoubleFinderApp: App {
                     NotificationCenter.default.post(name: .undoRequested, object: nil)
                 }
                 .keyboardShortcut("z", modifiers: [.command])
-                // Redo would push the undone-op onto a redo stack and re-apply.
-                // Not implemented yet — leaving the slot intentionally blank.
+                Button("Redo") {
+                    NotificationCenter.default.post(name: .redoRequested, object: nil)
+                }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
             }
             CommandGroup(after: .pasteboard) {
                 Button("Select All Items") {
@@ -69,6 +71,11 @@ struct DoubleFinderApp: App {
                     NotificationCenter.default.post(name: .searchContentRequested, object: nil)
                 }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
+
+                Button("Command Palette…") {
+                    NotificationCenter.default.post(name: .commandPaletteRequested, object: nil)
+                }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
 
                 Button("Save as Smart Folder…") {
                     NotificationCenter.default.post(name: .saveSmartFolderRequested, object: nil)

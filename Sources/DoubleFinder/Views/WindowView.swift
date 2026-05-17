@@ -192,12 +192,7 @@ struct WindowView: View {
         let tab = state.focusedPane.activeTab
 
         ToolbarItem(id: "view-mode", placement: .principal) {
-            HStack(spacing: 2) {
-                viewModeButton(.icon,    systemImage: "square.grid.2x2",     help: "Icon view")
-                viewModeButton(.list,    systemImage: "list.bullet",         help: "List view")
-                viewModeButton(.column,  systemImage: "rectangle.split.3x1", help: "Column view")
-                viewModeButton(.gallery, systemImage: "photo.on.rectangle",  help: "Gallery view")
-            }
+            ViewModePicker(tab: tab)
         }
 
         ToolbarItem(id: "transfer", placement: .primaryAction) {
@@ -208,27 +203,6 @@ struct WindowView: View {
         ToolbarItem(id: "search", placement: .primaryAction) {
             SearchToolbarItem(tab: tab)
         }
-    }
-
-    // MARK: - View-mode button
-
-    private func viewModeButton(_ mode: ViewMode, systemImage: String, help: String) -> some View {
-        let tab = state.focusedPane.activeTab
-        let isActive = tab.viewMode == mode
-        return Button {
-            tab.viewMode = mode
-        } label: {
-            Image(systemName: systemImage)
-                .font(.system(size: 15))
-                .frame(width: 36, height: 28)
-                .background(
-                    isActive ? Color.accentColor.opacity(0.22) : Color.clear,
-                    in: Capsule()
-                )
-                .foregroundStyle(isActive ? Color.accentColor : Color.primary)
-        }
-        .buttonStyle(.plain)
-        .help(help)
     }
 
     // MARK: - Actions
@@ -333,6 +307,43 @@ struct WindowView: View {
             },
             completion: { Task { @MainActor in await src.refresh() } }
         )
+    }
+}
+
+// MARK: - View-mode picker
+
+/// Toolbar widget for the four view modes. Wraps the button row in its own
+/// `@ObservedObject`-on-TabState view so clicking a button updates the
+/// highlighted state immediately — the parent `WindowView` only observes
+/// `WindowState`, which doesn't republish when nested `TabState` changes.
+private struct ViewModePicker: View {
+    @ObservedObject var tab: TabState
+
+    var body: some View {
+        HStack(spacing: 2) {
+            button(.icon,    systemImage: "square.grid.2x2",     help: "Icon view")
+            button(.list,    systemImage: "list.bullet",         help: "List view")
+            button(.column,  systemImage: "rectangle.split.3x1", help: "Column view")
+            button(.gallery, systemImage: "photo.on.rectangle",  help: "Gallery view")
+        }
+    }
+
+    private func button(_ mode: ViewMode, systemImage: String, help: String) -> some View {
+        let isActive = tab.viewMode == mode
+        return Button {
+            tab.viewMode = mode
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 15))
+                .frame(width: 36, height: 28)
+                .background(
+                    isActive ? Color.accentColor.opacity(0.22) : Color.clear,
+                    in: Capsule()
+                )
+                .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 }
 

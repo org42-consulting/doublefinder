@@ -2,7 +2,7 @@
 
 A dual-pane file manager for macOS, built with SwiftUI and AppKit.
 
-DoubleFinder gives you two independent file views side-by-side, each with its own tabs, sort, hidden-files toggle, and history. Copy and move between panes with a single keystroke, search Spotlight scoped to a folder or your entire Mac, see git status decorated on every file, and preview anything with QuickLook — all inside one window.
+DoubleFinder gives you two independent file views side-by-side — each with its own tabs, sort, hidden-files toggle, search, and history. Copy and move between panes with a single keystroke, navigate to remote SFTP servers as easily as local folders, edit remote files in your favourite editor, compare two directories side-by-side, undo file operations, and preview anything with QuickLook — all inside one window.
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-blue) ![Swift](https://img.shields.io/badge/swift-6.2-orange) ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -12,34 +12,49 @@ DoubleFinder gives you two independent file views side-by-side, each with its ow
 
 ## Features
 
-### Browsing
+### Browsing & navigation
 
 - **Two independent panes** in one window, each with multiple tabs.
 - **Four view modes** per tab: List, Icon, Column (with QuickLook preview pane), and Gallery.
-- **Path bar** under every pane for one-click navigation to ancestor folders.
-- **Back / Forward history** per tab.
-- **Pane sort + hidden-files toggle** via a per-pane settings popover.
-- **Sidebar with favourites** (drag to reorder, drag a folder in to add, drag out to remove) plus collapsable Locations and Tags sections.
+- **Path bar** under every pane for one-click navigation to ancestor folders, with editable typed-path mode that accepts both local paths and `sftp://user@host/path` URLs.
+- **Recent locations dropdown** on the path bar — the 15 most-recent folders you've visited, persisted across launches.
+- **Back / Forward history** (⌘[ / ⌘]) per tab.
+- **Quick filter bar** (⌘/) — incrementally filter the visible listing by name without leaving the folder.
+- **Single-pane / two-pane toggle** in the View menu — hide one pane to give the other full width; toggling back redistributes evenly.
+- **Sidebar** with reorderable favourites (drag in to add, drag out to remove), collapsable Locations / Tags / Servers sections, and an **eject icon** on connected servers.
 - **Git status badges** decorate every file inside a working tree (M, A, D, U, R, C, I); folder badges aggregate descendant changes.
 - **Tag dots** on files that have macOS user tags applied.
+- **Compare Folders mode** — toolbar toggle that tints rows red (unique to this side) and yellow (same name, different size or date) across the two panes.
+
+### Tabs
+
+- **Multiple tabs per pane** with `⌘T` new tab, `⌘W` close tab.
+- **Drag tabs** within the tab bar to reorder.
+- **Pinned tabs** — right-click a tab → Pin. Pinned tabs survive `⌘W`, restore on app launch, and *don't change directory*: opening a folder in a pinned tab spawns a new sibling tab instead, leaving the pinned one in place.
+- **Sync** the focused pane's URL onto the other pane (⌥⌘=).
+- **Swap** the two panes' tab lists entirely (⌥⌘\\).
+- **Mirror Selection** (⌥⌘;) — select files in one pane, then select the same-named files in the other; pairs nicely with Compare mode.
 
 ### File operations
 
-- **Copy / Move between panes** (⌥⌘C, ⌥⌘M) with conflict resolution: Keep Both, Replace, or Skip — applied to whole batches.
-- **Inline rename** in the list view; modal sheet in other views; **batch rename** when multiple items are selected.
-- **Duplicate** (creates `name copy.ext`) and **Compress** (produces `.zip` via `/usr/bin/zip`).
-- **Move to Trash** (⌘⌫) and **Empty Trash** (⇧⌘⌫) with confirmation.
-- **New Folder** (⇧⌘N) in the active pane.
-- **Native drag-and-drop**: drag between panes, into folders in the column view, out to Finder or any other app.
-- **Transfer queue** with per-operation progress, visible in the toolbar; long copies/moves don't block the UI.
+- **Copy / Move between panes** (⌥⌘C / ⌥⌘M) with conflict resolution per batch: Keep Both, Replace, or Skip.
+- **Inline rename** in list view; modal sheet in other views; **batch rename** with multiple items selected.
+- **Duplicate** (⌘D), **Compress** to `.zip`, **Make Alias**, **Make Symbolic Link**.
+- **New File** (⌥⌘N) creates an untitled file and jumps straight into rename.
+- **New Folder** (⇧⌘N).
+- **Calculate Size** — right-click any folder; the recursive size appears in the Size column and Inspector.
+- **Move to Trash** (⌘⌫); for remote files (no Trash on SFTP), a confirmation alert appears before permanent delete.
+- **Undo** (⌘Z) for Move, Rename, Trash — including macOS Put-Back for trashed files.
+- **Empty Trash** (⇧⌘⌫) with confirmation.
+- **Native drag-and-drop**: drag between panes, into folders in any view, out to Finder or other apps.
+- **Transfer queue** in the toolbar — per-operation progress bars, cancel button, automatic retry hook; long copies / moves never block the UI.
 
 ### Search
 
-- **Spotlight-backed**, scoped to **This Folder**, **Home**, or **This Mac** (picker next to the search field).
-- **Debounced** at 250 ms so fast typing doesn't thrash queries.
-- **Honors the active sort** and **Show Hidden Files** setting on results.
-- **Git decoration** on folder-scoped results.
-- **Esc clears**, **⊗ button clears**, and an empty-state view explains when nothing matched.
+- **Spotlight-backed**, scoped to **This Folder**, **Home**, or **This Mac**.
+- **Debounced** at 250 ms.
+- **Honors the active sort** and **Show Hidden Files** setting on results; git-decorated for folder-scoped queries.
+- **Esc** / **⊗ button** clears; empty-state view explains when nothing matched.
 
 ### Tags
 
@@ -48,8 +63,19 @@ DoubleFinder gives you two independent file views side-by-side, each with its ow
 
 ### Inspector
 
-- Toggleable right-hand inspector (⌥⌘I) showing thumbnail, kind, size, dates, path, and tag chips for the focused selection.
+- Toggleable right-hand inspector (⌥⌘I) showing thumbnail, kind, size, dates, path, and tag chips for the focused selection; survives app restart.
+- **Two-pane diff view** — when both panes have a single text file selected, the inspector switches to a side-by-side aligned line diff (LCS-based, cap 2000 lines per file) with red / green tints for removed / added lines.
 - **Get Info** sheet (⌘I) for a heavier inspector-style view with tag editing.
+
+### Remote (SFTP)
+
+- **Connect to Server…** (⌘K) — host, user, port, identity file, optional saved password; bookmarks listed under the sidebar's **Servers** section.
+- **Eject icon** on connected servers: disconnects the session and moves any tab on that endpoint back to the configured starting directory.
+- All file operations (rename, new folder, duplicate, trash, drag-and-drop) route through the right transport so they work on remote tabs.
+- **Open SSH Terminal** — for a remote tab, "Open in Terminal" launches `ssh -t user@host` with `cd` to the current remote path.
+- **Edit Locally** — right-click a remote file; DoubleFinder downloads it to a per-endpoint local cache, opens it with your default editor, and re-uploads on every save until you quit.
+- **Copy / Move** transparently handles every combination of local↔local, local↔remote, remote→remote (same-endpoint server-side rename when possible, tunnel-through-local-temp otherwise).
+- **Path bar** accepts `sftp://user@host/path` URLs; remote breadcrumbs render the host at the root.
 
 ### Context menu
 
@@ -57,18 +83,18 @@ Right-click anywhere in the file area for a Finder-parity menu:
 
 | On items | On empty space |
 | --- | --- |
-| Open · Open in Other Pane · Open in New Tab · Open in Finder | New Folder |
-| Quick Look | Get Info on Folder |
-| Get Info · Rename · Duplicate · Compress | Open in Terminal |
-| Copy to Other Pane · Move to Other Pane · Copy | Show Hidden Files (toggle) |
+| Open · Open With · Open in Other Pane / New Tab · Open in Terminal · Open in Finder · Quick Look | New Folder |
+| Get Info · Calculate Size · Rename · Duplicate · Compress · Make Alias · Make Symbolic Link | Get Info on Folder |
+| Edit Locally (remote files) | Open in Terminal |
+| Copy to Other Pane · Move to Other Pane · Copy · Copy Path(s) | Show Hidden Files (toggle) |
 | Tags ▸ | Paste |
-| Move to Trash | |
+| Move to Trash / Delete (remote) | |
 
-The same menu shape is exposed from list, icon, and column views.
+The same menu shape is exposed from list, icon, gallery, and column views — `FileContextMenu` is the single source of truth.
 
 ### Persistence
 
-- Window layout (left/right pane tabs + their URLs, view modes, sorts, hidden setting) and sidebar favourites are saved to `~/Library/Application Support/DoubleFinder/state.json` on quit and restored on next launch.
+- Window layout (left/right pane tabs + URLs, view modes, sorts, hidden setting, pinned state, single-pane mode), inspector visibility, and sidebar favourites are saved to `~/Library/Application Support/DoubleFinder/state.json` on quit and restored on next launch.
 - Toggle restore behavior in **DoubleFinder → Settings…**.
 
 ## Requirements
@@ -86,7 +112,7 @@ cd doublefinder
 swift run
 ```
 
-### Build a release `.app` bundle
+### Build a release `.app` bundle and `.dmg`
 
 ```bash
 ./scripts/package.sh
@@ -94,11 +120,13 @@ open build/DoubleFinder.app
 ```
 
 The script:
-1. Runs `swift build -c release --arch arm64`
-2. Wraps any SwiftPM resource bundles into the proper macOS bundle layout under `Contents/MacOS/`
-3. Installs the `.icns` icon
-4. Writes `Info.plist` (Desktop / Documents / Downloads usage strings included)
-5. Ad-hoc code-signs the bundle (`codesign --force --deep --sign -`)
+
+1. Runs `swift build -c release --arch arm64`.
+2. Wraps any SwiftPM resource bundles into the proper macOS bundle layout under `Contents/MacOS/`.
+3. Installs the `.icns` icon.
+4. Writes `Info.plist` (Desktop / Documents / Downloads usage strings included).
+5. Ad-hoc code-signs the bundle (`codesign --force --deep --sign -`).
+6. Bundles the `.app` with an `/Applications` symlink and writes `build/DoubleFinder-$VERSION.dmg` via `hdiutil create -format UDZO`.
 
 You can override `VERSION` and `BUILD_NUMBER` via env vars:
 
@@ -112,15 +140,48 @@ To install:
 mv build/DoubleFinder.app /Applications/
 ```
 
+Or share `build/DoubleFinder-1.1.dmg` — mounting it gives users the familiar drag-onto-Applications experience.
+
+### Regenerating the icon
+
+The app icon is rendered programmatically by `scripts/regenerate-icon.swift` so every iconset size is drawn at native resolution rather than downscaled from a master PNG. Edit the constants at the top of the file and re-run:
+
+```bash
+swift scripts/regenerate-icon.swift
+iconutil --convert icns Icons/AppIcon.iconset -o Sources/DoubleFinder/Resources/DoubleFinder.icns
+```
+
 ## Keyboard shortcuts
+
+### File / tabs
+
+| Shortcut | Action |
+| --- | --- |
+| ⌘T | New tab |
+| ⌘W | Close tab (refuses on pinned) |
+| ⌥⌘N | New File |
+| ⇧⌘N | New folder |
+| ⌘K | Connect to Server… |
+| ⇧⌘K | Manage Connections… |
 
 ### Pane / focus
 
 | Shortcut | Action |
 | --- | --- |
 | Tab | Swap active pane |
+| ⌥⌘= | Mirror active pane's URL to the other pane |
+| ⌥⌘\\ | Swap left and right panes |
+| ⌥⌘; | Mirror selection (select same-named items in other pane) |
+| ⌥⌘1 … ⌥⌘9 | Jump focused tab to sidebar favourite N |
+
+### Navigation
+
+| Shortcut | Action |
+| --- | --- |
 | ⌘↑ | Enclosing folder |
 | ⌘↓ | Open selection |
+| ⌘[ | Back |
+| ⌘] | Forward |
 | ⇧⌘G | Go to Folder… |
 
 ### Files
@@ -129,25 +190,29 @@ mv build/DoubleFinder.app /Applications/
 | --- | --- |
 | ⌥⌘C | Copy to other pane |
 | ⌥⌘M | Move to other pane |
+| ⌘D | Duplicate |
 | ⌘⏎ | Rename (or batch rename if multi-selected) |
-| ⇧⌘N | New Folder |
 | ⌘⌫ | Move to Trash |
 | ⇧⌘⌫ | Empty Trash… |
+| ⌘Z | Undo (Move / Rename / Trash) |
+| ⌘A | Select All Items |
 
 ### View
 
 | Shortcut | Action |
 | --- | --- |
 | ⇧⌘. | Toggle Hidden Files |
+| ⌘/ | Quick Filter |
 | ⌘I | Get Info |
 | ⌥⌘I | Toggle Inspector |
+| ⌥⌘R | Reveal in Finder |
 | Space | Quick Look (icon / gallery / column views) |
 
 ### Tools
 
 | Shortcut | Action |
 | --- | --- |
-| ⌃⌘T | Open in Terminal (at the focused pane's folder) |
+| ⌃⌘T | Open in Terminal (local) or `ssh -t user@host` (remote) |
 | ⌃⌘S | Add focused folder to Sidebar |
 
 ## Architecture
@@ -158,45 +223,64 @@ DoubleFinder is a single SwiftPM executable (`Sources/DoubleFinder`) targeting m
 
 Three nested `@MainActor` `ObservableObject` classes drive the UI (`Model.swift`):
 
-- **`WindowState`** — one per window. Owns `left` and `right` `PaneState`, current `focus: PaneSide`, sidebar favourites, inspector visibility, and all modal sheet prompts (`conflict`, `renamePrompt`, `goToPrompt`, `getInfoPrompt`, `batchRenamePrompt`). Registers menu-command notification observers and the persistence hook.
+- **`WindowState`** — one per window. Owns `left` / `right` `PaneState`, current `focus: PaneSide`, sidebar favourites, inspector visibility, single-pane-mode toggle, undo stack, compare-mode flag + `compareStatuses` map, and every modal sheet prompt. Registers menu-command notification observers and the persistence hook.
 - **`PaneState`** — one per pane. Holds the pane's tabs and the active tab id.
-- **`TabState`** — per-tab directory state: URL, view mode, selection, sort, hidden toggle, search text/scope/kind, navigation history. Owns a `DirectoryWatcher` (FSEvents) and a `SearchEngine` (`NSMetadataQuery`).
+- **`TabState`** — per-tab directory state: URL, view mode, selection, sort, hidden toggle, search text/scope/kind, quick filter, pinned flag, navigation history, calculated-size cache. Owns a `DirectoryWatcher` (FSEvents) and a `SearchEngine` (`NSMetadataQuery`).
 
 UI code routes operations through `state.focusedPane.activeTab` rather than reaching into a specific side.
 
 ### Cross-cutting services
 
-- **`GitStatusService.shared`** (actor) — shells `git status --porcelain`, caches per repo root. `TabState.refresh()` calls `decorateWithGitStatus()` after listing.
-- **`TransferQueue.shared`** — every copy / move / trash / rename / compress / duplicate routes through here with an `NSProgress`; the toolbar's transfer button binds to its `ops` list.
-- **`CopyMoveCoordinator`** — handles conflict-prompt orchestration before enqueueing onto `TransferQueue`.
-- **`TagStore`** — reads / writes macOS native tags via the `com.apple.metadata:_kMDItemUserTags` extended attribute, so Finder and Spotlight see them.
+- **`FileTransport` protocol** + `LocalFileTransport` / `SFTPFileTransport` — every read or write of a filesystem (list, mkdir, rename, remove, trash, download, upload) goes through this abstraction, so the same UI works against local disks and SFTP servers without branching at every call site.
+- **`FileOps`** — transport-aware helpers (`copy`, `move`, `trash`, `rename`, `batchRename`, `makeFolder`, `makeFile`, `duplicate`, `makeAlias`, `makeSymbolicLink`, `calculateSize`) that pick the right transport per URL.
+- **`CopyMoveCoordinator`** — orchestrates conflict prompts before enqueueing onto `TransferQueue`; handles all four (src, dst) combinations of local↔remote.
+- **`TransferQueue.shared`** — every long-running operation runs here with an `NSProgress`; the toolbar's transfer button binds to its `ops` list.
+- **`RemoteSessionManager.shared`** (actor) — owns one `SFTPSession` per (user, host, port), refcounted across tabs.
+- **`RemoteEditWatcher.shared`** — for the Edit Locally workflow: downloads remote files into `~/Library/Caches/DoubleFinder/RemoteEdits/`, watches each one's `mtime`, re-uploads on save.
+- **`RecentLocationsStore.shared`** — last 15 distinct visited URLs, persisted in `UserDefaults`.
+- **`GitStatusService.shared`** (actor) — shells `git status --porcelain`, caches per repo root.
+- **`TagStore`** — reads / writes macOS native tags via xattr.
 - **`ThumbnailService`** — `QLThumbnailGenerator` with an `NSCache`.
 - **`QuickLookCoordinator`** — wraps `QLPreviewPanel`.
 
 ### Views
 
-`WindowView` is a `NavigationSplitView` with `SidebarView` and `DualPaneArea` (two `PaneView`s in an `HSplitView`, plus an optional trailing `InspectorView`). Each `PaneView` swaps between four `FileAreaView` modes by `tab.viewMode`:
+`WindowView` is a `NavigationSplitView` with `SidebarView` and `DualPaneArea` (nested `HSplitView`: two `PaneView`s in an inner split, plus an optional trailing `InspectorView` in an outer split — so the inspector toggle redistributes width equally across both panes). Each `PaneView` swaps between four `FileAreaView` modes by `tab.viewMode`:
 
-- **`IconView`** — SwiftUI `LazyVGrid`, native draggable cells.
-- **`FileListView` / `NSTableListView`** — `NSViewRepresentable` wrapping `NSTableView`; inline rename, type-to-select, persistent column sizing, native DnD in and out.
-- **`ColumnView`** — `NSViewRepresentable` wrapping an `NSSplitView` of `NSBrowser` + `QLPreviewView`; custom `NSBrowserCell` draws icon, name, tag dots, git letter, and disclosure chevron, with Finder-style blue / gray selection across the breadcrumb of columns.
+- **`IconView`** — SwiftUI `LazyVGrid` with drag-rectangle (marquee) selection and arrow-key navigation; native draggable cells.
+- **`NSTableListView`** — `NSViewRepresentable` wrapping `NSTableView`; inline rename, type-to-select, persistent column sizing, native DnD in and out, drop-onto-folder support, Compare-mode row tinting via a custom `NSTableRowView`.
+- **`ColumnView`** — `NSViewRepresentable` wrapping an `NSSplitView` of `NSBrowser` + `QLPreviewView`; custom `NSBrowserCell` draws icon, name, tag dots, git letter, and disclosure chevron.
 - **`GalleryView`** — large preview with a thumbnail strip.
 
-A shared `FileContextMenu` builder exposes the same Finder-style menu both as an `NSMenu` (for `NSTableView` / `NSBrowser`) and as SwiftUI `Button`s (for `IconView`'s `.contextMenu { … }`), so all three view modes share one source of truth for menu items.
+`FileContextMenu` exposes a Finder-style menu as both `NSMenu` (for `NSTableView` / `NSBrowser`) and SwiftUI `Button`s (for `.contextMenu { … }` callers), so all view modes share one source of truth.
+
+`DiffInspectorView` provides the side-by-side aligned diff inside the Inspector when both panes have one text file selected. `InspectorPaneRouter` / `InspectorTabRouter` observe both panes' active tabs so the diff view appears / disappears reactively.
+
+### Menus, focus, and FocusedSceneValue
+
+`WindowView` exposes `windowState` and `singlePaneMode` via `.focusedSceneValue(...)` so app-level menu commands (defined in `DoubleFinderApp.commands`) can read per-window state — the View menu's "Show One/Two Panes" toggle relabels itself based on the active window's mode. Mirroring primitives separately is important: a reference-typed `FocusedValue` doesn't propagate `@Published` changes (SwiftUI dedupes by equality), whereas the plain `Bool` channel does.
 
 ### Search
 
 `TabState.runSearch(_:)` debounces typing by 250 ms, then drives `SearchEngine.stream(for:scopes:kind:)` (an `NSMetadataQuery` wrapper). `searchKind` switches the predicate between `kMDItemDisplayName` (regular search) and `kMDItemUserTags` (sidebar tag clicks). Results pass through the same `filteredForHidden` → `sorted` → `decorateWithGitStatus` pipeline as a normal directory listing.
 
+### Quick filter
+
+Independent of Spotlight. `TabState.quickFilter` (`@Published`) is applied as a `localizedStandardContains` filter to produce `visibleNodes`, which every file view reads instead of `nodes`. Clearing the filter is `Esc`; navigating between folders resets it.
+
+### Undo
+
+`UndoableOp` covers Move, Rename, Trash. After each successful op, the call site pushes a record onto `WindowState.undoStack` (cap 50). `⌘Z` runs the inverse: move-back for Move, rename-back for Rename, restore-from-Trash for Trash (using the URL returned by `FileManager.trashItem(at:resultingItemURL:)`).
+
 ### Persistence
 
-`StatePersistence.swift` saves a JSON snapshot on `NSApplication.willTerminate` and restores on launch. User preferences (`df.startingDirectoryPath`, `df.restoreOnStartup`, `df.forceDarkMode`, sidebar section expansion states) use `@AppStorage`.
+`StatePersistence.swift` saves a JSON snapshot on `NSApplication.willTerminate` and restores on launch. Includes: pane tab lists with URL / view-mode / sort / showHidden / isPinned per tab, focused side, sidebar favourites, inspector visibility, and single-pane mode. User preferences (`df.startingDirectoryPath`, `df.restoreOnStartup`, `df.forceDarkMode`, sidebar section expansion states) use `@AppStorage`.
 
 ### Concurrency conventions
 
 - All UI types are `@MainActor`.
-- Disk I/O (`FileOps`, directory enumeration, git shelling) runs in `Task.detached(priority: .userInitiated)` and hops back to the main actor to publish results.
-- `Progress` cancellation is checked inside work closures; respect it when adding new long-running operations.
+- Disk I/O (`FileOps`, directory enumeration, git shelling, SFTP send) runs in `Task.detached(priority: .userInitiated)` or on the `SFTPSession` actor; results hop back to the main actor to publish.
+- `Progress` cancellation is checked inside work closures; SFTP cancellations interrupt the in-flight session command.
 
 ## Project layout
 
@@ -204,10 +288,10 @@ A shared `FileContextMenu` builder exposes the same Finder-style menu both as an
 .
 ├── Package.swift                 # SwiftPM manifest (executable target)
 ├── Sources/DoubleFinder/
-│   ├── DoubleFinderApp.swift     # @main entry, menu commands
-│   ├── Model.swift               # WindowState, PaneState, TabState, FSNode, enums
+│   ├── DoubleFinderApp.swift     # @main entry, menu commands, FocusedValues
+│   ├── Model.swift               # WindowState, PaneState, TabState, FSNode, enums, UndoableOp
 │   ├── CopyMoveCoordinator.swift
-│   ├── FileOps.swift             # copy / move / trash / makeFolder
+│   ├── FileOps.swift             # transport-aware ops + recursive size
 │   ├── DirectoryWatcher.swift    # FSEventStream wrapper
 │   ├── SearchEngine.swift        # NSMetadataQuery wrapper
 │   ├── GitStatusService.swift
@@ -216,18 +300,34 @@ A shared `FileContextMenu` builder exposes the same Finder-style menu both as an
 │   ├── QuickLookCoordinator.swift
 │   ├── TransferQueue.swift
 │   ├── StatePersistence.swift
+│   ├── RecentLocationsStore.swift # 15 most-recent URLs (UserDefaults)
+│   ├── RemoteEditWatcher.swift    # Edit-Locally workflow
+│   ├── Remote/
+│   │   ├── FileTransport.swift   # protocol
+│   │   ├── LocalFileTransport.swift
+│   │   ├── SFTPFileTransport.swift
+│   │   ├── SFTPSession.swift     # actor wrapping the sftp(1) subprocess
+│   │   ├── SFTPParser.swift
+│   │   ├── SFTPPromptClassifier.swift
+│   │   ├── PtyChannel.swift
+│   │   ├── RemoteEndpoint.swift
+│   │   ├── RemoteServerStore.swift
+│   │   ├── RemoteSessionManager.swift
+│   │   └── Keychain.swift
 │   ├── Resources/DoubleFinder.icns
 │   └── Views/
 │       ├── WindowView.swift
 │       ├── SidebarView.swift
+│       ├── ServersSidebarSection.swift
 │       ├── DualPaneArea.swift
-│       ├── PaneView.swift        # + TabBarView, PathBarView
+│       ├── PaneView.swift        # + TabBarView, PathBarView, PaneFilterBar
 │       ├── FileAreaView.swift
-│       ├── IconView.swift
-│       ├── NSTableListView.swift
+│       ├── IconView.swift        # + marquee selection
+│       ├── NSTableListView.swift # + CompareRowView
 │       ├── ColumnView.swift
 │       ├── GalleryView.swift
-│       ├── InspectorView.swift
+│       ├── InspectorView.swift   # + InspectorPaneRouter / InspectorTabRouter
+│       ├── DiffInspectorView.swift
 │       ├── PaneSettingsPopover.swift
 │       ├── SettingsView.swift
 │       ├── FileContextMenu.swift
@@ -238,19 +338,29 @@ A shared `FileContextMenu` builder exposes the same Finder-style menu both as an
 │       ├── BatchRenameSheet.swift
 │       ├── GetInfoSheet.swift
 │       ├── GoToFolderSheet.swift
+│       ├── ConnectSheet.swift
+│       ├── ConnectErrorSheet.swift
+│       ├── ConnectionsManagerWindow.swift
+│       ├── PasswordSheet.swift
+│       ├── HostKeySheet.swift
+│       ├── HostKeyMismatchSheet.swift
+│       ├── RemoteDisconnectedPlaceholder.swift
 │       └── TransferQueueButton.swift
 └── scripts/
-    └── package.sh                # release .app bundler
+    ├── package.sh                # release .app bundler + .dmg builder
+    └── regenerate-icon.swift     # vector-quality iconset generator
 ```
 
 ## Contributing
 
-This is an early-stage personal project; contributions, issues, and feature requests are welcome. Notable areas open to improvement:
+Contributions, issues, and feature requests are welcome. Notable areas still open to improvement:
 
-- Drag-rectangle selection in `IconView` and `GalleryView`
-- Smart-folder support beyond the sidebar tag filters
-- Per-tab keyboard navigation parity across all four view modes
-- Localization
+- Marquee (drag-rectangle) selection in `GalleryView` (IconView already has it).
+- Smart-folder support beyond the sidebar tag filters.
+- True grid-aware up/down arrow nav in `IconView` (currently uses a screen-width heuristic for the column count).
+- Cut + Paste-as-Move (`⌘X` / `⌘V`).
+- AppleScript / Shortcuts.app integration.
+- Localization.
 
 If you open a PR, please run `swift build` cleanly before pushing and keep `CLAUDE.md` (the in-repo architecture overview) in sync with any structural changes.
 

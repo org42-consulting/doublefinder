@@ -6,12 +6,14 @@ enum SettingsKey {
     static let startingDirectoryPath = "df.startingDirectoryPath"
     static let restoreOnStartup      = "df.restoreOnStartup"
     static let forceDarkMode         = "df.forceDarkMode"
+    static let foldersOnTop          = "df.foldersOnTop"
 }
 
 struct SettingsView: View {
     @AppStorage(SettingsKey.startingDirectoryPath) private var startingDirectoryPath: String = NSHomeDirectory()
     @AppStorage(SettingsKey.restoreOnStartup)      private var restoreOnStartup: Bool = true
     @AppStorage(SettingsKey.forceDarkMode)         private var forceDarkMode: Bool = false
+    @AppStorage(SettingsKey.foldersOnTop)          private var foldersOnTop: Bool = true
 
     var body: some View {
         Form {
@@ -31,6 +33,11 @@ struct SettingsView: View {
                 Toggle("Restore windows and tabs on startup", isOn: $restoreOnStartup)
 
                 Toggle("Enable Dark Mode", isOn: $forceDarkMode)
+
+                Toggle("Show folders on top (Icon and List views)", isOn: $foldersOnTop)
+                    .onChange(of: foldersOnTop) { _, _ in
+                        NotificationCenter.default.post(name: .foldersOnTopChanged, object: nil)
+                    }
             } header: {
                 Text("General")
             } footer: {
@@ -40,7 +47,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 520, height: 280)
+        .frame(width: 520, height: 320)
     }
 
     private func pickDirectory() {

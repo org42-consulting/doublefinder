@@ -121,6 +121,7 @@ struct WindowView: View {
     private var toolbarItems: some CustomizableToolbarContent {
         navigationItems
         actionItems
+        fileOpsItems
         trailingItems
     }
 
@@ -175,7 +176,6 @@ struct WindowView: View {
             }
             .help("Swap left and right panes (⌥⌘\\)")
         }
-        .defaultCustomization(.hidden)
 
         ToolbarItem(id: "compare", placement: .navigation) {
             Button {
@@ -190,7 +190,6 @@ struct WindowView: View {
                   ? "Stop comparing — red = only on this side, yellow = same name but different contents"
                   : "Compare panes — highlights rows that are unique to one side or differ in size/date")
         }
-        .defaultCustomization(.hidden)
 
         // Folder Sync (separate from "sync panes" above — this opens the
         // preview sheet of operations to bring the two folders into agreement
@@ -209,11 +208,40 @@ struct WindowView: View {
 
     @ToolbarContentBuilder
     private var actionItems: some CustomizableToolbarContent {
+        ToolbarItem(id: "inspector", placement: .navigation) {
+            Button {
+                state.showInspector.toggle()
+            } label: {
+                Image(systemName: state.showInspector ? "sidebar.trailing" : "sidebar.right")
+                    .foregroundStyle(state.showInspector ? Color.accentColor : Color.primary)
+            }
+            .help(state.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+            .keyboardShortcut("i", modifiers: [.command, .option])
+        }
+    }
+
+    /// File-op cluster (Copy / Move / Rename / Delete). Lives directly after
+    /// `actionItems` in the toolbar so the four buttons read as their own
+    /// sub-toolbar adjacent to the originals.
+    @ToolbarContentBuilder
+    private var fileOpsItems: some CustomizableToolbarContent {
         let tab = state.focusedPane.activeTab
         let otherTab = state.otherPane.activeTab
         let hasSelection = !tab.selection.isEmpty
         let arrow = state.focus == .left ? "→" : "←"
         let destName = otherTab.url.lastPathComponent.isEmpty ? "/" : otherTab.url.lastPathComponent
+
+        ToolbarSpacer(.flexible, placement: .navigation)
+
+        ToolbarItem(id: "newfolder", placement: .navigation) {
+            Button {
+                newFolder()
+            } label: {
+                Image(systemName: "folder.badge.plus")
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+            .help("New Folder (⇧⌘N)")
+        }
 
         ToolbarItem(id: "copy", placement: .navigation) {
             Button {
@@ -247,17 +275,6 @@ struct WindowView: View {
             .keyboardShortcut(.return, modifiers: [.command])
             .help(tab.selection.count > 1 ? "Batch Rename" : "Rename (⌘⏎)")
         }
-        .defaultCustomization(.hidden)
-
-        ToolbarItem(id: "newfolder", placement: .navigation) {
-            Button {
-                newFolder()
-            } label: {
-                Image(systemName: "folder.badge.plus")
-            }
-            .keyboardShortcut("n", modifiers: [.command, .shift])
-            .help("New Folder (⇧⌘N)")
-        }
 
         ToolbarItem(id: "delete", placement: .navigation) {
             Button(role: .destructive) {
@@ -268,17 +285,6 @@ struct WindowView: View {
             .disabled(!hasSelection)
             .keyboardShortcut(.delete, modifiers: [.command])
             .help("Move to Trash (⌘⌫)")
-        }
-
-        ToolbarItem(id: "inspector", placement: .navigation) {
-            Button {
-                state.showInspector.toggle()
-            } label: {
-                Image(systemName: state.showInspector ? "sidebar.trailing" : "sidebar.right")
-                    .foregroundStyle(state.showInspector ? Color.accentColor : Color.primary)
-            }
-            .help(state.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
-            .keyboardShortcut("i", modifiers: [.command, .option])
         }
     }
 

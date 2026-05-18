@@ -293,6 +293,7 @@ extension Notification.Name {
     static let diskUsageRequested = Notification.Name("df.diskUsageRequested")
     static let openDiskUsageWindow = Notification.Name("df.openDiskUsageWindow")
     static let openArchiveBrowser = Notification.Name("df.openArchiveBrowser")
+    static let foldersOnTopChanged = Notification.Name("df.foldersOnTopChanged")
     // App Intents → app
     static let openFolderRequested = Notification.Name("df.openFolderRequested")
     static let copyToOtherPaneIntent = Notification.Name("df.copyToOtherPaneIntent")
@@ -395,6 +396,7 @@ final class TabState: ObservableObject, Identifiable {
     private var searchTask: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
     private var gitCacheToken: NSObjectProtocol?
+    private var foldersOnTopToken: NSObjectProtocol?
     /// Mirrors `url.sftpEndpoint` so `deinit` (which is nonisolated) can read it safely.
     nonisolated(unsafe) private var _currentSFTPEndpoint: RemoteEndpoint?
 
@@ -422,12 +424,25 @@ final class TabState: ObservableObject, Identifiable {
                 await self.decorateWithGitStatus()
             }
         }
+        foldersOnTopToken = NotificationCenter.default.addObserver(
+            forName: .foldersOnTopChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.nodes = TabState.sorted(self.nodes, by: self.sortKey, ascending: self.sortAscending)
+            }
+        }
         restartWatching()
         Task { await self.refresh() }
     }
 
     deinit {
         if let token = gitCacheToken {
+            NotificationCenter.default.removeObserver(token)
+        }
+        if let token = foldersOnTopToken {
             NotificationCenter.default.removeObserver(token)
         }
         if let endpoint = _currentSFTPEndpoint {
@@ -767,8 +782,9 @@ final class TabState: ObservableObject, Identifiable {
     }
 
     static func sorted(_ list: [FSNode], by sortKey: SortKey, ascending: Bool) -> [FSNode] {
-        list.sorted { a, b in
-            if a.isDirectory != b.isDirectory { return a.isDirectory }
+        let foldersOnTop = UserDefaults.standard.object(forKey: SettingsKey.foldersOnTop) as? Bool ?? true
+        return list.sorted { a, b in
+            if foldersOnTop, a.isDirectory != b.isDirectory { return a.isDirectory }
             let asc: Bool
             switch sortKey {
             case .name:

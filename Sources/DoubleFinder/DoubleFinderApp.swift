@@ -6,6 +6,19 @@ struct DoubleFinderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @AppStorage(SettingsKey.forceDarkMode) private var forceDarkMode: Bool = false
 
+    init() {
+        // Bump when the toolbar's @ToolbarContentBuilder shape changes — SwiftUI's
+        // NSToolbar bridge crashes in applyItemCustomizations when items are
+        // moved between builder vars and a prior customization is on disk.
+        // Clearing the saved layout once forces a clean rebuild.
+        let key = "df.toolbarSchemaVersion"
+        let currentSchema = 7
+        if UserDefaults.standard.integer(forKey: key) < currentSchema {
+            UserDefaults.standard.removeObject(forKey: "NSToolbar Configuration df-main")
+            UserDefaults.standard.set(currentSchema, forKey: key)
+        }
+    }
+
     var body: some Scene {
         WindowGroup("DoubleFinder") {
             WindowView()

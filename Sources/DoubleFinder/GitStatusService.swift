@@ -35,6 +35,46 @@ actor GitStatusService {
         return out
     }
 
+    /// Inspector-side detail for the file/folder at `url`: which repo it sits in,
+    /// the current branch, and the most recent commit that touched the path.
+    /// Returns nil when the URL is remote or not inside a git repo.
+    func detail(for url: URL) async -> GitInspectorDetail? {
+        guard !url.isRemoteSFTP, let repoRoot = findRepoRoot(url) else { return nil }
+        let branch = runGit(arguments: ["rev-parse", "--abbrev-ref", "HEAD"], cwd: repoRoot)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let logRaw = runGit(
+            arguments: ["log", "-1", "--format=%h%x00%an%x00%cI%x00%s", "--", url.path],
+            cwd: repoRoot
+        ) ?? ""
+        let parts = logRaw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: "\0", omittingEmptySubsequences: false)
+            .map(String.init)
+        var commit: GitInspectorCommit? = nil
+        if parts.count >= 4 {
+            let date = ISO8601DateFormatter().date(from: parts[2])
+            commit = GitInspectorCommit(hash: parts[0], author: parts[1], date: date, subject: parts[3])
+        }
+        // Ahead/behind upstream for the working branch — fails silently when
+        // there's no configured upstream, which is fine.
+        var ahead: Int? = nil
+        var behind: Int? = nil
+        if let raw = runGit(
+            arguments: ["rev-list", "--left-right", "--count", "@{u}...HEAD"],
+            cwd: repoRoot
+        )?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            let pieces = raw.split(whereSeparator: { $0 == "\t" || $0 == " " }).compactMap { Int($0) }
+            if pieces.count == 2 { behind = pieces[0]; ahead = pieces[1] }
+        }
+        return GitInspectorDetail(
+            repoRoot: repoRoot,
+            branch: branch,
+            ahead: ahead,
+            behind: behind,
+            lastCommit: commit
+        )
+    }
+
     func invalidate(forDirectory directory: URL) async {
         if let repo = findRepoRoot(directory) {
             let repoURL = repo.standardizedFileURL
@@ -134,4 +174,19 @@ actor GitStatusService {
         }
         return out
     }
+}
+
+struct GitInspectorDetail: Equatable {
+    let repoRoot: URL
+    let branch: String?
+    let ahead: Int?
+    let behind: Int?
+    let lastCommit: GitInspectorCommit?
+}
+
+struct GitInspectorCommit: Equatable {
+    let hash: String
+    let author: String
+    let date: Date?
+    let subject: String
 }

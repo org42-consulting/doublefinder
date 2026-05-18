@@ -2,6 +2,10 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 import CryptoKit
+import ImageIO
+import AVFoundation
+import PDFKit
+import CoreLocation
 
 struct InspectorView: View {
     @EnvironmentObject var state: WindowState
@@ -69,6 +73,10 @@ private struct InspectorContent: View {
     @State private var hashResult: String? = nil
     @State private var hashAlgorithm: String? = nil
     @State private var hashing: Bool = false
+    @State private var media: MediaInfo? = nil
+    @State private var pdfInfo: PDFInfo? = nil
+    @State private var gitDetail: GitInspectorDetail? = nil
+    @State private var volume: VolumeInfo? = nil
 
     private var selectedNode: FSNode? {
         guard let id = tab.selection.first else { return nil }
@@ -88,18 +96,49 @@ private struct InspectorContent: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 12) {
                             thumbView(for: node)
+                            quickActionsStrip(for: node)
                             AccordionSection(title: "General", defaultsKey: "df.inspector.general") {
                                 details(for: node)
                             }
                             AccordionSection(title: "Tags", defaultsKey: "df.inspector.tags") {
                                 tagsRow(for: node)
                             }
+                            if let media {
+                                AccordionSection(title: "Media", defaultsKey: "df.inspector.media") {
+                                    MediaRow(info: media)
+                                }
+                            }
+                            if let pdfInfo {
+                                AccordionSection(title: "PDF", defaultsKey: "df.inspector.pdf") {
+                                    PDFRow(info: pdfInfo)
+                                }
+                            }
+                            if let gitDetail {
+                                AccordionSection(title: "Git", defaultsKey: "df.inspector.git") {
+                                    GitRow(detail: gitDetail, path: node.url)
+                                }
+                            }
                             AccordionSection(title: "Permissions", defaultsKey: "df.inspector.permissions") {
                                 permissionsRow(for: node)
+                            }
+                            if let volume {
+                                AccordionSection(title: "Volume", defaultsKey: "df.inspector.volume", initiallyExpanded: false) {
+                                    VolumeRow(info: volume)
+                                }
+                            }
+                            if node.isDirectory {
+                                AccordionSection(title: "Folder Contents", defaultsKey: "df.inspector.folder", initiallyExpanded: false) {
+                                    FolderStatsBody(directory: node.url)
+                                        .id(node.url)
+                                }
                             }
                             if !node.isDirectory {
                                 AccordionSection(title: "Hash", defaultsKey: "df.inspector.hash", initiallyExpanded: false) {
                                     hashRow(for: node)
+                                }
+                                AccordionSection(title: "Duplicates", defaultsKey: "df.inspector.duplicates", initiallyExpanded: false) {
+                                    DuplicatesBody(file: node.url, searchRoot: tab.url)
+                                        .id(node.url)
                                 }
                             }
                         }
@@ -178,6 +217,44 @@ private struct InspectorContent: View {
         }
     }
 
+    private func quickActionsStrip(for node: FSNode) -> some View {
+        HStack(spacing: 6) {
+            quickAction("Reveal", systemImage: "magnifyingglass") {
+                NSWorkspace.shared.activateFileViewerSelecting([node.url])
+            }
+            quickAction("Copy Path", systemImage: "doc.on.doc") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(node.url.path, forType: .string)
+                ToastCenter.shared.post(Toast(icon: "doc.on.doc", message: "Path copied"))
+            }
+            quickAction("Copy Name", systemImage: "textformat") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(node.name, forType: .string)
+                ToastCenter.shared.post(Toast(icon: "textformat", message: "Name copied"))
+            }
+            quickAction("Terminal", systemImage: "terminal") {
+                let target = node.isDirectory ? node.url : node.url.deletingLastPathComponent()
+                FileContextMenu.openTerminal(at: target)
+            }
+        }
+    }
+
+    private func quickAction(_ label: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12))
+                Text(label)
+                    .font(.system(size: 9))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 5)
+        }
+        .buttonStyle(.plain)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 6))
+        .help(label)
+    }
+
     private func details(for node: FSNode) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             row("Kind",      kind(of: node))
@@ -243,6 +320,10 @@ private struct InspectorContent: View {
         hashResult = nil
         hashAlgorithm = nil
         hashing = false
+        media = nil
+        pdfInfo = nil
+        gitDetail = nil
+        volume = nil
         guard let node = selectedNode else {
             thumbnail = nil
             attrs = [:]
@@ -262,6 +343,24 @@ private struct InspectorContent: View {
             permissions = n.intValue
         } else {
             permissions = nil
+        }
+        guard !node.url.isRemoteSFTP else { return }
+        volume = VolumeInfo.load(for: node.url)
+        gitDetail = await GitStatusService.shared.detail(for: node.url)
+        let typeID = (attrs[.typeIdentifierKey] as? String).flatMap(UTType.init)
+        if let utype = typeID {
+            if utype.conforms(to: .pdf) {
+                pdfInfo = await Task.detached(priority: .userInitiated) {
+                    PDFInfo.load(for: node.url)
+                }.value
+            } else if utype.conforms(to: .image) {
+                let url = node.url
+                media = await Task.detached(priority: .userInitiated) {
+                    MediaInfo.loadImage(url: url)
+                }.value
+            } else if utype.conforms(to: .audiovisualContent) || utype.conforms(to: .audio) {
+                media = await MediaInfo.loadAV(url: node.url)
+            }
         }
     }
 

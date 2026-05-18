@@ -55,7 +55,6 @@ struct FileListView: View {
             Button("Open") { openSelection(selected) }
             Button("Open in Finder") { revealSelection(selected) }
             Button("Quick Look") { quickLook(selected) }
-                .keyboardShortcut(.space, modifiers: [])
             Divider()
             Button("Copy to other pane") { copySelection(selected) }
             Button("Move to other pane") { moveSelection(selected) }

@@ -99,6 +99,23 @@ struct WindowView: View {
         // when only this property publishes — see the FocusedValues extension.
         .focusedSceneValue(\.singlePaneMode, state.singlePaneMode)
         .background(WindowFocusTracker(state: state))
+        // Hidden Rename binding for ⌘⏎.
+        //
+        // SwiftUI's `.keyboardShortcut(.return, modifiers: [.command])` on a
+        // Button inside a `CommandGroup` does not reliably install the menu key
+        // equivalent on macOS — pressing ⌘⏎ never reaches the menu handler. A
+        // hidden view-level Button bound to the same shortcut goes through a
+        // different SwiftUI path (window-scoped keyboard handling) that *does*
+        // fire. The visible Edit ▸ Rename menu item is kept for discoverability.
+        .background(
+            Button("Rename Selection") {
+                NotificationCenter.default.post(name: .renameSelectionRequested, object: nil)
+            }
+            .keyboardShortcut(.return, modifiers: [.command])
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .accessibilityHidden(true)
+        )
         .onReceive(NotificationCenter.default.publisher(for: .openImageViewerWindow)) { note in
             guard let payload = note.userInfo?["payload"] as? ImageViewerPayload else { return }
             openWindow(id: "image-viewer", value: payload)
@@ -130,19 +147,11 @@ struct WindowView: View {
         let tab = state.focusedPane.activeTab
 
         ToolbarItem(id: "back", placement: .navigation) {
-            Button { tab.back() } label: {
-                Image(systemName: "chevron.left")
-            }
-            .disabled(!tab.canBack)
-            .help("Back")
+            BackToolbarButton(tab: tab)
         }
 
         ToolbarItem(id: "forward", placement: .navigation) {
-            Button { tab.forward() } label: {
-                Image(systemName: "chevron.right")
-            }
-            .disabled(!tab.canForward)
-            .help("Forward")
+            ForwardToolbarButton(tab: tab)
         }
 
         ToolbarItem(id: "focus", placement: .navigation) {
@@ -165,7 +174,7 @@ struct WindowView: View {
                       ? "arrow.right.to.line.compact"
                       : "arrow.left.to.line.compact")
             }
-            .help("Mirror active pane to other side (⌥⌘=)")
+            .help("Mirror active pane to other side (⌃⌘=)")
         }
 
         ToolbarItem(id: "swap", placement: .navigation) {
@@ -216,7 +225,6 @@ struct WindowView: View {
                     .foregroundStyle(state.showInspector ? Color.accentColor : Color.primary)
             }
             .help(state.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
-            .keyboardShortcut("i", modifiers: [.command, .option])
         }
     }
 
@@ -267,12 +275,11 @@ struct WindowView: View {
 
         ToolbarItem(id: "rename", placement: .navigation) {
             Button {
-                renameFocused()
+                NotificationCenter.default.post(name: .renameSelectionRequested, object: nil)
             } label: {
                 Image(systemName: "character.cursor.ibeam")
             }
             .disabled(!hasSelection)
-            .keyboardShortcut(.return, modifiers: [.command])
             .help(tab.selection.count > 1 ? "Batch Rename" : "Rename (⌘⏎)")
         }
 
@@ -525,5 +532,27 @@ private struct SearchToolbarItem: View {
         case .home:     return "Search in Home"
         case .computer: return "Search this Mac"
         }
+    }
+}
+
+private struct BackToolbarButton: View {
+    @ObservedObject var tab: TabState
+    var body: some View {
+        Button { tab.back() } label: {
+            Image(systemName: "chevron.left")
+        }
+        .disabled(!tab.canBack)
+        .help("Back")
+    }
+}
+
+private struct ForwardToolbarButton: View {
+    @ObservedObject var tab: TabState
+    var body: some View {
+        Button { tab.forward() } label: {
+            Image(systemName: "chevron.right")
+        }
+        .disabled(!tab.canForward)
+        .help("Forward")
     }
 }

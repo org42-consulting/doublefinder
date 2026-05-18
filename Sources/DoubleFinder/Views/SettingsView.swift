@@ -7,6 +7,7 @@ enum SettingsKey {
     static let restoreOnStartup      = "df.restoreOnStartup"
     static let forceDarkMode         = "df.forceDarkMode"
     static let foldersOnTop          = "df.foldersOnTop"
+    static let startWithSinglePane   = "df.startWithSinglePane"
 }
 
 struct SettingsView: View {
@@ -14,6 +15,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.restoreOnStartup)      private var restoreOnStartup: Bool = true
     @AppStorage(SettingsKey.forceDarkMode)         private var forceDarkMode: Bool = false
     @AppStorage(SettingsKey.foldersOnTop)          private var foldersOnTop: Bool = true
+    @AppStorage(SettingsKey.startWithSinglePane)   private var startWithSinglePane: Bool = false
 
     var body: some View {
         Form {
@@ -38,10 +40,15 @@ struct SettingsView: View {
                     .onChange(of: foldersOnTop) { _, _ in
                         NotificationCenter.default.post(name: .foldersOnTopChanged, object: nil)
                     }
+
+                Picker("New windows open with", selection: $startWithSinglePane) {
+                    Text("Two panes").tag(false)
+                    Text("One pane").tag(true)
+                }
             } header: {
                 Text("General")
             } footer: {
-                Text("New windows open at the Starting Directory when restore is disabled. Dark mode overrides the system appearance.")
+                Text("New windows open at the Starting Directory with the chosen pane layout when restore is disabled; otherwise panes and folders come from the saved session. Dark mode overrides the system appearance.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }

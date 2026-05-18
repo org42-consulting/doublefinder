@@ -19,7 +19,7 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Finder-style path bar** at the bottom of every pane — one-click navigation to ancestor folders, with editable typed-path mode that accepts both local paths and `sftp://user@host/path` URLs. The bar adapts to light / dark mode for visual continuity with the rest of the chrome.
 - **Recent locations dropdown** on the path bar — the 15 most-recent folders you've visited, persisted across launches.
 - **Back / Forward history** (⌘[ / ⌘]) per tab.
-- **Quick filter bar** (⌘/) — incrementally filter the visible listing by name without leaving the folder.
+- **Quick filter bar** (⌘F) — incrementally filter the visible listing by name without leaving the folder.
 - **Single-pane / two-pane toggle** in the View menu — hide one pane to give the other full width; toggling back redistributes evenly.
 - **Sidebar** with reorderable favourites (drag in to add, drag out to remove), collapsable Locations / Tags / Smart Folders / Servers sections, and an **eject icon** on connected servers.
 - **Smart Folders** — save the current search (query, scope, kind) as a one-click sidebar entry; right-click to rename, remove, or apply to the other pane.
@@ -44,7 +44,7 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Overflow menu** — when 5+ tabs are open, an "…" button in the tab bar surfaces every tab with a checkmark on the active one for fast jump-to-tab.
 - **Pinned tabs** — right-click a tab → Pin. Pinned tabs survive `⌘W`, restore on app launch, and *don't change directory*: opening a folder in a pinned tab spawns a new sibling tab instead, leaving the pinned one in place.
 - **Tab groups** — group tabs by color; right-click the group header to rename, disband, or drag a tab onto a header to assign it.
-- **Sync** the focused pane's URL onto the other pane (⌥⌘=).
+- **Sync** the focused pane's URL onto the other pane (⌃⌘=).
 - **Swap** the two panes' tab lists entirely (⌥⌘\\).
 - **Mirror Selection** (⌥⌘;) — select files in one pane, then select the same-named files in the other; pairs nicely with Compare mode.
 
@@ -129,7 +129,7 @@ The same menu shape is exposed from list, icon, gallery, and column views — `F
 
 - **Command Palette** (⇧⌘P) — fuzzy filter over every menu action, sidebar favourite, smart folder, workspace, and recent location. ↑/↓ to move, Return to invoke, Esc to dismiss.
 - **Image Viewer / slideshow** (⌘Y) — full-window dark-background photo browser. Launches on the selected images (or all images in the tab if nothing is selected). Arrow keys move, Space toggles 4-second auto-advance, Esc closes.
-- **Disk Usage** (⌥⌘D) — opens a squarified treemap rooted at the focused tab's directory. Each rectangle is sized by its descendant byte total; click a folder to descend, click a file to reveal in Finder.
+- **Disk Usage** (⇧⌘D) — opens a squarified treemap rooted at the focused tab's directory. Each rectangle is sized by its descendant byte total; click a folder to descend, click a file to reveal in Finder.
 - **Archive Browser** — right-click any `.zip`, `.tar`, `.tar.gz`, or `.tgz` and pick **Browse Archive** to list contents without extracting. Extract All to a user-chosen destination, or Add Files… to append into an existing zip / tar in place.
 - **Folder Sync** — toolbar button while Compare Folders is on. Plans Left→Right / Right→Left / Two-way copies and replacements with an explicit toggle for deletes; runs them via `FileManager` after you confirm.
 
@@ -216,7 +216,7 @@ iconutil --convert icns Icons/AppIcon.iconset -o Sources/DoubleFinder/Resources/
 | Shortcut | Action |
 | --- | --- |
 | Tab | Swap active pane |
-| ⌥⌘= | Mirror active pane's URL to the other pane |
+| ⌃⌘= | Mirror active pane's URL to the other pane |
 | ⌥⌘\\ | Swap left and right panes |
 | ⌥⌘; | Mirror selection (select same-named items in other pane) |
 | ⌥⌘1 … ⌥⌘9 | Jump focused tab to sidebar favourite N |
@@ -252,7 +252,7 @@ iconutil --convert icns Icons/AppIcon.iconset -o Sources/DoubleFinder/Resources/
 | Shortcut | Action |
 | --- | --- |
 | ⇧⌘. | Toggle Hidden Files |
-| ⌘/ | Quick Filter |
+| ⌘F | Quick Filter |
 | ⇧⌘F | Search File Contents… |
 | ⌘I | Get Info |
 | ⌥⌘I | Toggle Inspector |
@@ -265,10 +265,10 @@ iconutil --convert icns Icons/AppIcon.iconset -o Sources/DoubleFinder/Resources/
 | Shortcut | Action |
 | --- | --- |
 | ⇧⌘P | Command Palette |
-| ⌥⌘D | Disk Usage |
+| ⇧⌘D | Disk Usage |
 | ⌥⌘S | Save Workspace… |
 | ⌃⌘T | Open in Terminal (local) or `ssh -t user@host` (remote) |
-| ⌃⌘S | Add focused folder to Sidebar |
+| ⌃⌘B | Add focused folder to Sidebar |
 
 ## Architecture
 

@@ -197,7 +197,7 @@ private struct PaneFilterBar: View {
         .animation(.easeInOut(duration: 0.12), value: active)
         .onReceive(NotificationCenter.default.publisher(for: .quickFilterFocusRequested)) { _ in
             // Only respond if WE are the focused pane — otherwise both panes' filter
-            // bars would grab focus simultaneously on every ⌘/.
+            // bars would grab focus simultaneously on every ⌘F.
             guard state.focus == side else { return }
             focused = true
         }

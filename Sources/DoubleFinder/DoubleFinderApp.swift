@@ -78,7 +78,7 @@ struct DoubleFinderApp: App {
                 Button("Quick Filter") {
                     NotificationCenter.default.post(name: .quickFilterFocusRequested, object: nil)
                 }
-                .keyboardShortcut("/", modifiers: [.command])
+                .keyboardShortcut("f", modifiers: [.command])
 
                 Button("Search File Contents…") {
                     NotificationCenter.default.post(name: .searchContentRequested, object: nil)
@@ -105,6 +105,11 @@ struct DoubleFinderApp: App {
                 .keyboardShortcut("v", modifiers: [.command, .option])
 
                 Divider()
+                Button("Rename") {
+                    NotificationCenter.default.post(name: .renameSelectionRequested, object: nil)
+                }
+                .keyboardShortcut(.return, modifiers: [.command])
+
                 Button("Get Info") {
                     NotificationCenter.default.post(name: .getInfoRequested, object: nil)
                 }
@@ -123,7 +128,7 @@ struct DoubleFinderApp: App {
                 Button("Disk Usage…") {
                     NotificationCenter.default.post(name: .diskUsageRequested, object: nil)
                 }
-                .keyboardShortcut("d", modifiers: [.command, .option])
+                .keyboardShortcut("d", modifiers: [.command, .shift])
 
                 Button("Duplicate") {
                     NotificationCenter.default.post(name: .duplicateSelectionRequested, object: nil)
@@ -194,7 +199,7 @@ struct DoubleFinderApp: App {
                 Button("Add to Sidebar") {
                     NotificationCenter.default.post(name: .addToSidebarRequested, object: nil)
                 }
-                .keyboardShortcut("s", modifiers: [.command, .control])
+                .keyboardShortcut("b", modifiers: [.command, .control])
 
                 Divider()
 
@@ -208,7 +213,7 @@ struct DoubleFinderApp: App {
                 Button("Mirror to Other Pane") {
                     NotificationCenter.default.post(name: .syncPanesRequested, object: nil)
                 }
-                .keyboardShortcut("=", modifiers: [.command, .option])
+                .keyboardShortcut("=", modifiers: [.command, .control])
 
                 Button("Swap Panes") {
                     NotificationCenter.default.post(name: .swapPanesRequested, object: nil)

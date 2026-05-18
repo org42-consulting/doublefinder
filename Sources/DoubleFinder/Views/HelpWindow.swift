@@ -220,7 +220,7 @@ extension HelpTopic {
             ]),
             HelpSection(heading: "Your first hour", bullets: [
                 "Try the four view modes per tab — the toolbar segmented control swaps List / Icon / Column / Gallery.",
-                "Press **⌘/** and type to filter the current listing without leaving the folder.",
+                "Press **⌘F** and type to filter the current listing without leaving the folder.",
                 "Press **⇧⌘F** to grep across the current tree; click a hit to reveal the file.",
                 "**Connect to Server…** (⌘K) to mount an SFTP server as a tab — every file operation works the same way over the network.",
                 "Compare two folders: toggle Compare Folders from the toolbar; rows tint red / yellow where they differ.",
@@ -244,7 +244,7 @@ extension HelpTopic {
             HelpSection(heading: "Switching the active pane", body: "Press **Tab** to flip focus between left and right. The active pane has a blue top border. Almost every menu action operates on the active pane's active tab — `state.focusedPane.activeTab` in the source."),
             HelpSection(heading: "Single-pane mode", body: "**View ▸ Show One Pane** hides the inactive side and gives the focused pane the full width. Toggling back redistributes width evenly across both panes."),
             HelpSection(heading: "Coordinating the two panes", shortcuts: [
-                ("⌥⌘=", "Mirror the focused pane's URL to the other pane"),
+                ("⌃⌘=", "Mirror the focused pane's URL to the other pane"),
                 ("⌥⌘\\", "Swap the two panes' tab lists entirely"),
                 ("⌥⌘;", "Mirror Selection — select same-named items in the other pane"),
                 ("⌥⌘C", "Copy selection to the other pane"),
@@ -520,7 +520,7 @@ extension HelpTopic {
         title: "Quick filter",
         systemImage: "line.3.horizontal.decrease",
         sections: [
-            HelpSection(body: "**⌘/** focuses the quick filter bar at the bottom of the focused pane. Typing filters the currently-loaded listing by name — no disk I/O, no Spotlight, just a `localizedStandardContains` over `tab.nodes`."),
+            HelpSection(body: "**⌘F** focuses the quick filter bar at the bottom of the focused pane. Typing filters the currently-loaded listing by name — no disk I/O, no Spotlight, just a `localizedStandardContains` over `tab.nodes`."),
             HelpSection(heading: "Compared to Spotlight search", bullets: [
                 "**Scope** — strictly the current directory's *already-loaded* nodes.",
                 "**Speed** — instant; runs purely in-memory.",
@@ -877,7 +877,7 @@ extension HelpTopic {
         title: "Disk Usage",
         systemImage: "chart.pie",
         sections: [
-            HelpSection(body: "**Edit ▸ Disk Usage…** (⌥⌘D) opens a window rooted at the focused tab's directory and renders a squarified treemap of every folder's total byte count."),
+            HelpSection(body: "**Edit ▸ Disk Usage…** (⇧⌘D) opens a window rooted at the focused tab's directory and renders a squarified treemap of every folder's total byte count."),
             HelpSection(heading: "Navigating", bullets: [
                 "**Click a rectangle** — descends into a folder (or reveals a file in Finder).",
                 "**← header button** — walks back up the navigation stack.",
@@ -1000,7 +1000,7 @@ extension HelpTopic {
             ]),
             HelpSection(heading: "Panes & focus", shortcuts: [
                 ("⇥", "Swap active pane"),
-                ("⌥⌘=", "Sync to other pane"),
+                ("⌃⌘=", "Sync to other pane"),
                 ("⌥⌘\\", "Swap panes"),
                 ("⌥⌘;", "Mirror Selection"),
                 ("⌥⌘1…9", "Jump to favourite N"),
@@ -1026,7 +1026,7 @@ extension HelpTopic {
             ]),
             HelpSection(heading: "View & inspection", shortcuts: [
                 ("⇧⌘.", "Toggle Hidden Files"),
-                ("⌘/", "Quick Filter"),
+                ("⌘F", "Quick Filter"),
                 ("⇧⌘F", "Search File Contents…"),
                 ("⌘I", "Get Info"),
                 ("⌥⌘I", "Toggle Inspector"),
@@ -1036,7 +1036,7 @@ extension HelpTopic {
             HelpSection(heading: "Workspaces & tools", shortcuts: [
                 ("⌥⌘S", "Save Workspace…"),
                 ("⌃⌘T", "Open in Terminal / SSH"),
-                ("⌃⌘S", "Add folder to Sidebar"),
+                ("⌃⌘B", "Add folder to Sidebar"),
                 ("⌘?", "Open this help window"),
             ]),
         ]

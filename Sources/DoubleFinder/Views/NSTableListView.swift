@@ -37,7 +37,11 @@ struct NSTableListView: NSViewRepresentable {
         table.allowsColumnReordering = true
         table.allowsColumnResizing = true
         table.allowsColumnSelection = false
-        table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        // We own column sizing via `fitColumnsToWidth`. AppKit's own
+        // autoresizing redistributes widths on every frame change and fights
+        // our iterative pass, sometimes leaving the table slightly wider than
+        // the scroll view and producing a horizontal scroller.
+        table.columnAutoresizingStyle = .noColumnAutoresizing
         table.usesAlternatingRowBackgroundColors = false
         table.rowHeight = 20
         table.intercellSpacing = NSSize(width: 6, height: 2)
@@ -200,7 +204,20 @@ struct NSTableListView: NSViewRepresentable {
             table.selectRowIndexes(desiredIndexes, byExtendingSelection: false)
         }
 
-        // handle rename request from outside (action bar)
+        // Inline-rename request from the toolbar / Edit ▸ Rename / ⌘⏎. The
+        // request is published by the WindowState observer and consumed here.
+        //
+        // Subtleties this code has to navigate:
+        //   1. `table.view(atColumn:row:makeIfNecessary:true)` can return a
+        //      freshly-instantiated cell that hasn't been added to the table's
+        //      view hierarchy yet — its `window` is nil, and calling
+        //      `window?.makeFirstResponder(name)` on it silently no-ops.
+        //      Forcing a display pass first guarantees the row is hosted.
+        //   2. `NameCell` sets `name.isEditable = false` at rest so the field
+        //      ignores stray clicks. `NSTableView.editColumn` only attaches a
+        //      field editor to an *editable* text field, so we have to flip
+        //      the flag before calling it (and rely on `controlTextDidEndEditing`
+        //      to flip it back on commit).
         if let renameID = tab.renameRequest {
             let pendingTab = tab
             DispatchQueue.main.async {
@@ -208,9 +225,12 @@ struct NSTableListView: NSViewRepresentable {
                 guard let row = pendingTab.visibleNodes.firstIndex(where: { $0.id == renameID }) else { return }
                 table.scrollRowToVisible(row)
                 table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                table.layoutSubtreeIfNeeded()
+                table.displayIfNeeded()
                 if let cell = table.view(atColumn: 0, row: row, makeIfNecessary: true) as? NameCell {
-                    cell.startEditing()
+                    cell.prepareForEdit()
                 }
+                table.editColumn(0, row: row, with: nil, select: true)
             }
         }
     }
@@ -243,22 +263,67 @@ struct NSTableListView: NSViewRepresentable {
         /// alone misbehaves when the initial frame is smaller than the column
         /// width sum.
         func fitColumnsToWidth(table: NSTableView, scroll: NSScrollView) {
-            // Apply any saved widths first so the proportional fit starts from
-            // the user's preferred ratios rather than the hard-coded initial
-            // values.
-            applySavedWidths(table)
-            let available = scroll.contentSize.width
-                - table.intercellSpacing.width * CGFloat(max(0, table.numberOfColumns - 1))
-            guard available > 0 else { return }
-            let cols = table.tableColumns
-            let totalCurrent = cols.reduce(CGFloat(0)) { $0 + $1.width }
-            guard totalCurrent > 0 else { return }
-            let scale = available / totalCurrent
+            let visibleWidth = scroll.contentView.bounds.width
+            guard visibleWidth > 0 else { return }
+
             suppressSave = true
-            for col in cols {
-                col.width = max(col.minWidth, col.width * scale)
+            defer { suppressSave = false }
+
+            let intercell = table.intercellSpacing.width * CGFloat(max(0, table.numberOfColumns - 1))
+
+            // Adaptive slack. NSTableView's `.inset` style and subpixel rounding
+            // can leave the rendered table a handful of points wider than the
+            // sum of column widths; the exact amount is style- and OS-dependent
+            // and not exposed by AppKit. After each shrink pass we measure the
+            // table's actual frame width and, if it still overflows, increase
+            // the slack and retry. Three passes is plenty in practice — the
+            // padding is constant per OS, so the second pass usually nails it.
+            var slack: CGFloat = 4
+
+            for attempt in 0..<3 {
+                if attempt == 0 {
+                    // Honor user-saved ratios on the very first pass.
+                    applySavedWidths(table)
+                }
+                let available = visibleWidth - intercell - slack
+                guard available > 0 else { return }
+
+                iterativeShrink(table: table, available: available)
+
+                // Force NSTableView to recompute its document frame from the
+                // new column widths before we measure overflow.
+                table.tile()
+                let overflow = table.frame.width - visibleWidth
+                if overflow <= 0 { return }
+                slack += overflow + 1
             }
-            suppressSave = false
+        }
+
+        /// Scale columns to fit `available`. Pins columns that would shrink
+        /// below their `minWidth`, redistributes the deficit to the rest, and
+        /// repeats until everyone fits — preventing the "scale + clamp" pattern
+        /// that lets the column sum exceed `available`.
+        private func iterativeShrink(table: NSTableView, available: CGFloat) {
+            var elastic = table.tableColumns
+            var budget = available
+            while !elastic.isEmpty {
+                let totalCurrent = elastic.reduce(CGFloat(0)) { $0 + $1.width }
+                guard totalCurrent > 0 else { return }
+                let scale = budget / totalCurrent
+                let pinned = elastic.filter { $0.width * scale < $0.minWidth }
+                if pinned.isEmpty {
+                    for col in elastic { col.width = col.width * scale }
+                    return
+                }
+                for col in pinned { col.width = col.minWidth }
+                budget -= pinned.reduce(CGFloat(0)) { $0 + $1.minWidth }
+                elastic.removeAll { col in pinned.contains(where: { $0 === col }) }
+                if budget <= 0 {
+                    // Pane narrower than the sum of minWidths — unavoidable.
+                    for col in elastic { col.width = col.minWidth }
+                    return
+                }
+            }
         }
 
         /// Capture user-driven column resizes (we suppress while we're the
@@ -692,21 +757,23 @@ private final class NameCell: NSTableCellView, NSTextFieldDelegate {
         gitBadge.state = node.gitStatus
     }
 
-    /// Programmatic entry to inline-edit mode (used by the Rename action bar button).
-    func startEditing() {
+    /// Flip the name text field into an editable state. Called from
+    /// `NSTableListView.updateNSView` immediately before `NSTableView.editColumn`,
+    /// which only attaches a field editor when the target text field reports
+    /// `isEditable = true`. `controlTextDidEndEditing` flips it back on commit.
+    func prepareForEdit() {
         name.isEditable = true
         name.isSelectable = true
-        window?.makeFirstResponder(name)
-        name.selectText(nil)
     }
 
     override func becomeFirstResponder() -> Bool {
-        // also triggered by NSTableView.editColumn / second-click on row
+        // Backup path: NSTableView's editColumn typically calls
+        // makeFirstResponder on the textField directly, but in case any
+        // future caller targets the cell itself, mirror the editable flip
+        // here so the text field can still accept input.
         name.isEditable = true
         name.isSelectable = true
-        let result = super.becomeFirstResponder()
-        window?.makeFirstResponder(name)
-        return result
+        return super.becomeFirstResponder()
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
@@ -805,7 +872,11 @@ private final class GitBadgeView: NSView {
 /// NSScrollView subclass that sets `coord.frameIsChanging` around its own
 /// `setFrameSize` so the inner NSTableView's autoresize-induced column resize
 /// callbacks during the frame change don't get mistaken for user drags and
-/// persisted into `df.listColumnWidths`.
+/// persisted into `df.listColumnWidths`. Also runs `fitColumnsToWidth` directly
+/// at the end of every frame and layout pass — relying on
+/// `NSView.frameDidChangeNotification` alone proved unreliable: with AppKit's
+/// own column autoresizing disabled, missed notifications leave columns at
+/// their initial widths and overflow the pane.
 final class FitColumnsScrollView: NSScrollView {
     weak var coord: NSTableListView.Coordinator?
 
@@ -813,7 +884,18 @@ final class FitColumnsScrollView: NSScrollView {
         let prev = coord?.frameIsChanging ?? false
         coord?.frameIsChanging = true
         super.setFrameSize(newSize)
+        refit()
         coord?.frameIsChanging = prev
+    }
+
+    override func layout() {
+        super.layout()
+        refit()
+    }
+
+    private func refit() {
+        guard let coord, let table = documentView as? NSTableView else { return }
+        coord.fitColumnsToWidth(table: table, scroll: self)
     }
 }
 

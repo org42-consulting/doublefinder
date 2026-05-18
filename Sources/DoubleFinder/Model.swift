@@ -309,6 +309,7 @@ extension Notification.Name {
     static let deleteWorkspaceRequested = Notification.Name("df.deleteWorkspaceRequested")
     static let searchContentRequested = Notification.Name("df.searchContentRequested")
     static let saveSmartFolderRequested = Notification.Name("df.saveSmartFolderRequested")
+    static let renameSelectionRequested = Notification.Name("df.renameSelectionRequested")
 }
 
 /// A reversible file operation. Pushed onto `WindowState.undoStack` after each
@@ -1004,6 +1005,7 @@ final class WindowState: ObservableObject {
                 : FileManager.default.homeDirectoryForCurrentUser
             self.left = PaneState(url: safe)
             self.right = PaneState(url: safe)
+            self.singlePaneMode = defaults.bool(forKey: SettingsKey.startWithSinglePane)
         }
         if let snap {
             if let favs = snap.favourites, !favs.isEmpty {
@@ -1247,12 +1249,13 @@ final class WindowState: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let pane = self.focusedPane
-                // Only close if there's more than one tab; otherwise fall through to the
-                // system's default ⌘W (close window) by beeping so the user notices.
-                guard pane.tabs.count > 1 else { NSSound.beep(); return }
-                // Refuse to close pinned tabs — ⌘W on a pinned tab beeps so the user
-                // realises they need to unpin first.
-                guard !pane.activeTab.isPinned else { NSSound.beep(); return }
+                // Pinned tab: refuse and beep so the user realises they need to unpin first.
+                if pane.activeTab.isPinned { NSSound.beep(); return }
+                // Last tab in the focused pane → close the window (matches Safari/Finder).
+                if pane.tabs.count <= 1 {
+                    NSApp.keyWindow?.performClose(nil)
+                    return
+                }
                 pane.closeTab(pane.activeTabID)
             }
         })
@@ -1290,6 +1293,9 @@ final class WindowState: ObservableObject {
         })
         observerTokens.append(nc.addObserver(forName: .mirrorSelectionRequested, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.mirrorSelection() }
+        })
+        observerTokens.append(nc.addObserver(forName: .renameSelectionRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.beginRenameOnFocusedSelection() }
         })
         observerTokens.append(nc.addObserver(forName: .favoriteSlotRequested, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
@@ -1685,6 +1691,57 @@ final class WindowState: ObservableObject {
         dst.selection = Set(dstIDs)
     }
 
+    /// Drive Rename / Batch Rename on the focused pane's selection. Called from
+    /// both the toolbar Rename button and the Edit ▸ Rename (⌘⏎) menu item via
+    /// the `.renameSelectionRequested` notification — keeps a single source of
+    /// truth for which entry point we use (inline edit in list view vs. modal
+    /// sheet elsewhere vs. batch sheet for multi-select).
+    func beginRenameOnFocusedSelection() {
+        let tab = focusedPane.activeTab
+        guard !tab.selection.isEmpty else { return }
+
+        if tab.selection.count > 1 {
+            let urls = tab.selection.compactMap { id in tab.nodes.first(where: { $0.id == id })?.url }
+            guard !urls.isEmpty else { return }
+            self.batchRenamePrompt = BatchRenamePrompt(urls: urls) { [weak self] pairs in
+                guard let self else { return }
+                let actionable = pairs.filter { $0.1 != $0.0.lastPathComponent && !$0.1.isEmpty }
+                let stateRef = self
+                TransferQueue.shared.enqueue(
+                    kind: "Rename",
+                    summary: "Rename \(actionable.count) item\(actionable.count == 1 ? "" : "s")",
+                    unitCount: Int64(actionable.count),
+                    work: { progress in
+                        let results = try await FileOps.batchRename(actionable, progress: progress)
+                        await MainActor.run { stateRef.pushUndo(.rename(items: results)) }
+                    },
+                    completion: { Task { @MainActor in await tab.refresh() } }
+                )
+            }
+            return
+        }
+
+        guard let id = tab.selection.first,
+              let node = tab.nodes.first(where: { $0.id == id }) else { return }
+
+        if tab.viewMode == .list {
+            tab.renameRequest = id
+        } else {
+            self.renamePrompt = RenamePromptModel(url: node.url) { [weak self] newName in
+                guard let self else { return }
+                Task { @MainActor in
+                    do {
+                        let new = try await FileOps.rename(node.url, to: newName)
+                        self.pushUndo(.rename(items: [(node.url, new)]))
+                        await tab.refresh()
+                    } catch {
+                        NSSound.beep()
+                    }
+                }
+            }
+        }
+    }
+
     /// Exchange the tab lists of the two panes. Focus stays on the same side, so the
     /// user sees the previously-other pane's content under the same focus indicator.
     func swapPanes() {
@@ -1716,17 +1773,17 @@ final class WindowState: ObservableObject {
         // notification, so it isn't surfaced in the palette yet.
         action("Go to Folder…", "arrow.right.circle", "⇧⌘G", post: .goToFolderRequested)
         action("Connect to Server…", "network", "⌘K", post: .connectToServerRequested)
-        action("Quick Filter", "line.3.horizontal.decrease", "⌘/", post: .quickFilterFocusRequested)
+        action("Quick Filter", "line.3.horizontal.decrease", "⌘F", post: .quickFilterFocusRequested)
         action("Search File Contents…", "doc.text.magnifyingglass", "⇧⌘F", post: .searchContentRequested)
         action("Toggle Hidden Files", "eye", "⇧⌘.", post: .toggleHiddenFilesRequested)
         action("Toggle Inspector", "sidebar.right", "⌥⌘I", post: .toggleInspectorRequested)
         action("Show / Hide One Pane", "rectangle.split.2x1", nil, post: .toggleSinglePaneRequested)
-        action("Mirror to Other Pane", "arrow.left.and.right", "⌥⌘=", post: .syncPanesRequested)
+        action("Mirror to Other Pane", "arrow.left.and.right", "⌃⌘=", post: .syncPanesRequested)
         action("Swap Panes", "arrow.left.arrow.right", "⌥⌘\\", post: .swapPanesRequested)
         action("Mirror Selection", "checklist", "⌥⌘;", post: .mirrorSelectionRequested)
         action("Reveal in Finder", "magnifyingglass", "⌥⌘R", post: .revealInFinderRequested)
         action("Open in Terminal", "terminal", "⌃⌘T", post: .openTerminalRequested)
-        action("Add to Sidebar", "sidebar.left", "⌃⌘S", post: .addToSidebarRequested)
+        action("Add to Sidebar", "sidebar.left", "⌃⌘B", post: .addToSidebarRequested)
         action("Get Info", "info.circle", "⌘I", post: .getInfoRequested)
         action("Empty Trash…", "trash", "⇧⌘⌫", post: .emptyTrashRequested)
         action("Save as Smart Folder…", "magnifyingglass.circle.fill", nil, post: .saveSmartFolderRequested)

@@ -81,8 +81,15 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 ### Inspector
 
 - Toggleable right-hand inspector (⌥⌘I) showing thumbnail, kind, size, dates, path, and tag chips for the focused selection; survives app restart.
+- **Quick Actions** strip — Reveal in Finder, Copy Path, Copy Name, Open in Terminal (or `ssh -t` for remote).
 - **Editable POSIX permissions** — user / group / other read-write-execute matrix with live `chmod`.
 - **File hash** — on-demand MD5 and SHA-256 (streaming, CryptoKit) for the focused file.
+- **Media metadata** — EXIF for images (camera, lens, ISO, shutter, GPS with one-click Open in Maps); duration / codec / bitrate / sample rate / pixel size for audio and video via `AVAsset`.
+- **PDF metadata** — page count, title, author, subject, creator, producer via `PDFKit`.
+- **Git details** — branch, last commit on the path (`git log -1`), ahead/behind upstream, with a Log button that opens Terminal at the repo with `git log --follow` filtered to the selection.
+- **Volume** — name, format, free / used space with a progress bar; flags for read-only and removable media.
+- **Folder breakdown** — total file count, recursive size, and a type-mix bar (images / video / audio / documents / code / archives / other) for the selected directory; scans on expand and caps at 50k entries.
+- **Duplicates** — on demand, scans the active tab's directory tree for files matching the selected file's size and confirms by SHA-256 (capped at 2 GB and 50k entries scanned); reveals each match in Finder.
 - **Two-pane diff view** — when both panes have a single text file selected, the inspector switches to a side-by-side aligned line diff (LCS-based, cap 2000 lines per file) with red / green tints for removed / added lines.
 - **Get Info** sheet (⌘I) for a heavier inspector-style view with tag editing.
 
@@ -135,7 +142,7 @@ The same menu shape is exposed from list, icon, gallery, and column views — `F
 - Window layout (left/right pane tabs + URLs, view modes, sorts, hidden setting, pinned state, single-pane mode), inspector visibility, and sidebar favourites are saved to `~/Library/Application Support/DoubleFinder/state.json` on quit and restored on next launch.
 - Sidebar favourites and inspector visibility persist regardless of the "Restore on startup" setting — only the pane / tab portion is gated by that toggle.
 - Smart folders persist in `UserDefaults`; workspaces are individual JSON files under `~/Library/Application Support/DoubleFinder/workspaces/`.
-- Toggle restore behavior in **DoubleFinder → Settings…**.
+- **Settings (DoubleFinder → Settings…)**: starting directory, Restore on startup, Force dark mode, **Show folders on top** (groups directories before files in every view; toggle off for a strict by-name / by-size / by-date sort).
 
 ## Requirements
 

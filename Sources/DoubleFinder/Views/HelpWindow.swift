@@ -696,15 +696,26 @@ extension HelpTopic {
         systemImage: "info.circle",
         sections: [
             HelpSection(body: "The Inspector is a sliding right-hand panel showing details for the focused selection. Toggle with **⌥⌘I**; visibility persists across launches and inspectors resize both panes equally."),
-            HelpSection(heading: "What it shows", bullets: [
+            HelpSection(heading: "Header & Quick Actions", bullets: [
                 "Thumbnail (via `QLThumbnailGenerator`).",
-                "Kind, size, dates (created / modified).",
-                "Full POSIX path.",
-                "Tag chips with color dots — click to remove a tag.",
-                "**Editable POSIX permissions** — see the **Permissions** topic.",
-                "**File hash** — see the **File hashing** topic.",
-                "**Diff view** — see the **Compare folders & diff** topic.",
+                "Filename caption overlaid on the thumbnail; **N selected** badge for multi-selection.",
+                "Quick Actions strip — **Reveal in Finder**, **Copy Path**, **Copy Name**, **Open in Terminal** (or `ssh -t user@host` when the selection is remote).",
             ]),
+            HelpSection(heading: "Section accordions", body: "Each section below is collapsible; open/closed state is remembered per section across launches in `UserDefaults` (`df.inspector.*`)."),
+            HelpSection(bullets: [
+                "**General** — kind, size, where, modified, created.",
+                "**Tags** — click a color dot to add or remove a tag; persisted as macOS native tags.",
+                "**Media** — for images, EXIF: pixel size, camera make / model, lens, ISO, aperture (ƒ-number), exposure, date taken, and GPS with an Open-in-Maps button. For audio / video: duration, codec (four-char code), bitrate, sample rate, and pixel size.",
+                "**PDF** — page count, title, author, subject, creator, producer (via `PDFKit`).",
+                "**Git** — when the selection is inside a working tree: branch name, last commit on the path (`git log -1 --follow`), ahead/behind upstream count, a **Log** button that opens Terminal at the repo with the filtered log, and a **Copy SHA** button. Hidden outside a repo.",
+                "**Permissions** — see the **Permissions** topic.",
+                "**Volume** — name, format, free / total space with a used-percentage bar, and read-only / removable flags. Collapsed by default.",
+                "**Folder Contents** (folders only) — total file count, recursive size, and a horizontal type-mix bar (images / video / audio / documents / code / archives / other). Scan runs lazily when you expand the section and caps at 50,000 entries.",
+                "**Hash** — see the **File hashing** topic.",
+                "**Duplicates** (files only, local) — click **Scan for duplicates** to walk the active tab's directory tree, match by size, and confirm by streaming SHA-256. Lists every match with a Reveal button. Capped at 2 GB and 50,000 entries scanned; collapsed by default.",
+            ]),
+            HelpSection(heading: "Two-pane diff view", body: "When both panes have a single text file selected, the Inspector replaces all of the above with a side-by-side LCS-based diff. See the **Compare folders & diff** topic."),
+            HelpSection(heading: "Remote selections", body: "On SFTP / WebDAV / FTP, only the basic name / size / modified / path rows render — the metadata sections that require local I/O (Media, PDF, Git, Volume, Folder Contents, Duplicates) are hidden."),
             HelpSection(heading: "Modal alternative", body: "**Get Info** (⌘I) opens a heavier inspector-style sheet for tag editing, kind switching (\"Open With for all of this type\"), and full-path copying."),
         ]
     )
@@ -1043,6 +1054,7 @@ extension HelpTopic {
                 "**Starting directory** — the URL each new tab opens to when no state is restored.",
                 "**Restore state on startup** — toggle window/pane/tab restoration on quit.",
                 "**Force dark mode** — overrides the system appearance for DoubleFinder windows.",
+                "**Show folders on top (Icon and List views)** — when on (default), directories sort before files inside the active sort key; toggle off for a strict by-name / by-size / by-date / by-kind sort that interleaves folders and files. The change applies live to every open tab — no refresh needed.",
             ]),
             HelpSection(heading: "Where preferences live", body: "Settings are written to the standard `UserDefaults` domain (`net.org42.doublefinder`). Use `defaults read net.org42.doublefinder` from a terminal to dump them; `defaults delete net.org42.doublefinder` to reset everything."),
         ]

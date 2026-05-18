@@ -707,3 +707,577 @@ struct DuplicatesBody: View {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 }
+
+// MARK: - Symlink
+
+struct SymlinkInfo {
+    let target: String
+    let resolved: URL?
+    let broken: Bool
+
+    static func load(for url: URL) -> SymlinkInfo? {
+        let resourceValues = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
+        guard resourceValues?.isSymbolicLink == true else { return nil }
+        guard let raw = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path) else {
+            return nil
+        }
+        let parent = url.deletingLastPathComponent()
+        let resolved = raw.hasPrefix("/")
+            ? URL(fileURLWithPath: raw)
+            : parent.appendingPathComponent(raw).standardizedFileURL
+        let broken = !FileManager.default.fileExists(atPath: resolved.path)
+        return SymlinkInfo(target: raw, resolved: resolved, broken: broken)
+    }
+}
+
+struct SymlinkRow: View {
+    let info: SymlinkInfo
+    let onFollow: (URL) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            sectionRow("Target", info.target)
+            if let r = info.resolved {
+                sectionRow("Resolved", (r.path as NSString).abbreviatingWithTildeInPath)
+            }
+            HStack(spacing: 6) {
+                if info.broken {
+                    Label("Broken", systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                }
+                Spacer(minLength: 0)
+                if let r = info.resolved, !info.broken {
+                    Button("Follow") { onFollow(r) }
+                        .controlSize(.small)
+                }
+            }
+            .padding(.top, 2)
+        }
+    }
+}
+
+// MARK: - Code signature
+
+struct SigningInfo {
+    let signed: Bool
+    let identifier: String?
+    let teamID: String?
+    let authority: String?
+    let notarized: Bool
+
+    static func load(for url: URL) -> SigningInfo? {
+        guard isSignableTarget(url) else { return nil }
+        // `codesign -dv --verbose=2` writes everything to stderr.
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        proc.arguments = ["-dv", "--verbose=2", url.path]
+        let out = Pipe(); let err = Pipe()
+        proc.standardOutput = out
+        proc.standardError = err
+        guard (try? proc.run()) != nil else { return nil }
+        proc.waitUntilExit()
+        let raw = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        if proc.terminationStatus != 0 { return SigningInfo(signed: false, identifier: nil, teamID: nil, authority: nil, notarized: false) }
+
+        var identifier: String? = nil
+        var teamID: String? = nil
+        var authority: String? = nil
+        for rawLine in raw.split(separator: "\n") {
+            let line = String(rawLine)
+            if let v = strip(prefix: "Identifier=", from: line) { identifier = v }
+            else if let v = strip(prefix: "TeamIdentifier=", from: line), v != "not set" { teamID = v }
+            else if let v = strip(prefix: "Authority=", from: line), authority == nil { authority = v }
+        }
+
+        // Notarization signal: `spctl --assess --type exec -vv` exits 0 when the
+        // gatekeeper accepts the bundle. Cheap for .app bundles; skip otherwise.
+        var notarized = false
+        if url.pathExtension.lowercased() == "app" {
+            let spctl = Process()
+            spctl.executableURL = URL(fileURLWithPath: "/usr/sbin/spctl")
+            spctl.arguments = ["--assess", "--type", "exec", "-v", url.path]
+            spctl.standardOutput = Pipe(); spctl.standardError = Pipe()
+            if (try? spctl.run()) != nil {
+                spctl.waitUntilExit()
+                notarized = spctl.terminationStatus == 0
+            }
+        }
+
+        return SigningInfo(signed: true, identifier: identifier, teamID: teamID, authority: authority, notarized: notarized)
+    }
+
+    private static func isSignableTarget(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        return ["app", "framework", "bundle", "xpc", "dylib", "kext"].contains(ext)
+    }
+
+    private static func strip(prefix p: String, from line: String) -> String? {
+        guard line.hasPrefix(p) else { return nil }
+        return String(line.dropFirst(p.count)).trimmingCharacters(in: .whitespaces)
+    }
+}
+
+struct SigningRow: View {
+    let info: SigningInfo
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: info.signed ? "checkmark.seal.fill" : "xmark.seal")
+                    .foregroundStyle(info.signed ? Color.green : Color.orange)
+                    .font(.system(size: 12))
+                Text(info.signed ? "Signed" : "Unsigned")
+                    .font(.system(size: 11, weight: .semibold))
+                if info.notarized {
+                    Text("Notarized")
+                        .font(.system(size: 9))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(.thinMaterial, in: Capsule())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let id = info.identifier { sectionRow("ID", id) }
+            if let team = info.teamID { sectionRow("Team", team) }
+            if let auth = info.authority { sectionRow("Authority", auth) }
+        }
+    }
+}
+
+// MARK: - Extended attributes
+
+struct XattrEntry: Identifiable {
+    let name: String
+    let size: Int
+    var id: String { name }
+}
+
+struct XattrSectionBody: View {
+    let url: URL
+    @State private var entries: [XattrEntry] = []
+    @State private var loaded: Bool = false
+    @State private var revealed: [String: String] = [:]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !loaded {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Reading…").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            } else if entries.isEmpty {
+                Text("None")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(entries) { entry in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(entry.name)
+                                .font(.system(size: 10, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 0)
+                            Text(ByteCountFormatter.string(fromByteCount: Int64(entry.size), countStyle: .file))
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                            Button {
+                                toggle(entry: entry)
+                            } label: {
+                                Image(systemName: revealed[entry.name] == nil ? "eye" : "eye.slash")
+                                    .font(.system(size: 9))
+                            }
+                            .buttonStyle(.plain)
+                            .help(revealed[entry.name] == nil ? "Show value" : "Hide value")
+                        }
+                        if let value = revealed[entry.name] {
+                            Text(value)
+                                .font(.system(size: 10, design: .monospaced))
+                                .textSelection(.enabled)
+                                .lineLimit(8)
+                                .padding(6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 4))
+                        }
+                    }
+                }
+            }
+        }
+        .task {
+            let target = url
+            let list = await Task.detached(priority: .userInitiated) {
+                XattrSectionBody.listXattrs(at: target)
+            }.value
+            entries = list
+            loaded = true
+        }
+    }
+
+    private func toggle(entry: XattrEntry) {
+        if revealed[entry.name] != nil {
+            revealed.removeValue(forKey: entry.name)
+            return
+        }
+        let target = url
+        let name = entry.name
+        Task.detached(priority: .userInitiated) {
+            let value = XattrSectionBody.readValue(at: target, name: name)
+            await MainActor.run { revealed[name] = value }
+        }
+    }
+
+    private nonisolated static func listXattrs(at url: URL) -> [XattrEntry] {
+        let path = url.path
+        let sz = listxattr(path, nil, 0, 0)
+        guard sz > 0 else { return [] }
+        var buffer = [CChar](repeating: 0, count: sz)
+        let actual = listxattr(path, &buffer, sz, 0)
+        guard actual > 0 else { return [] }
+        var entries: [XattrEntry] = []
+        var start = 0
+        for i in 0..<actual {
+            if buffer[i] == 0 {
+                if start < i, let name = String(validatingUTF8: Array(buffer[start..<i]) + [0]) {
+                    let valueSize = getxattr(path, name, nil, 0, 0, 0)
+                    entries.append(XattrEntry(name: name, size: max(valueSize, 0)))
+                }
+                start = i + 1
+            }
+        }
+        return entries.sorted { $0.name < $1.name }
+    }
+
+    private nonisolated static func readValue(at url: URL, name: String) -> String {
+        let path = url.path
+        let sz = getxattr(path, name, nil, 0, 0, 0)
+        guard sz > 0 else { return "(empty)" }
+        var data = Data(count: sz)
+        let read = data.withUnsafeMutableBytes { ptr -> ssize_t in
+            getxattr(path, name, ptr.baseAddress, sz, 0, 0)
+        }
+        guard read > 0 else { return "(unreadable)" }
+        // Try UTF-8 first; if it's a binary plist, hand back a pretty-printed dump.
+        if let s = String(data: data, encoding: .utf8), s.allSatisfy({ $0.isASCII || $0.isWhitespace || !$0.unicodeScalars.contains(where: { $0.value < 0x20 && $0 != "\n" && $0 != "\r" && $0 != "\t" }) }) {
+            return s
+        }
+        if let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) {
+            return "\(plist)"
+        }
+        // Fall back to hex preview (first 256 bytes).
+        let preview = data.prefix(256).map { String(format: "%02x", $0) }.joined(separator: " ")
+        return data.count > 256 ? preview + " …" : preview
+    }
+}
+
+// MARK: - Spotlight comment
+
+enum FinderComment {
+    /// Stored as a binary-plist string inside the xattr
+    /// `com.apple.metadata:kMDItemFinderComment`. Reading returns the unwrapped
+    /// string; writing wraps the string back into a binary plist.
+    private static let xattrName = "com.apple.metadata:kMDItemFinderComment"
+
+    static func read(at url: URL) -> String? {
+        let path = url.path
+        let sz = getxattr(path, xattrName, nil, 0, 0, 0)
+        guard sz > 0 else { return nil }
+        var data = Data(count: sz)
+        let read = data.withUnsafeMutableBytes { ptr -> ssize_t in
+            getxattr(path, xattrName, ptr.baseAddress, sz, 0, 0)
+        }
+        guard read > 0 else { return nil }
+        if let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? String {
+            return plist
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func write(_ comment: String, at url: URL) throws {
+        let path = url.path
+        if comment.isEmpty {
+            // Clear it.
+            removexattr(path, xattrName, 0)
+            return
+        }
+        let data = try PropertyListSerialization.data(fromPropertyList: comment as NSString, format: .binary, options: 0)
+        let result = data.withUnsafeBytes { ptr -> Int32 in
+            setxattr(path, xattrName, ptr.baseAddress, data.count, 0, 0)
+        }
+        if result != 0 {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+    }
+}
+
+struct FinderCommentBody: View {
+    let url: URL
+    @State private var text: String = ""
+    @State private var original: String = ""
+    @State private var loaded: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextEditor(text: $text)
+                .font(.system(size: 11))
+                .frame(minHeight: 60, maxHeight: 120)
+                .padding(4)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 4))
+                .disabled(!loaded)
+            HStack {
+                Spacer()
+                if text != original {
+                    Button("Revert") { text = original }
+                        .controlSize(.small)
+                    Button("Save") { save() }
+                        .controlSize(.small)
+                        .keyboardShortcut(.return, modifiers: [.command])
+                }
+            }
+        }
+        .task {
+            let target = url
+            let value = await Task.detached(priority: .userInitiated) {
+                FinderComment.read(at: target) ?? ""
+            }.value
+            text = value
+            original = value
+            loaded = true
+        }
+    }
+
+    private func save() {
+        let target = url
+        let value = text
+        Task.detached(priority: .userInitiated) {
+            do {
+                try FinderComment.write(value, at: target)
+                await MainActor.run {
+                    original = value
+                    ToastCenter.shared.post(Toast(icon: "checkmark", message: "Comment saved"))
+                }
+            } catch {
+                await MainActor.run { NSSound.beep() }
+            }
+        }
+    }
+}
+
+// MARK: - Archive peek
+
+struct ArchivePeekBody: View {
+    let url: URL
+    @State private var entries: [ArchiveEntry] = []
+    @State private var totalCount: Int = 0
+    @State private var error: String? = nil
+    @State private var loaded: Bool = false
+
+    private static let displayLimit = 50
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !loaded {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Listing…").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            } else if let error {
+                Text(error).font(.system(size: 11)).foregroundStyle(.secondary)
+            } else {
+                sectionRow("Entries", "\(totalCount)")
+                ForEach(entries) { entry in
+                    HStack(spacing: 6) {
+                        Image(systemName: entry.isDirectory ? "folder" : "doc")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                        Text(entry.path)
+                            .font(.system(size: 10, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 0)
+                        if !entry.isDirectory {
+                            Text(ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file))
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if totalCount > entries.count {
+                    Text("… \(totalCount - entries.count) more")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                }
+            }
+        }
+        .task {
+            let target = url
+            do {
+                let all = try await ArchiveBrowser.list(target)
+                totalCount = all.count
+                entries = Array(all.prefix(ArchivePeekBody.displayLimit))
+            } catch {
+                self.error = (error as NSError).localizedDescription
+            }
+            loaded = true
+        }
+    }
+}
+
+// MARK: - Cross-pane same-name compare
+
+struct CrossPaneMatchRow: View {
+    let selectedURL: URL
+    let counterpart: URL
+    let onOpenDiff: (URL, URL) -> Void
+
+    private var bothText: Bool {
+        isTextFile(selectedURL) && isTextFile(counterpart)
+    }
+
+    private var lhsStat: (size: Int64?, modified: Date?) { Self.stat(of: selectedURL) }
+    private var rhsStat: (size: Int64?, modified: Date?) { Self.stat(of: counterpart) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            sectionRow("Other pane", (counterpart.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath)
+            sizeRow
+            modifiedRow
+            HStack(spacing: 6) {
+                Spacer(minLength: 0)
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([counterpart])
+                } label: {
+                    Label("Reveal", systemImage: "magnifyingglass")
+                }
+                .controlSize(.small)
+                if bothText {
+                    Button("Open diff") { onOpenDiff(selectedURL, counterpart) }
+                        .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sizeRow: some View {
+        if let l = lhsStat.size, let r = rhsStat.size {
+            sectionRow("Size", sizeDescription(l: l, r: r))
+        }
+    }
+
+    private func sizeDescription(l: Int64, r: Int64) -> String {
+        let delta = r - l
+        let rStr = ByteCountFormatter.string(fromByteCount: r, countStyle: .file)
+        if delta == 0 { return "\(rStr) · same" }
+        let absStr = ByteCountFormatter.string(fromByteCount: abs(delta), countStyle: .file)
+        let direction = r > l ? "other larger" : "this larger"
+        return "\(rStr) · \(delta > 0 ? "+" : "-")\(absStr) (\(direction))"
+    }
+
+    @ViewBuilder
+    private var modifiedRow: some View {
+        if let lm = lhsStat.modified, let rm = rhsStat.modified {
+            let dt = rm.timeIntervalSince(lm)
+            let label: String = {
+                if abs(dt) < 1 { return "same time" }
+                if dt > 0 { return "other newer by \(formatInterval(dt))" }
+                return "this newer by \(formatInterval(-dt))"
+            }()
+            sectionRow("Modified", "\(mediumDateFormatter.string(from: rm)) · \(label)")
+        }
+    }
+
+    private static func stat(of url: URL) -> (size: Int64?, modified: Date?) {
+        let v = try? url.resourceValues(forKeys: [.fileSizeKey, .totalFileSizeKey, .contentModificationDateKey])
+        let size = (v?.totalFileSize ?? v?.fileSize).map(Int64.init)
+        return (size, v?.contentModificationDate)
+    }
+
+    private func formatInterval(_ secs: TimeInterval) -> String {
+        if secs < 60 { return "\(Int(secs))s" }
+        if secs < 3600 { return "\(Int(secs / 60))m" }
+        if secs < 86_400 { return String(format: "%.1fh", secs / 3600) }
+        return "\(Int(secs / 86_400))d"
+    }
+}
+
+// MARK: - Multi-selection aggregate
+
+struct SelectionAggregate {
+    var totalSize: Int64 = 0
+    var fileCount: Int = 0
+    var directoryCount: Int = 0
+    var buckets: [FolderStats.Bucket: Int] = [:]   // count per bucket (not bytes)
+    var commonParent: URL?
+
+    static func build(from nodes: [FSNode]) -> SelectionAggregate {
+        var agg = SelectionAggregate()
+        var parents: [URL] = []
+        for n in nodes {
+            parents.append(n.url.deletingLastPathComponent())
+            if n.isDirectory {
+                agg.directoryCount += 1
+                agg.totalSize += n.calculatedSize ?? n.size ?? 0
+            } else {
+                agg.fileCount += 1
+                agg.totalSize += n.size ?? 0
+                let b = FolderStats.bucket(for: n.url.pathExtension)
+                agg.buckets[b, default: 0] += 1
+            }
+        }
+        agg.commonParent = SelectionAggregate.commonAncestor(parents)
+        return agg
+    }
+
+    private static func commonAncestor(_ urls: [URL]) -> URL? {
+        guard let first = urls.first else { return nil }
+        var prefix = first.standardizedFileURL.pathComponents
+        for url in urls.dropFirst() {
+            let comps = url.standardizedFileURL.pathComponents
+            var i = 0
+            while i < prefix.count && i < comps.count && prefix[i] == comps[i] { i += 1 }
+            prefix = Array(prefix.prefix(i))
+            if prefix.isEmpty { return nil }
+        }
+        return URL(fileURLWithPath: "/" + prefix.dropFirst().joined(separator: "/"))
+    }
+}
+
+struct SelectionAggregateBody: View {
+    let aggregate: SelectionAggregate
+    let count: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                sectionRow("Items", "\(count)")
+                if aggregate.fileCount > 0 && aggregate.directoryCount > 0 {
+                    sectionRow("Mix", "\(aggregate.fileCount) file\(aggregate.fileCount == 1 ? "" : "s"), \(aggregate.directoryCount) folder\(aggregate.directoryCount == 1 ? "" : "s")")
+                }
+                sectionRow("Size", ByteCountFormatter.string(fromByteCount: aggregate.totalSize, countStyle: .file))
+                if let p = aggregate.commonParent {
+                    sectionRow("Where", (p.path as NSString).abbreviatingWithTildeInPath)
+                }
+            }
+            if !aggregate.buckets.isEmpty {
+                Divider()
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(FolderStats.Bucket.allCases, id: \.rawValue) { bucket in
+                        if let n = aggregate.buckets[bucket], n > 0 {
+                            HStack(spacing: 6) {
+                                Circle().fill(bucket.color).frame(width: 8, height: 8)
+                                Text(bucket.label)
+                                    .font(.system(size: 10))
+                                Spacer()
+                                Text("\(n)")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+

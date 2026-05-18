@@ -42,9 +42,11 @@ private struct InspectorTabRouter: View {
                 state.showInspector = false
             }
         } else {
-            InspectorContent(tab: state.focusedPane.activeTab, onClose: {
-                state.showInspector = false
-            })
+            InspectorContent(
+                tab: state.focusedPane.activeTab,
+                otherTab: state.otherPane.activeTab,
+                onClose: { state.showInspector = false }
+            )
             .id(state.focus)
         }
     }
@@ -65,6 +67,7 @@ private struct InspectorTabRouter: View {
 
 private struct InspectorContent: View {
     @ObservedObject var tab: TabState
+    @ObservedObject var otherTab: TabState
     let onClose: () -> Void
     @State private var thumbnail: NSImage?
     @State private var attrs: [URLResourceKey: Any] = [:]
@@ -77,17 +80,49 @@ private struct InspectorContent: View {
     @State private var pdfInfo: PDFInfo? = nil
     @State private var gitDetail: GitInspectorDetail? = nil
     @State private var volume: VolumeInfo? = nil
+    @State private var symlink: SymlinkInfo? = nil
+    @State private var signing: SigningInfo? = nil
 
     private var selectedNode: FSNode? {
         guard let id = tab.selection.first else { return nil }
         return tab.nodes.first { $0.id == id }
     }
 
+    private var selectedNodes: [FSNode] {
+        tab.nodes.filter { tab.selection.contains($0.id) }
+    }
+
+    private var crossPaneCounterpart: URL? {
+        guard let node = selectedNode, !node.url.isRemoteSFTP else { return nil }
+        let name = node.name
+        guard let other = otherTab.nodes.first(where: { $0.name == name }) else { return nil }
+        if other.url.standardizedFileURL == node.url.standardizedFileURL { return nil }
+        if other.isDirectory != node.isDirectory { return nil }
+        return other.url
+    }
+
+    private var isArchive: Bool {
+        guard let node = selectedNode, !node.isDirectory else { return false }
+        return ArchiveBrowser.detect(url: node.url) != nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            if let node = selectedNode {
+            if tab.selection.count > 1 {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        AccordionSection(title: "Selection", defaultsKey: "df.inspector.selection") {
+                            SelectionAggregateBody(
+                                aggregate: SelectionAggregate.build(from: selectedNodes),
+                                count: tab.selection.count
+                            )
+                        }
+                    }
+                    .padding(14)
+                }
+            } else if let node = selectedNode {
                 if node.url.isRemoteSFTP {
                     ScrollView {
                         RemoteFileInspectorRows(node: node)
@@ -100,8 +135,26 @@ private struct InspectorContent: View {
                             AccordionSection(title: "General", defaultsKey: "df.inspector.general") {
                                 details(for: node)
                             }
+                            if let symlink {
+                                AccordionSection(title: "Symbolic Link", defaultsKey: "df.inspector.symlink") {
+                                    SymlinkRow(info: symlink, onFollow: followSymlink)
+                                }
+                            }
+                            if let counterpart = crossPaneCounterpart {
+                                AccordionSection(title: "Other Pane", defaultsKey: "df.inspector.crossPane") {
+                                    CrossPaneMatchRow(
+                                        selectedURL: node.url,
+                                        counterpart: counterpart,
+                                        onOpenDiff: openCrossPaneDiff
+                                    )
+                                }
+                            }
                             AccordionSection(title: "Tags", defaultsKey: "df.inspector.tags") {
                                 tagsRow(for: node)
+                            }
+                            AccordionSection(title: "Comment", defaultsKey: "df.inspector.comment", initiallyExpanded: false) {
+                                FinderCommentBody(url: node.url)
+                                    .id(node.url)
                             }
                             if let media {
                                 AccordionSection(title: "Media", defaultsKey: "df.inspector.media") {
@@ -118,12 +171,27 @@ private struct InspectorContent: View {
                                     GitRow(detail: gitDetail, path: node.url)
                                 }
                             }
+                            if let signing {
+                                AccordionSection(title: "Code Signature", defaultsKey: "df.inspector.signing") {
+                                    SigningRow(info: signing)
+                                }
+                            }
                             AccordionSection(title: "Permissions", defaultsKey: "df.inspector.permissions") {
                                 permissionsRow(for: node)
                             }
                             if let volume {
                                 AccordionSection(title: "Volume", defaultsKey: "df.inspector.volume", initiallyExpanded: false) {
                                     VolumeRow(info: volume)
+                                }
+                            }
+                            AccordionSection(title: "Extended Attributes", defaultsKey: "df.inspector.xattr", initiallyExpanded: false) {
+                                XattrSectionBody(url: node.url)
+                                    .id(node.url)
+                            }
+                            if isArchive {
+                                AccordionSection(title: "Archive Contents", defaultsKey: "df.inspector.archive", initiallyExpanded: false) {
+                                    ArchivePeekBody(url: node.url)
+                                        .id(node.url)
                                 }
                             }
                             if node.isDirectory {
@@ -153,6 +221,26 @@ private struct InspectorContent: View {
         .background(.regularMaterial)
         .task(id: selectedNode?.url) {
             await loadInfo()
+        }
+    }
+
+    private func followSymlink(_ url: URL) {
+        let target = url.standardizedFileURL
+        let isDir = (try? target.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+        if isDir {
+            tab.navigate(to: target)
+        } else {
+            tab.navigate(to: target.deletingLastPathComponent())
+            tab.selection = [target]
+        }
+    }
+
+    private func openCrossPaneDiff(_ left: URL, _ right: URL) {
+        // Force both panes to select their respective files; the inspector's
+        // diff router picks the pair up automatically.
+        Task { @MainActor in
+            tab.selection = [left]
+            otherTab.selection = [right]
         }
     }
 
@@ -324,6 +412,8 @@ private struct InspectorContent: View {
         pdfInfo = nil
         gitDetail = nil
         volume = nil
+        symlink = nil
+        signing = nil
         guard let node = selectedNode else {
             thumbnail = nil
             attrs = [:]
@@ -347,6 +437,11 @@ private struct InspectorContent: View {
         guard !node.url.isRemoteSFTP else { return }
         volume = VolumeInfo.load(for: node.url)
         gitDetail = await GitStatusService.shared.detail(for: node.url)
+        symlink = SymlinkInfo.load(for: node.url)
+        let url = node.url
+        signing = await Task.detached(priority: .userInitiated) {
+            SigningInfo.load(for: url)
+        }.value
         let typeID = (attrs[.typeIdentifierKey] as? String).flatMap(UTType.init)
         if let utype = typeID {
             if utype.conforms(to: .pdf) {

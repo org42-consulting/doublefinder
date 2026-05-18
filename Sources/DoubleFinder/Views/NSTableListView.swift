@@ -94,7 +94,8 @@ struct NSTableListView: NSViewRepresentable {
         table.sortDescriptors = [NSSortDescriptor(key: ColumnID.name.rawValue, ascending: true)]
         coord.table = table
 
-        let scroll = NSScrollView()
+        let scroll = FitColumnsScrollView()
+        scroll.coord = coord
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = false
@@ -266,10 +267,17 @@ struct NSTableListView: NSViewRepresentable {
         /// as the starting point before the fit pass scales to the visible
         /// width.
         var suppressSave = false
+        /// True while the scroll view's `setFrameSize` is mid-flight — set by
+        /// `FitColumnsScrollView`. Switching panes (or any layout change that
+        /// resizes the scroll view) makes NSTableView's `uniformColumnAutoresizingStyle`
+        /// fire `tableViewColumnDidResize` for every column. Those callbacks must
+        /// NOT be saved, otherwise the persisted "user preferred" widths drift
+        /// every time the pane is resized.
+        var frameIsChanging = false
         private static let widthsKey = "df.listColumnWidths"
 
         func tableViewColumnDidResize(_ notification: Notification) {
-            guard !suppressSave,
+            guard !suppressSave, !frameIsChanging,
                   let col = notification.userInfo?["NSTableColumn"] as? NSTableColumn else { return }
             var widths = UserDefaults.standard.dictionary(forKey: Self.widthsKey) as? [String: CGFloat] ?? [:]
             widths[col.identifier.rawValue] = col.width
@@ -791,6 +799,21 @@ private final class GitBadgeView: NSView {
         }
         color.setFill()
         NSBezierPath(ovalIn: bounds).fill()
+    }
+}
+
+/// NSScrollView subclass that sets `coord.frameIsChanging` around its own
+/// `setFrameSize` so the inner NSTableView's autoresize-induced column resize
+/// callbacks during the frame change don't get mistaken for user drags and
+/// persisted into `df.listColumnWidths`.
+final class FitColumnsScrollView: NSScrollView {
+    weak var coord: NSTableListView.Coordinator?
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let prev = coord?.frameIsChanging ?? false
+        coord?.frameIsChanging = true
+        super.setFrameSize(newSize)
+        coord?.frameIsChanging = prev
     }
 }
 

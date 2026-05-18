@@ -82,6 +82,16 @@ enum GitFileState: String, Hashable {
 enum ViewMode: String, CaseIterable, Identifiable {
     case icon, list, column, gallery
     var id: String { rawValue }
+
+    /// Resolved from the `df.defaultViewMode` user preference, falling back to
+    /// `.list` if no preference is set or the stored value isn't a known case.
+    /// `gallery` is intentionally excluded from the Settings picker (it's a
+    /// special photo-browsing mode), but if a user manages to write it via
+    /// other means, it round-trips here correctly.
+    static var userDefault: ViewMode {
+        let raw = UserDefaults.standard.string(forKey: SettingsKey.defaultViewMode) ?? "list"
+        return ViewMode(rawValue: raw) ?? .list
+    }
 }
 
 enum PaneSide: Hashable { case left, right }
@@ -403,6 +413,7 @@ final class TabState: ObservableObject, Identifiable {
 
     init(url: URL) {
         self.url = url
+        self.viewMode = ViewMode.userDefault
         self._currentSFTPEndpoint = url.sftpEndpoint
         watcher.onChange = { [weak self] in
             guard let self else { return }
@@ -463,7 +474,7 @@ final class TabState: ObservableObject, Identifiable {
                 : FileManager.default.homeDirectoryForCurrentUser
             self.init(url: fallback)
         }
-        self.viewMode = ViewMode(rawValue: persisted.viewMode) ?? .list
+        self.viewMode = ViewMode(rawValue: persisted.viewMode) ?? ViewMode.userDefault
         self.sortKey = SortKey(rawValue: persisted.sortKey) ?? .name
         self.sortAscending = persisted.sortAscending
         self.showHidden = persisted.showHidden
@@ -1007,6 +1018,7 @@ final class WindowState: ObservableObject {
             self.right = PaneState(url: safe)
             self.singlePaneMode = defaults.bool(forKey: SettingsKey.startWithSinglePane)
         }
+        let inspectorDefault = defaults.bool(forKey: SettingsKey.showInspectorByDefault)
         if let snap {
             if let favs = snap.favourites, !favs.isEmpty {
                 // Strip legacy placeholders (AirDrop / Recents pointing at ~)
@@ -1018,7 +1030,9 @@ final class WindowState: ObservableObject {
                     return !legacy
                 }
             }
-            self.showInspector = snap.showInspector ?? false
+            self.showInspector = snap.showInspector ?? inspectorDefault
+        } else {
+            self.showInspector = inspectorDefault
         }
         for tab in left.tabs { tab.window = self }
         for tab in right.tabs { tab.window = self }

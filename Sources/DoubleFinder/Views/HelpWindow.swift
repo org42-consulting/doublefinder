@@ -169,7 +169,6 @@ extension HelpTopic {
         .undo,
         .commandPalette,
         .imageViewer,
-        .hoverPreview,
         .diskUsage,
         .archiveBrowser,
         .folderSync,
@@ -857,21 +856,6 @@ extension HelpTopic {
         ]
     )
 
-    static let hoverPreview = HelpTopic(
-        id: "hoverPreview",
-        title: "Hover preview",
-        systemImage: "eye.trianglebadge.exclamationmark",
-        sections: [
-            HelpSection(body: "Hover any cell in **Icon view** for ~500 ms and a small popover appears with the file's thumbnail, name, size or \u{201C}Folder\u{201D}, modified date, and parent path. Moving the mouse away dismisses it."),
-            HelpSection(heading: "Why the delay", body: "Cells fire previews only after the cursor has been still for half a second, so brushing through the grid never triggers a popover for items the user wasn't actually looking at."),
-            HelpSection(heading: "Where it works (and where it doesn't)", bullets: [
-                "**Icon view** — yes.",
-                "**List / Column / Gallery** — not yet. List rows would need NSTrackingArea-per-row plumbing on the AppKit side.",
-                "Use the **Inspector** (⌥⌘I) for at-a-glance details in other view modes.",
-            ]),
-        ]
-    )
-
     static let diskUsage = HelpTopic(
         id: "diskUsage",
         title: "Disk Usage",
@@ -1049,12 +1033,19 @@ extension HelpTopic {
         title: "Preferences",
         systemImage: "gearshape",
         sections: [
-            HelpSection(body: "Open **DoubleFinder ▸ Settings…** (⌘,) to configure:"),
-            HelpSection(bullets: [
-                "**Starting directory** — the URL each new tab opens to when no state is restored.",
-                "**Restore state on startup** — toggle window/pane/tab restoration on quit.",
-                "**Force dark mode** — overrides the system appearance for DoubleFinder windows.",
-                "**Show folders on top (Icon and List views)** — when on (default), directories sort before files inside the active sort key; toggle off for a strict by-name / by-size / by-date / by-kind sort that interleaves folders and files. The change applies live to every open tab — no refresh needed.",
+            HelpSection(body: "Open **DoubleFinder ▸ Settings…** (⌘,) to configure preferences. The panel is split into three tabs."),
+            HelpSection(heading: "General", bullets: [
+                "**Starting Directory** — the URL each new window opens to when no state is restored.",
+                "**Restore windows and tabs on startup** — reopen the panes, tabs, and folders from your last session on launch.",
+                "**New windows open with** — *Two panes* or *One pane* as the default layout for fresh windows. Restored windows keep their previous pane-mode state.",
+                "**Show Inspector by default** — open new windows with the Inspector visible. Restored windows keep their previous Inspector state.",
+            ]),
+            HelpSection(heading: "Appearance", bullets: [
+                "**Enable Dark Mode** — force a dark appearance regardless of the system Light/Dark setting. Leave off to follow the system automatically.",
+            ]),
+            HelpSection(heading: "Files", bullets: [
+                "**Default view mode** — *Icon*, *List*, or *Columns* for new tabs. Restored tabs keep the view they were last using.",
+                "**Show folders on top (Icon and List views)** — when on (default), directories sort before files inside the active sort key; toggle off for a strict by-name / by-size / by-date / by-kind sort that interleaves folders and files. The change applies live to every open tab.",
             ]),
             HelpSection(heading: "Where preferences live", body: "Settings are written to the standard `UserDefaults` domain (`net.org42.doublefinder`). Use `defaults read net.org42.doublefinder` from a terminal to dump them; `defaults delete net.org42.doublefinder` to reset everything."),
         ]

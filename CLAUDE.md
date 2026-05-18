@@ -15,7 +15,7 @@ swift run                           # launches the app
 
 # Release .app bundle (signed ad-hoc, output: build/DoubleFinder.app)
 ./scripts/package.sh
-VERSION=1.4.0 BUILD_NUMBER=4 ./scripts/package.sh
+VERSION=1.4.1 BUILD_NUMBER=4 ./scripts/package.sh
 
 # Open packaged app
 open build/DoubleFinder.app

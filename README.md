@@ -142,7 +142,10 @@ The same menu shape is exposed from list, icon, gallery, and column views — `F
 - Window layout (left/right pane tabs + URLs, view modes, sorts, hidden setting, pinned state, single-pane mode), inspector visibility, and sidebar favourites are saved to `~/Library/Application Support/DoubleFinder/state.json` on quit and restored on next launch.
 - Sidebar favourites and inspector visibility persist regardless of the "Restore on startup" setting — only the pane / tab portion is gated by that toggle.
 - Smart folders persist in `UserDefaults`; workspaces are individual JSON files under `~/Library/Application Support/DoubleFinder/workspaces/`.
-- **Settings (DoubleFinder → Settings…)**: starting directory, Restore on startup, Force dark mode, **Show folders on top** (groups directories before files in every view; toggle off for a strict by-name / by-size / by-date sort).
+- **Settings (DoubleFinder → Settings…)** — tabbed panel:
+  - *General*: Starting Directory, Restore windows and tabs on startup, default pane layout for new windows (Two panes / One pane), Show Inspector by default. The pane-layout and Inspector defaults only apply to fresh windows; restored windows keep the previous session's state.
+  - *Appearance*: Enable Dark Mode (overrides the system appearance).
+  - *Files*: Default view mode for new tabs (Icon / List / Columns), Show folders on top (groups directories before files in Icon and List views; toggle off for a strict by-name / by-size / by-date / by-kind sort).
 
 ## Requirements
 
@@ -178,7 +181,7 @@ The script:
 You can override `VERSION` and `BUILD_NUMBER` via env vars:
 
 ```bash
-VERSION=1.4.0 BUILD_NUMBER=42 ./scripts/package.sh
+VERSION=1.4.1 BUILD_NUMBER=42 ./scripts/package.sh
 ```
 
 To install:

@@ -8,7 +8,7 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 
 ## Screenshots
 
-> Add screenshots to a `docs/` folder and reference them here, e.g. `![Dual panes](docs/dual-panes.png)`.
+<img width="1347" height="931" alt="Image" src="https://github.com/user-attachments/assets/6d09f270-abb6-4c6e-84ae-3c4e3c5e349c" />
 
 ## Features
 

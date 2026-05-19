@@ -8,9 +8,23 @@ import AppKit
 /// after their @Published properties change, so any command that wants to
 /// re-render on a particular property must read that property via its own
 /// FocusedValue channel.
+private struct WindowStateFocusedKey: FocusedValueKey {
+    typealias Value = WindowState
+}
+
+private struct SinglePaneModeFocusedKey: FocusedValueKey {
+    typealias Value = Bool
+}
+
 extension FocusedValues {
-    @Entry var windowState: WindowState? = nil
-    @Entry var singlePaneMode: Bool? = nil
+    var windowState: WindowState? {
+        get { self[WindowStateFocusedKey.self] }
+        set { self[WindowStateFocusedKey.self] = newValue }
+    }
+    var singlePaneMode: Bool? {
+        get { self[SinglePaneModeFocusedKey.self] }
+        set { self[SinglePaneModeFocusedKey.self] = newValue }
+    }
 }
 
 /// Hidden helper view that tracks the containing NSWindow's key state and

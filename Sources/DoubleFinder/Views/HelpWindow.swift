@@ -113,8 +113,15 @@ struct HelpTopic: Identifiable {
 
     /// Concatenated body text for filter matching.
     var body: String {
-        sections.map { ($0.heading ?? "") + " " + ($0.body ?? "") + " " + ($0.bullets?.joined(separator: " ") ?? "") + " " + ($0.tip ?? "") }
-            .joined(separator: " ")
+        sections.map { section -> String in
+            var parts: [String] = []
+            if let h = section.heading { parts.append(h) }
+            if let b = section.body { parts.append(b) }
+            if let bullets = section.bullets { parts.append(bullets.joined(separator: " ")) }
+            if let t = section.tip { parts.append(t) }
+            return parts.joined(separator: " ")
+        }
+        .joined(separator: " ")
     }
 }
 

@@ -380,10 +380,15 @@ private struct PaneFooter: View {
                              ? "Tag: \"\(tab.searchText)\" — \(tab.nodes.count) result\(tab.nodes.count == 1 ? "" : "s")"
                              : "Searching \"\(tab.searchText)\" — \(tab.nodes.count) result\(tab.nodes.count == 1 ? "" : "s")")
                     } else {
-                        Text("\(tab.nodes.count) item\(tab.nodes.count == 1 ? "" : "s")")
+                        Text(itemCountLabel)
                     }
                     if !tab.selection.isEmpty {
                         Text("· \(tab.selection.count) selected\(selectedSizeSuffix)")
+                    }
+                    if !tab.marked.isEmpty {
+                        Text("· \(tab.marked.count) marked")
+                            .foregroundStyle(Color.orange)
+                            .help("File-op toolbar acts on marked items when any are set (⌃M toggles, ⌃⇧M clears).")
                     }
                 }
                 Spacer()
@@ -394,6 +399,18 @@ private struct PaneFooter: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
         }
+    }
+
+    /// "N items" normally, or "N of M items" when the quick-filter is hiding
+    /// some of the listing so the user knows how many are off-screen.
+    private var itemCountLabel: String {
+        let total = tab.nodes.count
+        let visible = tab.visibleNodes.count
+        let plural = total == 1 ? "" : "s"
+        if visible != total {
+            return "\(visible) of \(total) item\(plural)"
+        }
+        return "\(total) item\(plural)"
     }
 
     private func volumeAvailable(for url: URL) -> String {
@@ -601,6 +618,15 @@ private struct TabChip: View {
                 .foregroundStyle(active ? Color.accentColor : Color.primary)
             if tab.pendingOps > 0 {
                 BusyDot()
+            }
+            // Subtle eye glyph when this tab is showing hidden files. The
+            // setting is per-tab and otherwise invisible until you scroll
+            // through the listing — a tab-pill badge surfaces it.
+            if tab.showHidden {
+                Image(systemName: "eye")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .help("Hidden files visible (⇧⌘.)")
             }
             if pane.tabs.count > 1, !tab.isPinned, hovering || active {
                 Button {

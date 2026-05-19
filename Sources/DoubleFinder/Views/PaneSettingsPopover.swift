@@ -39,6 +39,22 @@ struct PaneSettingsPopover: View {
 
             Divider()
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Group By")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Picker("", selection: $tab.groupBy) {
+                    Label("None", systemImage: "list.bullet").tag(GroupBy.none)
+                    Label("Kind", systemImage: "doc").tag(GroupBy.kind)
+                    Label("Date Modified", systemImage: "calendar").tag(GroupBy.date)
+                    Label("Size", systemImage: "scalemass").tag(GroupBy.size)
+                }
+                .labelsHidden()
+                .pickerStyle(.inline)
+            }
+
+            Divider()
+
             Toggle(isOn: $tab.showHidden) {
                 Label("Show Hidden Files", systemImage: "eye")
                     .font(.system(size: 12))

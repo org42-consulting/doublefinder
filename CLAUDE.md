@@ -50,7 +50,7 @@ Top-level `App.commands` in `DoubleFinderApp.swift` post `Notification.Name`s (d
 
 ### Persistence
 - Window/pane/tab/favourites snapshot: `StatePersistence.save(...)` writes JSON to `~/Library/Application Support/DoubleFinder/state.json` on `NSApplication.willTerminate`. `WindowState.init` restores from it unless `df.restoreOnStartup` is off.
-- User preferences: `@AppStorage` with keys under the `SettingsKey` enum (`df.startingDirectoryPath`, `df.restoreOnStartup`, `df.forceDarkMode`). Add new keys there, not as raw strings.
+- User preferences: `@AppStorage` with keys under the `SettingsKey` enum (`df.startingDirectoryPath`, `df.restoreOnStartup`, `df.forceDarkMode`, `df.foldersOnTop`, `df.startWithSinglePane`, `df.showInspectorByDefault`, `df.defaultViewMode`). Add new keys there, not as raw strings.
 - File tags / sidebar favourites: see `TagStore` and the `SidebarFavourite` `Transferable`.
 
 ### Views

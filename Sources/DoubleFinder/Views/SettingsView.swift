@@ -72,7 +72,7 @@ private struct GeneralSettings: View {
             } header: {
                 Text("Window Defaults")
             } footer: {
-                Text("Apply to fresh windows when there's no saved session. Restored windows keep the previous session's pane layout and inspector state.")
+                Text("Pane layout applies only when “Restore windows and tabs on startup” is off — restored windows always keep their saved layout. Inspector default applies to any new window whose saved session doesn’t already specify one. Neither setting changes already-open windows.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -133,7 +133,7 @@ private struct FilesSettings: View {
             } header: {
                 Text("Display")
             } footer: {
-                Text("New tabs start in the selected view mode. Restored tabs keep the view they were last using. Folders-on-top only affects Icon and List views — Columns and Gallery use their own ordering.")
+                Text("Default view mode applies to new tabs only — already-open tabs keep their current view, and restored tabs keep the view they were last using. Folders-on-top applies live to every open tab, but only in Icon and List views (Columns and Gallery use their own ordering).")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }

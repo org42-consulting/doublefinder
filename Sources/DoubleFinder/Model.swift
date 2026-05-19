@@ -100,6 +100,80 @@ enum SortKey: String, CaseIterable {
     case name, modified, size, kind
 }
 
+/// Visual sectioning in List / Icon views. Orthogonal to `SortKey` — items
+/// inside each group are still ordered by the active sort. `.none` renders a
+/// flat list, the way every other file manager defaults.
+enum GroupBy: String, CaseIterable, Identifiable {
+    case none, kind, date, size
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .none: return "None"
+        case .kind: return "Kind"
+        case .date: return "Date Modified"
+        case .size: return "Size"
+        }
+    }
+
+    /// Bucket label for a node under this grouping. Returned strings are the
+    /// section headers; node ordering inside a bucket is left to the caller
+    /// (which keeps using the current sort).
+    func bucket(for node: FSNode) -> String {
+        switch self {
+        case .none:
+            return ""
+        case .kind:
+            if node.isDirectory { return "Folders" }
+            let ext = node.url.pathExtension.lowercased()
+            if ext.isEmpty { return "Other" }
+            switch ext {
+            case "jpg","jpeg","png","heic","gif","tiff","webp","avif","bmp","raw","cr2","nef","arw":
+                return "Images"
+            case "mp4","mov","m4v","mkv","avi","wmv","webm":
+                return "Video"
+            case "mp3","wav","flac","aac","m4a","ogg":
+                return "Audio"
+            case "pdf","doc","docx","pages","rtf","txt","md","odt":
+                return "Documents"
+            case "xls","xlsx","csv","numbers","tsv":
+                return "Spreadsheets"
+            case "ppt","pptx","key":
+                return "Presentations"
+            case "zip","tar","gz","tgz","bz2","7z","rar","xz","dmg","iso":
+                return "Archives"
+            case "swift","py","js","ts","tsx","jsx","rb","go","rs","c","cpp","h","hpp","java","kt","sh","bash","zsh","sql","html","css","yml","yaml","json","toml","xml":
+                return "Code"
+            case "app":
+                return "Applications"
+            default:
+                return ext.uppercased()
+            }
+        case .date:
+            guard let mod = node.modified else { return "Unknown" }
+            let cal = Calendar.current
+            let now = Date()
+            if cal.isDateInToday(mod) { return "Today" }
+            if cal.isDateInYesterday(mod) { return "Yesterday" }
+            if let week = cal.dateInterval(of: .weekOfYear, for: now), week.contains(mod) { return "This Week" }
+            if let month = cal.dateInterval(of: .month, for: now), month.contains(mod) { return "This Month" }
+            if cal.component(.year, from: mod) == cal.component(.year, from: now) { return "This Year" }
+            return "Older"
+        case .size:
+            if node.isDirectory { return "Folders" }
+            guard let bytes = node.size else { return "Unknown" }
+            switch bytes {
+            case ..<10_000:           return "Tiny (< 10 KB)"
+            case ..<1_000_000:        return "Small (< 1 MB)"
+            case ..<10_000_000:       return "Medium (< 10 MB)"
+            case ..<100_000_000:      return "Large (< 100 MB)"
+            case ..<1_000_000_000:    return "Very Large (< 1 GB)"
+            default:                  return "Huge (≥ 1 GB)"
+            }
+        }
+    }
+}
+
 enum SearchScope: String, CaseIterable, Identifiable {
     case folder, home, computer
 
@@ -320,6 +394,11 @@ extension Notification.Name {
     static let searchContentRequested = Notification.Name("df.searchContentRequested")
     static let saveSmartFolderRequested = Notification.Name("df.saveSmartFolderRequested")
     static let renameSelectionRequested = Notification.Name("df.renameSelectionRequested")
+    static let activateTabSlotRequested = Notification.Name("df.activateTabSlotRequested")
+    static let invertSelectionRequested = Notification.Name("df.invertSelectionRequested")
+    static let openInOtherPaneRequested = Notification.Name("df.openInOtherPaneRequested")
+    static let toggleMarkRequested = Notification.Name("df.toggleMarkRequested")
+    static let clearMarksRequested = Notification.Name("df.clearMarksRequested")
 }
 
 /// A reversible file operation. Pushed onto `WindowState.undoStack` after each
@@ -355,9 +434,25 @@ final class TabState: ObservableObject, Identifiable {
     @Published var connectionState: ConnectionState = .local
     @Published var viewMode: ViewMode = .list
     @Published var selection: Set<FSNode.ID> = []
+    /// Anchor for shift-click range selection — the last node selected
+    /// without the shift modifier. Views compute a range over `visibleNodes`
+    /// between this anchor and the clicked item. Left stale on refresh /
+    /// sort / filter changes; range-select callers fall back to a single
+    /// click when the anchor is no longer visible.
+    @Published var selectionAnchor: FSNode.ID?
+    /// Independent "marked" set, like Total Commander. Accumulated across
+    /// navigation (cleared explicitly via Edit ▸ Clear Marks or by toggling
+    /// the same file off again). When non-empty, the toolbar Copy / Move /
+    /// Trash operations act on this set instead of `selection`, letting users
+    /// stage work across multiple folders without losing context.
+    @Published var marked: Set<URL> = []
     @Published var nodes: [FSNode] = []
     @Published var sortKey: SortKey = .name
     @Published var sortAscending: Bool = true
+    /// Section grouping for List and Icon views. `.none` (default) renders
+    /// the listing flat; other values insert section headers between buckets
+    /// while still ordering items inside each bucket by `sortKey`.
+    @Published var groupBy: GroupBy = .none
     @Published var loadError: String?
     /// Counter of in-flight ops this tab is the source or destination of.
     /// Bumped/decremented by `CopyMoveCoordinator` around its TransferQueue
@@ -703,6 +798,67 @@ final class TabState: ObservableObject, Identifiable {
         Task { await self.refresh() }
     }
 
+    /// Modifier-aware click selection used by Icon and Gallery views (List
+    /// view rides on NSTableView's native behavior). Centralizes the logic so
+    /// every view interprets ⌘ / ⇧ identically.
+    ///   - plain click → replace selection, set anchor.
+    ///   - ⌘-click    → toggle into / out of existing selection, update anchor
+    ///                   to the clicked item (matches Finder behavior).
+    ///   - ⇧-click    → range from anchor to clicked over `visibleNodes`.
+    ///                   Falls back to plain click if no valid anchor.
+    func applyClickSelection(on nodeID: FSNode.ID, modifiers: NSEvent.ModifierFlags) {
+        let cmd = modifiers.contains(.command)
+        let shift = modifiers.contains(.shift)
+        let visible = visibleNodes
+        if shift,
+           let anchor = selectionAnchor,
+           let anchorIdx = visible.firstIndex(where: { $0.id == anchor }),
+           let clickIdx = visible.firstIndex(where: { $0.id == nodeID }) {
+            let lo = min(anchorIdx, clickIdx)
+            let hi = max(anchorIdx, clickIdx)
+            selection = Set(visible[lo...hi].map(\.id))
+            return
+        }
+        if cmd {
+            if selection.contains(nodeID) {
+                selection.remove(nodeID)
+            } else {
+                selection.insert(nodeID)
+            }
+        } else {
+            selection = [nodeID]
+        }
+        selectionAnchor = nodeID
+    }
+
+    /// Step the selection by `offset` in `visibleNodes`. When `extend` is true
+    /// (⇧+arrow key), the result is the range from the current anchor to the
+    /// stepped index; otherwise the selection becomes the stepped item alone
+    /// and the anchor moves with it.
+    func moveSelection(by offset: Int, extend: Bool) {
+        let visible = visibleNodes
+        guard !visible.isEmpty else { return }
+        let pivot = selectionAnchor ?? selection.first
+        let currentIndex: Int
+        if let pivot, let i = visible.firstIndex(where: { $0.id == pivot }) {
+            currentIndex = i
+        } else {
+            currentIndex = offset >= 0 ? -1 : visible.count
+        }
+        let target = max(0, min(visible.count - 1, currentIndex + offset))
+        let targetID = visible[target].id
+        if extend, let anchor = selectionAnchor,
+           let anchorIdx = visible.firstIndex(where: { $0.id == anchor }) {
+            let lo = min(anchorIdx, target)
+            let hi = max(anchorIdx, target)
+            selection = Set(visible[lo...hi].map(\.id))
+            // Anchor stays put while extending.
+        } else {
+            selection = [targetID]
+            selectionAnchor = targetID
+        }
+    }
+
     func setSort(_ key: SortKey) {
         if sortKey == key {
             sortAscending.toggle()
@@ -791,6 +947,29 @@ final class TabState: ObservableObject, Identifiable {
 
     private func sorted(_ list: [FSNode]) -> [FSNode] {
         TabState.sorted(list, by: sortKey, ascending: sortAscending)
+    }
+
+    /// Bucket the current `visibleNodes` under the active `groupBy` rule. Returns
+    /// `[(label, nodes)]` in a stable header order. When `groupBy == .none`,
+    /// returns a single `("", visibleNodes)` tuple so views can use the same
+    /// rendering path either way.
+    func groupedVisibleNodes() -> [(String, [FSNode])] {
+        let visible = visibleNodes
+        if groupBy == .none { return [("", visible)] }
+        var buckets: [String: [FSNode]] = [:]
+        var order: [String] = []
+        for node in visible {
+            let label = groupBy.bucket(for: node)
+            if buckets[label] == nil { order.append(label) }
+            buckets[label, default: []].append(node)
+        }
+        // Stable header order for kind/size buckets; date buckets are already
+        // chronological by virtue of `order` (first-seen order in `visible`,
+        // which is sorted by `sortKey`). For kind/size we'd rather see fixed
+        // semantic order (Folders first, then alphabetical for kinds; "Tiny"
+        // → "Huge" for size). Use the bucket(for:) output for any node from
+        // each label to anchor the ordering.
+        return order.map { ($0, buckets[$0] ?? []) }
     }
 
     static func sorted(_ list: [FSNode], by sortKey: SortKey, ascending: Bool) -> [FSNode] {
@@ -1320,6 +1499,55 @@ final class WindowState: ObservableObject {
                     return
                 }
                 self.focusedPane.activeTab.navigate(to: self.favourites[slot].url)
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .activateTabSlotRequested, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let slot = note.userInfo?["slot"] as? Int,
+                      slot >= 0, slot < self.focusedPane.tabs.count else {
+                    NSSound.beep()
+                    return
+                }
+                self.focusedPane.activeTabID = self.focusedPane.tabs[slot].id
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .invertSelectionRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                let all = Set(tab.visibleNodes.map(\.id))
+                tab.selection = all.subtracting(tab.selection)
+                tab.selectionAnchor = nil
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .openInOtherPaneRequested, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let url = note.userInfo?["url"] as? URL else { return }
+                self.otherPane.activeTab.navigate(to: url)
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .toggleMarkRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                // Toggle the currently-selected URLs. With nothing selected,
+                // beep — the user probably meant to select first.
+                let urls = tab.nodes.filter { tab.selection.contains($0.id) }.map(\.url)
+                guard !urls.isEmpty else { NSSound.beep(); return }
+                // If every targeted URL is already marked, unmark them; otherwise
+                // add the whole set. Matches the "mass toggle" intuition that
+                // ⌘A + ⌃M should switch all items on, not flip each one.
+                if urls.allSatisfy({ tab.marked.contains($0) }) {
+                    for url in urls { tab.marked.remove(url) }
+                } else {
+                    for url in urls { tab.marked.insert(url) }
+                }
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .clearMarksRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.focusedPane.activeTab.marked.removeAll()
             }
         })
         observerTokens.append(nc.addObserver(forName: .redoRequested, object: nil, queue: .main) { [weak self] _ in

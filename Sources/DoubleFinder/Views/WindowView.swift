@@ -315,8 +315,14 @@ struct WindowView: View {
 
     // MARK: - Actions
 
+    /// Target URLs for toolbar file ops. When the tab has marked items, those
+    /// win — Total-Commander-style staging of work across folders. Otherwise
+    /// fall back to the current selection.
     private func selectedURLs(in tab: TabState) -> [URL] {
-        tab.selection.compactMap { id in tab.nodes.first { $0.id == id }?.url }
+        if !tab.marked.isEmpty {
+            return Array(tab.marked)
+        }
+        return tab.selection.compactMap { id in tab.nodes.first { $0.id == id }?.url }
     }
 
     private func copyFocusedToOther() {

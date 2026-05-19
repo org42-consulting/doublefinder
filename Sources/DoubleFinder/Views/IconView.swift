@@ -20,6 +20,11 @@ struct IconView: View {
     @State private var cellFrames: [FSNode.ID: CGRect] = [:]
     @State private var marqueeStart: CGPoint? = nil
     @State private var marqueeCurrent: CGPoint? = nil
+    /// Selection at the moment the marquee drag began. When the drag started
+    /// with no modifier key, this is empty (so the marquee replaces). With
+    /// ⌘ or ⇧ held, this captures the pre-drag selection so we union the
+    /// swept rect onto it — matches Finder's additive marquee behavior.
+    @State private var marqueeBaseSelection: Set<FSNode.ID> = []
 
     var body: some View {
         ScrollView {
@@ -32,52 +37,27 @@ struct IconView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .gesture(marqueeGesture)
 
-                LazyVGrid(columns: columns, spacing: 14) {
-                    ForEach(tab.visibleNodes) { node in
-                        IconCell(
-                            node: node,
-                            iconEdge: CGFloat(iconSize),
-                            isSelected: tab.selection.contains(node.id),
-                            isCut: cutClipboard.pendingMove.contains(node.url),
-                            onSelect: { exclusive in
-                                if exclusive { tab.selection = [node.id] }
-                                else if tab.selection.contains(node.id) { tab.selection.remove(node.id) }
-                                else { tab.selection.insert(node.id) }
-                                state.focus = side
-                            },
-                            onOpen: {
-                                if node.isOpenableDirectory {
-                                    tab.navigate(to: node.url)
-                                } else {
-                                    NSWorkspace.shared.open(node.url)
-                                }
-                            },
-                            onQuickLook: { quickLook(start: node.url) }
-                        )
-                        .background(
-                            // Publish the cell's frame in the iconGrid coordinate space so
-                            // the marquee can hit-test against it.
-                            GeometryReader { geo in
-                                Color.clear.preference(
-                                    key: IconCellFramesKey.self,
-                                    value: [node.id: geo.frame(in: .named("iconGrid"))]
-                                )
+                LazyVGrid(columns: columns, spacing: 14, pinnedViews: [.sectionHeaders]) {
+                    ForEach(tab.groupedVisibleNodes(), id: \.0) { (label, nodes) in
+                        Section {
+                            ForEach(nodes) { node in
+                                iconCell(for: node)
                             }
-                        )
-                        .contextMenu {
-                            FileContextMenu.items(
-                                for: urlsForMenu(targeting: node),
-                                in: tab.url,
-                                tab: tab,
-                                state: state,
-                                onQuickLook: { urls in
-                                    if urls.contains(where: \.isRemoteSFTP) {
-                                        Task { @MainActor in await QuickLookCoordinator.shared.showAsync(urls, startAt: urls.first) }
-                                    } else {
-                                        QuickLookCoordinator.shared.show(urls, startAt: urls.first)
-                                    }
+                        } header: {
+                            if !label.isEmpty {
+                                HStack(spacing: 6) {
+                                    Text(label)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                    Text("\(nodes.count)")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.tertiary)
+                                    Spacer()
                                 }
-                            )
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(.regularMaterial)
+                            }
                         }
                     }
                 }
@@ -124,20 +104,92 @@ struct IconView: View {
             quickLook(start: start)
             return .handled
         }
-        .onKeyPress(.leftArrow)  { moveSelection(by: -1); return .handled }
-        .onKeyPress(.rightArrow) { moveSelection(by: +1); return .handled }
-        .onKeyPress(.upArrow)    { moveSelection(by: -approximateColumnCount()); return .handled }
-        .onKeyPress(.downArrow)  { moveSelection(by: +approximateColumnCount()); return .handled }
+        .onKeyPress(keys: [.leftArrow], phases: .down) { press in
+            tab.moveSelection(by: -1, extend: press.modifiers.contains(.shift))
+            state.focus = side
+            return .handled
+        }
+        .onKeyPress(keys: [.rightArrow], phases: .down) { press in
+            tab.moveSelection(by: +1, extend: press.modifiers.contains(.shift))
+            state.focus = side
+            return .handled
+        }
+        .onKeyPress(keys: [.upArrow], phases: .down) { press in
+            tab.moveSelection(by: -approximateColumnCount(), extend: press.modifiers.contains(.shift))
+            state.focus = side
+            return .handled
+        }
+        .onKeyPress(keys: [.downArrow], phases: .down) { press in
+            tab.moveSelection(by: +approximateColumnCount(), extend: press.modifiers.contains(.shift))
+            state.focus = side
+            return .handled
+        }
         .onKeyPress(.return) {
             openSelection()
             return .handled
         }
         .onTapGesture {
-            tab.selection.removeAll()
+            // ⌘ / ⇧ on empty space preserves the current selection (matches
+            // Finder); plain click clears it. Modifier flags come from the
+            // originating NSEvent since SwiftUI's TapGesture doesn't expose
+            // them directly.
+            let mods = NSApp.currentEvent?.modifierFlags ?? []
+            if !mods.contains(.command) && !mods.contains(.shift) {
+                tab.selection.removeAll()
+                tab.selectionAnchor = nil
+            }
             state.focus = side
         }
         .contextMenu {
             FileContextMenu.backgroundItems(directory: tab.url, tab: tab, state: state)
+        }
+    }
+
+    /// Single cell with all per-cell modifiers (frame publishing, context
+    /// menu). Extracted so the grouped-section ForEach stays readable.
+    @ViewBuilder
+    private func iconCell(for node: FSNode) -> some View {
+        IconCell(
+            node: node,
+            iconEdge: CGFloat(iconSize),
+            isSelected: tab.selection.contains(node.id),
+            isCut: cutClipboard.pendingMove.contains(node.url),
+            isMarked: tab.marked.contains(node.url),
+            onSelect: { modifiers in
+                tab.applyClickSelection(on: node.id, modifiers: modifiers)
+                state.focus = side
+            },
+            onOpen: {
+                if node.isOpenableDirectory {
+                    tab.navigate(to: node.url)
+                } else {
+                    NSWorkspace.shared.open(node.url)
+                }
+            },
+            onQuickLook: { quickLook(start: node.url) }
+        )
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: IconCellFramesKey.self,
+                    value: [node.id: geo.frame(in: .named("iconGrid"))]
+                )
+            }
+        )
+        .contextMenu {
+            FileContextMenu.items(
+                for: urlsForMenu(targeting: node),
+                in: tab.url,
+                tab: tab,
+                state: state,
+                onQuickLook: { urls in
+                    if urls.contains(where: \.isRemoteSFTP) {
+                        Task { @MainActor in await QuickLookCoordinator.shared.showAsync(urls, startAt: urls.first) }
+                    } else {
+                        QuickLookCoordinator.shared.show(urls, startAt: urls.first)
+                    }
+                }
+            )
         }
     }
 
@@ -159,24 +211,6 @@ struct IconView: View {
         } else {
             QuickLookCoordinator.shared.show(allURLs, startAt: start)
         }
-    }
-
-    /// Move the focus/selection by an offset within the *visible* nodes. A positive
-    /// offset moves later in the visible order; negative moves earlier. Clamps at
-    /// the ends — wrapping felt jarring when a filter narrows the list to a few.
-    private func moveSelection(by offset: Int) {
-        let visible = navNodes
-        guard !visible.isEmpty else { return }
-        let currentIndex: Int
-        if let firstID = tab.selection.first,
-           let i = visible.firstIndex(where: { $0.id == firstID }) {
-            currentIndex = i
-        } else {
-            currentIndex = offset >= 0 ? -1 : visible.count
-        }
-        let target = max(0, min(visible.count - 1, currentIndex + offset))
-        tab.selection = [visible[target].id]
-        state.focus = side
     }
 
     private func openSelection() {
@@ -221,6 +255,12 @@ struct IconView: View {
                 if marqueeStart == nil {
                     marqueeStart = value.startLocation
                     state.focus = side
+                    // Capture the existing selection only if the drag started
+                    // with a modifier — otherwise the marquee replaces.
+                    let mods = NSApp.currentEvent?.modifierFlags ?? []
+                    marqueeBaseSelection = (mods.contains(.command) || mods.contains(.shift))
+                        ? tab.selection
+                        : []
                 }
                 marqueeCurrent = value.location
                 applyMarqueeSelection()
@@ -228,6 +268,7 @@ struct IconView: View {
             .onEnded { _ in
                 marqueeStart = nil
                 marqueeCurrent = nil
+                marqueeBaseSelection = []
             }
     }
 
@@ -237,7 +278,8 @@ struct IconView: View {
         for (id, frame) in cellFrames where rect.intersects(frame) {
             hits.insert(id)
         }
-        if tab.selection != hits { tab.selection = hits }
+        let merged = marqueeBaseSelection.union(hits)
+        if tab.selection != merged { tab.selection = merged }
     }
 }
 
@@ -255,7 +297,8 @@ private struct IconCell: View {
     let iconEdge: CGFloat
     let isSelected: Bool
     let isCut: Bool
-    let onSelect: (Bool) -> Void   // exclusive == true → replace selection
+    let isMarked: Bool
+    let onSelect: (NSEvent.ModifierFlags) -> Void
     let onOpen: () -> Void
     let onQuickLook: () -> Void
 
@@ -263,7 +306,7 @@ private struct IconCell: View {
 
     var body: some View {
         VStack(alignment: .center, spacing: 6) {
-            ZStack {
+            ZStack(alignment: .topTrailing) {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isSelected ? Color.accentColor.opacity(0.20) : Color.clear)
                 Image(nsImage: icon ?? FileIconCache.icon(for: node.url))
@@ -271,6 +314,13 @@ private struct IconCell: View {
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
                     .frame(width: iconEdge, height: iconEdge)
+                if isMarked {
+                    Image(systemName: "flag.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.orange)
+                        .shadow(color: Color.black.opacity(0.4), radius: 1, y: 0.5)
+                        .padding(2)
+                }
             }
             .frame(width: iconEdge + 12, height: iconEdge + 12)
             VStack(alignment: .center, spacing: 2) {
@@ -298,7 +348,12 @@ private struct IconCell: View {
             TapGesture(count: 2).onEnded { onOpen() }
         )
         .simultaneousGesture(
-            TapGesture(count: 1).onEnded { onSelect(true) }
+            TapGesture(count: 1).onEnded {
+                // SwiftUI's TapGesture doesn't expose modifier flags — read
+                // them off the originating NSEvent so the parent view can
+                // distinguish plain click / ⌘-click / ⇧-click.
+                onSelect(NSApp.currentEvent?.modifierFlags ?? [])
+            }
         )
         .draggable(node.url)
         .task(id: node.url) {

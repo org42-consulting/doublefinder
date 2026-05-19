@@ -313,6 +313,16 @@ extension HelpTopic {
             HelpSection(heading: "Mode-switch animation", body: "Switching between List, Icon, Column, and Gallery cross-fades over 150 ms so the transition feels deliberate."),
             HelpSection(heading: "Switching modes", body: "Use the segmented control in the toolbar. View mode is per-tab — every tab remembers its own choice."),
             HelpSection(heading: "Column view specifics", body: "Selecting a row in any non-first column **updates only the preview pane**, not the selection used by toolbar Copy / Move / Trash. Those always operate on column 0, where the tab's main selection lives."),
+            HelpSection(heading: "Selecting items", bullets: [
+                "**Click** — select that item; clears any other selection.",
+                "**⌘-click** — add or remove the item from the current selection.",
+                "**⇧-click** — extend selection from the last clicked *anchor* item to the clicked item over the visible order.",
+                "**Drag empty space (marquee)** — select everything the rectangle touches. Hold **⌘** or **⇧** while dragging to add the swept items to the existing selection instead of replacing.",
+                "**Click empty space** — clears the selection. ⌘- or ⇧-clicking empty space preserves it.",
+                "**Arrow keys** — move the active selection; **⇧+arrow** extends from the anchor in the move direction.",
+                "**Space** — Quick Look the focused item.",
+                "List view rides on `NSTableView`'s native multi-select; Column view rides on `NSBrowser`'s. Icon and Gallery views implement the same modifier behaviour in SwiftUI via `TabState.applyClickSelection`.",
+            ]),
             HelpSection(heading: "Sorting", bullets: [
                 "Click a column header in List view to sort by it; click again to reverse.",
                 "Sort key and direction persist per tab.",
@@ -885,7 +895,7 @@ extension HelpTopic {
             HelpSection(body: "Right-click any `.zip`, `.tar`, `.tar.gz`, or `.tgz` and pick **Browse Archive** to list its contents without extracting first."),
             HelpSection(heading: "What you can do", bullets: [
                 "**Filter** — search the entry list by path.",
-                "**Extract All…** — pick a destination folder; the archive's stem becomes the new folder name; on success the result is revealed in Finder.",
+                "**Extract All…** — pick a destination folder; the archive's stem becomes the new folder name; a toast confirms on success.",
                 "**Add Files…** — append files / folders into the open archive in place. Visible for `.zip` and uncompressed `.tar`; hidden for `.tar.gz` because `tar -rf` can't append to a gzipped archive.",
                 "**Reveal in Finder** — surface the archive file itself.",
             ]),
@@ -1037,17 +1047,17 @@ extension HelpTopic {
             HelpSection(heading: "General", bullets: [
                 "**Starting Directory** — the URL each new window opens to when no state is restored.",
                 "**Restore windows and tabs on startup** — reopen the panes, tabs, and folders from your last session on launch.",
-                "**New windows open with** — *Two panes* or *One pane* as the default layout for fresh windows. Restored windows keep their previous pane-mode state.",
-                "**Show Inspector by default** — open new windows with the Inspector visible. Restored windows keep their previous Inspector state.",
+                "**New windows open with** — *Two panes* or *One pane*. Applies only when *Restore windows and tabs on startup* is off; restored windows always keep their saved pane-mode.",
+                "**Show Inspector by default** — open new windows with the Inspector visible. Applied to any new window whose saved session doesn't already specify an Inspector state. Doesn't change already-open windows.",
             ]),
             HelpSection(heading: "Appearance", bullets: [
                 "**Enable Dark Mode** — force a dark appearance regardless of the system Light/Dark setting. Leave off to follow the system automatically.",
             ]),
             HelpSection(heading: "Files", bullets: [
-                "**Default view mode** — *Icon*, *List*, or *Columns* for new tabs. Restored tabs keep the view they were last using.",
+                "**Default view mode** — *Icon*, *List*, or *Columns* for new tabs. Already-open tabs keep their current view; restored tabs keep the view they were last using.",
                 "**Show folders on top (Icon and List views)** — when on (default), directories sort before files inside the active sort key; toggle off for a strict by-name / by-size / by-date / by-kind sort that interleaves folders and files. The change applies live to every open tab.",
             ]),
-            HelpSection(heading: "Where preferences live", body: "Settings are written to the standard `UserDefaults` domain (`net.org42.doublefinder`). Use `defaults read net.org42.doublefinder` from a terminal to dump them; `defaults delete net.org42.doublefinder` to reset everything."),
+            HelpSection(heading: "Where preferences live", body: "Settings are written to the standard `UserDefaults` domain (`com.doublefinder.app`). Use `defaults read com.doublefinder.app` from a terminal to dump them; `defaults delete com.doublefinder.app` to reset everything."),
         ]
     )
 
@@ -1063,7 +1073,7 @@ extension HelpTopic {
             HelpSection(heading: "Recent locations", body: "`UserDefaults` key `df.recentLocations` — 15 most-recent local URLs."),
             HelpSection(heading: "Server bookmarks", body: "`~/Library/Application Support/DoubleFinder/servers.json` — host, user, port, identity file, display name. Passwords live in Keychain under the `com.org42.doublefinder.sftp` service identifier."),
             HelpSection(heading: "Edit-locally cache", body: "`~/Library/Caches/DoubleFinder/RemoteEdits/<endpoint>/<path>` — local copies of files opened via Edit Locally. Safe to delete; rebuilt on next use."),
-            HelpSection(heading: "Settings", body: "`UserDefaults` (`net.org42.doublefinder`) — see the **Preferences** topic."),
+            HelpSection(heading: "Settings", body: "`UserDefaults` (`com.doublefinder.app`) — see the **Preferences** topic."),
         ]
     )
 
@@ -1095,7 +1105,7 @@ extension HelpTopic {
                 "The toggle is window-scoped — make sure it's on for the window where you're looking.",
                 "Compare only considers visible nodes. If one side has a search active and the other doesn't, you're comparing apples and oranges; clear the search first.",
             ]),
-            HelpSection(heading: "Reset DoubleFinder completely", body: "Quit, then:\n\n```\nrm -rf ~/Library/Application\\ Support/DoubleFinder\nrm -rf ~/Library/Caches/DoubleFinder\ndefaults delete net.org42.doublefinder\n```\n\nRe-launch. You'll get a fresh install state."),
+            HelpSection(heading: "Reset DoubleFinder completely", body: "Quit, then:\n\n```\nrm -rf ~/Library/Application\\ Support/DoubleFinder\nrm -rf ~/Library/Caches/DoubleFinder\ndefaults delete com.doublefinder.app\n```\n\nRe-launch. You'll get a fresh install state."),
         ]
     )
 

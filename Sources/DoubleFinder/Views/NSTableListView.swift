@@ -177,29 +177,45 @@ struct NSTableListView: NSViewRepresentable {
             }
         }
 
-        // sync node changes — use granular reload when only cell data changed
-        if coord.lastNodes != tab.visibleNodes {
+        // Marked-set changed: reload the Name column so the flag overlay
+        // refreshes. Only Name has the badge so other columns can stay put.
+        if coord.lastMarked != tab.marked {
+            coord.lastMarked = tab.marked
+            let allRows = IndexSet(integersIn: 0..<table.numberOfRows)
+            if !allRows.isEmpty {
+                table.reloadData(forRowIndexes: allRows, columnIndexes: IndexSet(integer: 0))
+            }
+        }
+
+        // sync node changes — use granular reload when only cell data changed.
+        // A change in `tab.groupBy` also forces a full rebuild of `rowItems`
+        // because the header positions shift.
+        let groupByChanged = coord.lastGroupBy != tab.groupBy
+        if coord.lastNodes != tab.visibleNodes || groupByChanged {
             let old = coord.lastNodes
             let new = tab.visibleNodes
             coord.lastNodes = new
-            if old.map(\.id) == new.map(\.id) {
-                // same rows, same order — reload only cells whose data changed
-                let changedIndexes = IndexSet(
-                    zip(old, new).enumerated().compactMap { idx, pair in
-                        pair.0 != pair.1 ? idx : nil
-                    }
-                )
-                if !changedIndexes.isEmpty {
-                    table.reloadData(forRowIndexes: changedIndexes,
+            coord.lastGroupBy = tab.groupBy
+            coord.rebuildRowItems()
+            if !groupByChanged, old.map(\.id) == new.map(\.id) {
+                // Same rows, same order — reload only cells whose data changed.
+                // Map node-list indexes through `rowItems` so header offsets
+                // don't throw the reload off when grouping is on.
+                let changed = zip(old, new).enumerated().compactMap { idx, pair -> Int? in
+                    guard pair.0 != pair.1 else { return nil }
+                    return coord.rowIndex(of: pair.1.id)
+                }
+                if !changed.isEmpty {
+                    table.reloadData(forRowIndexes: IndexSet(changed),
                                      columnIndexes: IndexSet(0..<table.numberOfColumns))
                 }
             } else {
                 table.reloadData()
             }
         }
-        let desiredIndexes = IndexSet(tab.visibleNodes.enumerated().compactMap { idx, node in
-            tab.selection.contains(node.id) ? idx : nil
-        })
+        let desiredIndexes = IndexSet(
+            tab.selection.compactMap { coord.rowIndex(of: $0) }
+        )
         if table.selectedRowIndexes != desiredIndexes {
             table.selectRowIndexes(desiredIndexes, byExtendingSelection: false)
         }
@@ -241,6 +257,15 @@ struct NSTableListView: NSViewRepresentable {
         case name, date, size, kind, tags
     }
 
+    /// An entry in the table's flat row list. When `tab.groupBy == .none`
+    /// every row is a `.node`; otherwise headers are interleaved between
+    /// per-group node runs. The Coordinator rebuilds `rowItems` whenever
+    /// `tab.visibleNodes` or `tab.groupBy` changes.
+    enum RowItem {
+        case header(label: String, count: Int)
+        case node(FSNode)
+    }
+
     @MainActor
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var parent: NSTableListView
@@ -248,6 +273,12 @@ struct NSTableListView: NSViewRepresentable {
         var lastNodes: [FSNode] = []
         var lastCompareStatuses: [URL: CompareStatus] = [:]
         var lastCutURLs: Set<URL> = []
+        var lastMarked: Set<URL> = []
+        var lastGroupBy: GroupBy = .none
+        /// Source-of-truth for row indexing. Always mirrors the current node
+        /// list, with section headers interleaved when grouping is on. Every
+        /// table delegate method that takes a row index reads this.
+        var rowItems: [RowItem] = []
         var isSyncingSort = false
 
         init(parent: NSTableListView) {
@@ -255,6 +286,41 @@ struct NSTableListView: NSViewRepresentable {
         }
 
         var nodes: [FSNode] { parent.tab.visibleNodes }
+
+        /// Recompute `rowItems` from the current tab's grouped nodes. Called
+        /// from `updateNSView` whenever the node list or `tab.groupBy` changes.
+        func rebuildRowItems() {
+            let groups = parent.tab.groupedVisibleNodes()
+            var items: [RowItem] = []
+            if parent.tab.groupBy == .none {
+                items.reserveCapacity(nodes.count)
+                for node in nodes { items.append(.node(node)) }
+            } else {
+                for (label, groupNodes) in groups {
+                    items.append(.header(label: label, count: groupNodes.count))
+                    for node in groupNodes { items.append(.node(node)) }
+                }
+            }
+            rowItems = items
+        }
+
+        /// Returns the FSNode at a given table row, or nil if the row is a
+        /// group header. Replaces direct `nodes[row]` indexing throughout
+        /// the delegate / data-source code.
+        func nodeAt(row: Int) -> FSNode? {
+            guard row >= 0, row < rowItems.count else { return nil }
+            if case .node(let n) = rowItems[row] { return n }
+            return nil
+        }
+
+        /// Row index of the given node in `rowItems`, or nil if it isn't
+        /// currently displayed.
+        func rowIndex(of nodeID: FSNode.ID) -> Int? {
+            for (idx, item) in rowItems.enumerated() {
+                if case .node(let n) = item, n.id == nodeID { return idx }
+            }
+            return nil
+        }
 
         /// Distribute the scroll view's visible content width across all
         /// columns proportionally, respecting each column's `minWidth`. Called
@@ -359,19 +425,56 @@ struct NSTableListView: NSViewRepresentable {
         }
 
         /// Compare-folders row view: tints the row background using `CompareStatus`.
+        /// Group-header rows return a plain row view so the header cell renders
+        /// without compare tinting.
         func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-            guard row < nodes.count else { return nil }
-            let status = parent.compareStatuses[nodes[row].url]
+            guard row >= 0, row < rowItems.count else { return nil }
+            if case .header = rowItems[row] { return NSTableRowView() }
+            guard let node = nodeAt(row: row) else { return nil }
+            let status = parent.compareStatuses[node.url]
             return CompareRowView(status: status)
+        }
+
+        /// Marks header rows so NSTableView routes them through the group-row
+        /// rendering path (no selection highlight, allows full-width cells).
+        func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+            guard row >= 0, row < rowItems.count else { return false }
+            if case .header = rowItems[row] { return true }
+            return false
+        }
+
+        /// Headers are slightly taller than regular rows for visual weight.
+        func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+            guard row >= 0, row < rowItems.count else { return 20 }
+            if case .header = rowItems[row] { return 22 }
+            return 20
+        }
+
+        /// Group rows can't be selected.
+        func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+            guard row >= 0, row < rowItems.count else { return false }
+            if case .header = rowItems[row] { return false }
+            return true
         }
 
         // MARK: data source
 
-        func numberOfRows(in tableView: NSTableView) -> Int { nodes.count }
+        func numberOfRows(in tableView: NSTableView) -> Int { rowItems.count }
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-            guard let colID = tableColumn?.identifier, row < nodes.count else { return nil }
-            let node = nodes[row]
+            guard row >= 0, row < rowItems.count else { return nil }
+            // Group headers span the row via NSTableView's group-row rendering.
+            // We return our header cell from the *Name* column only; the other
+            // columns return nil so AppKit collapses them into the header.
+            if case .header(let label, let count) = rowItems[row] {
+                if tableColumn?.identifier == .name {
+                    let cell = makeOrReuse(tableView, identifier: NSUserInterfaceItemIdentifier("group-header"), kind: GroupHeaderCell.self)
+                    cell.set(label: label, count: count)
+                    return cell
+                }
+                return nil
+            }
+            guard let colID = tableColumn?.identifier, let node = nodeAt(row: row) else { return nil }
             let id = ColumnID(rawValue: colID.rawValue) ?? .name
             let isCut = parent.cutURLs.contains(node.url)
             let cellAlpha: CGFloat = isCut ? 0.45 : 1.0
@@ -379,9 +482,13 @@ struct NSTableListView: NSViewRepresentable {
             switch id {
             case .name:
                 let cell = makeOrReuse(tableView, identifier: colID, kind: NameCell.self)
-                cell.configure(node: node, onCommit: { [weak self] new in
-                    self?.commitRename(node: node, to: new)
-                })
+                cell.configure(
+                    node: node,
+                    isMarked: parent.tab.marked.contains(node.url),
+                    onCommit: { [weak self] new in
+                        self?.commitRename(node: node, to: new)
+                    }
+                )
                 cell.alphaValue = cellAlpha
                 return cell
             case .date:
@@ -425,8 +532,7 @@ struct NSTableListView: NSViewRepresentable {
             guard let table else { return }
             let indexes = table.selectedRowIndexes
             let newSel = Set(indexes.compactMap { idx -> FSNode.ID? in
-                guard idx < nodes.count else { return nil }
-                return nodes[idx].id
+                nodeAt(row: idx)?.id
             })
             if newSel != parent.tab.selection {
                 parent.tab.selection = newSel
@@ -461,8 +567,7 @@ struct NSTableListView: NSViewRepresentable {
         @objc func doubleClick(_ sender: Any?) {
             guard let table else { return }
             let row = table.clickedRow
-            guard row >= 0, row < nodes.count else { return }
-            let node = nodes[row]
+            guard let node = nodeAt(row: row) else { return }
             if node.isOpenableDirectory {
                 parent.tab.navigate(to: node.url)
             } else {
@@ -488,8 +593,7 @@ struct NSTableListView: NSViewRepresentable {
         }
 
         func tableView(_ tableView: NSTableView, typeSelectStringFor tableColumn: NSTableColumn?, row: Int) -> String? {
-            guard row < nodes.count else { return nil }
-            return nodes[row].name
+            return nodeAt(row: row)?.name
         }
 
         private func beginRenameOnSelected() {
@@ -515,8 +619,8 @@ struct NSTableListView: NSViewRepresentable {
         // MARK: drag
 
         func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
-            guard row < nodes.count else { return nil }
-            return nodes[row].url as NSURL
+            guard let node = nodeAt(row: row) else { return nil }
+            return node.url as NSURL
         }
 
         /// Custom drag image: the first row's icon, plus a small numeric
@@ -530,7 +634,7 @@ struct NSTableListView: NSViewRepresentable {
             dragImageOffset offset: UnsafeMutablePointer<NSPoint>
         ) -> NSImage {
             let count = rowIndexes.count
-            let firstURL: URL? = rowIndexes.first.flatMap { idx in idx < nodes.count ? nodes[idx].url : nil }
+            let firstURL: URL? = rowIndexes.first.flatMap { idx in nodeAt(row: idx)?.url }
             let base = firstURL.map { FileIconCache.icon(for: $0, size: NSSize(width: 64, height: 64)) }
                 ?? NSImage(systemSymbolName: "doc", accessibilityDescription: nil)!
 
@@ -580,7 +684,7 @@ struct NSTableListView: NSViewRepresentable {
         // MARK: drop
 
         func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
-            if row >= 0, row < nodes.count, nodes[row].isDirectory {
+            if let node = nodeAt(row: row), node.isDirectory {
                 tableView.setDropRow(row, dropOperation: .on)
             } else {
                 tableView.setDropRow(-1, dropOperation: .above)
@@ -591,8 +695,8 @@ struct NSTableListView: NSViewRepresentable {
         func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation op: NSTableView.DropOperation) -> Bool {
             let urls = (info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
             guard !urls.isEmpty else { return false }
-            if op == .on, row >= 0, row < nodes.count, nodes[row].isDirectory {
-                parent.onDropToFolder(nodes[row].url, urls)
+            if op == .on, let node = nodeAt(row: row), node.isDirectory {
+                parent.onDropToFolder(node.url, urls)
             } else {
                 parent.onDropToTab(urls)
             }
@@ -606,11 +710,11 @@ struct NSTableListView: NSViewRepresentable {
             guard let table else { return }
             let dir = parent.tab.url
             let clickedRow = table.clickedRow
-            if clickedRow < 0 || clickedRow >= nodes.count {
+            guard let clickedNode = nodeAt(row: clickedRow) else {
                 parent.onMenuNeeded(menu, [], dir)
                 return
             }
-            let clicked = nodes[clickedRow].url
+            let clicked = clickedNode.url
             let selected = selectedURLs(includingClicked: false)
             let urls = selected.contains(clicked) ? selected : [clicked]
             parent.onMenuNeeded(menu, urls, dir)
@@ -624,10 +728,7 @@ struct NSTableListView: NSViewRepresentable {
             if includingClicked, table.clickedRow >= 0, !rows.contains(table.clickedRow) {
                 rows = IndexSet(integer: table.clickedRow)
             }
-            return rows.compactMap { idx -> URL? in
-                guard idx < nodes.count else { return nil }
-                return nodes[idx].url
-            }
+            return rows.compactMap { idx -> URL? in nodeAt(row: idx)?.url }
         }
 
     }
@@ -674,6 +775,44 @@ private extension NSUserInterfaceItemIdentifier {
 
 // MARK: - Cell views
 
+/// Group-row cell — displays the bucket label and item count when grouping is
+/// active. Spans the row via NSTableView's group-row behavior; other columns
+/// return nil for header rows so AppKit collapses them.
+private final class GroupHeaderCell: NSTableCellView {
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let countLabel = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+    private func setup() {
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        titleLabel.textColor = .secondaryLabelColor
+        countLabel.font = .systemFont(ofSize: 10)
+        countLabel.textColor = .tertiaryLabelColor
+        addSubview(titleLabel)
+        addSubview(countLabel)
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            countLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
+            countLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+
+    func set(label: String, count: Int) {
+        titleLabel.stringValue = label
+        countLabel.stringValue = "\(count)"
+    }
+}
+
 private final class TextCell: NSTableCellView {
     private let label = NSTextField(labelWithString: "")
 
@@ -704,6 +843,18 @@ private final class NameCell: NSTableCellView, NSTextFieldDelegate {
     private let icon = NSImageView()
     private let name = NSTextField()
     private let gitBadge = GitBadgeView()
+    /// Tiny orange flag overlaid on the icon when the row's URL is in
+    /// `tab.marked`. Lives in the icon's superview so it can extend slightly
+    /// outside the 16x16 icon frame for visual prominence.
+    private let markedFlag: NSImageView = {
+        let v = NSImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = NSImage(systemSymbolName: "flag.fill", accessibilityDescription: "Marked")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .bold))
+        v.contentTintColor = NSColor.systemOrange
+        v.isHidden = true
+        return v
+    }()
     private var onCommit: ((String) -> Void)?
 
     override init(frame frameRect: NSRect) {
@@ -730,6 +881,7 @@ private final class NameCell: NSTableCellView, NSTextFieldDelegate {
         addSubview(icon)
         addSubview(name)
         addSubview(gitBadge)
+        addSubview(markedFlag)
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -741,13 +893,17 @@ private final class NameCell: NSTableCellView, NSTextFieldDelegate {
             gitBadge.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
             gitBadge.centerYAnchor.constraint(equalTo: centerYAnchor),
             gitBadge.widthAnchor.constraint(equalToConstant: 14),
-            gitBadge.heightAnchor.constraint(equalToConstant: 14)
+            gitBadge.heightAnchor.constraint(equalToConstant: 14),
+            markedFlag.trailingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 3),
+            markedFlag.bottomAnchor.constraint(equalTo: icon.bottomAnchor, constant: 3),
+            markedFlag.widthAnchor.constraint(equalToConstant: 11),
+            markedFlag.heightAnchor.constraint(equalToConstant: 11)
         ])
         // NSTableCellView.textField — lets NSTableView do its built-in things
         self.textField = name
     }
 
-    func configure(node: FSNode, onCommit: @escaping (String) -> Void) {
+    func configure(node: FSNode, isMarked: Bool, onCommit: @escaping (String) -> Void) {
         self.onCommit = onCommit
         name.stringValue = node.name
         // Bucket by extension for plain files; preserve unique icons for
@@ -755,6 +911,7 @@ private final class NameCell: NSTableCellView, NSTextFieldDelegate {
         let isPackage = (try? node.url.resourceValues(forKeys: [.isPackageKey]))?.isPackage ?? false
         icon.image = isPackage ? FileIconCache.iconExact(for: node.url) : FileIconCache.icon(for: node.url)
         gitBadge.state = node.gitStatus
+        markedFlag.isHidden = !isMarked
     }
 
     /// Flip the name text field into an editable state. Called from

@@ -91,6 +91,9 @@ enum FileContextMenu {
         }
 
         if isOpenableDir, !multiple, let url = urls.first {
+            addItem(menu, "Open in Other Pane") {
+                NotificationCenter.default.post(name: .openInOtherPaneRequested, object: nil, userInfo: ["url": url])
+            }
             addItem(menu, "Open in Terminal") {
                 openTerminal(at: url)
             }

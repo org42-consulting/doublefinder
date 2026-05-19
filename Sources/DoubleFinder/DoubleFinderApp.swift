@@ -75,6 +75,21 @@ struct DoubleFinderApp: App {
                 }
                 .keyboardShortcut("a", modifiers: [.command])
 
+                Button("Invert Selection") {
+                    NotificationCenter.default.post(name: .invertSelectionRequested, object: nil)
+                }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+
+                Button("Toggle Mark on Selection") {
+                    NotificationCenter.default.post(name: .toggleMarkRequested, object: nil)
+                }
+                .keyboardShortcut("m", modifiers: [.control])
+
+                Button("Clear Marks") {
+                    NotificationCenter.default.post(name: .clearMarksRequested, object: nil)
+                }
+                .keyboardShortcut("m", modifiers: [.control, .shift])
+
                 Button("Quick Filter") {
                     NotificationCenter.default.post(name: .quickFilterFocusRequested, object: nil)
                 }
@@ -228,6 +243,10 @@ struct DoubleFinderApp: App {
                 Divider()
 
                 FavoriteSlotCommands()
+
+                Divider()
+
+                TabSlotCommands()
             }
         }
 
@@ -436,5 +455,35 @@ private struct FavoriteSlotCommands: View {
             )
         }
         .keyboardShortcut(KeyEquivalent(char), modifiers: [.command, .option])
+    }
+}
+
+/// Nine menu items: ⌘1..⌘9 → activate the nth tab in the focused pane.
+/// Mirrors the browser convention; the focused pane's `PaneState.activeTabID`
+/// becomes the tab at that slot (clamped to the available tab count).
+private struct TabSlotCommands: View {
+    var body: some View {
+        Group {
+            slot(1, char: "1")
+            slot(2, char: "2")
+            slot(3, char: "3")
+            slot(4, char: "4")
+            slot(5, char: "5")
+            slot(6, char: "6")
+            slot(7, char: "7")
+            slot(8, char: "8")
+            slot(9, char: "9")
+        }
+    }
+
+    private func slot(_ n: Int, char: Character) -> some View {
+        Button("Go to Tab \(n)") {
+            NotificationCenter.default.post(
+                name: .activateTabSlotRequested,
+                object: nil,
+                userInfo: ["slot": n - 1]
+            )
+        }
+        .keyboardShortcut(KeyEquivalent(char), modifiers: [.command])
     }
 }

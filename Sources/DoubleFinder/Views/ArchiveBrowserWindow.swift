@@ -148,7 +148,10 @@ struct ArchiveBrowserWindow: View {
         extracting = true
         do {
             try await ArchiveBrowser.extractAll(archiveURL, to: dest)
-            NSWorkspace.shared.activateFileViewerSelecting([dest])
+            ToastCenter.shared.post(Toast(
+                icon: "checkmark.circle.fill",
+                message: "Extracted to \(dest.lastPathComponent)"
+            ))
         } catch {
             self.error = error.localizedDescription
         }

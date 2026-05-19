@@ -11,6 +11,10 @@ struct GalleryView: View {
     @State private var stripFrames: [FSNode.ID: CGRect] = [:]
     @State private var marqueeStart: CGPoint? = nil
     @State private var marqueeCurrent: CGPoint? = nil
+    /// Same role as IconView's `marqueeBaseSelection`: captures the existing
+    /// selection at drag start when ⌘ / ⇧ are held so the swept rect is
+    /// merged with the prior selection. Empty otherwise → marquee replaces.
+    @State private var marqueeBaseSelection: Set<FSNode.ID> = []
 
     private func urlsForMenu(targeting node: FSNode) -> [URL] {
         if tab.selection.contains(node.id), tab.selection.count > 1 {
@@ -120,8 +124,8 @@ struct GalleryView: View {
                     StripCell(
                         node: node,
                         isSelected: tab.selection.contains(node.id),
-                        onTap: {
-                            tab.selection = [node.id]
+                        onTap: { modifiers in
+                            tab.applyClickSelection(on: node.id, modifiers: modifiers)
                             state.focus = side
                         },
                         onDouble: {
@@ -180,6 +184,10 @@ struct GalleryView: View {
                 if marqueeStart == nil {
                     marqueeStart = value.startLocation
                     state.focus = side
+                    let mods = NSApp.currentEvent?.modifierFlags ?? []
+                    marqueeBaseSelection = (mods.contains(.command) || mods.contains(.shift))
+                        ? tab.selection
+                        : []
                 }
                 marqueeCurrent = value.location
                 applyMarqueeSelection()
@@ -187,6 +195,7 @@ struct GalleryView: View {
             .onEnded { _ in
                 marqueeStart = nil
                 marqueeCurrent = nil
+                marqueeBaseSelection = []
             }
     }
 
@@ -196,7 +205,8 @@ struct GalleryView: View {
         for (id, frame) in stripFrames where rect.intersects(frame) {
             hits.insert(id)
         }
-        if tab.selection != hits { tab.selection = hits }
+        let merged = marqueeBaseSelection.union(hits)
+        if tab.selection != merged { tab.selection = merged }
     }
 }
 
@@ -232,7 +242,7 @@ private struct GalleryPreview: View {
 private struct StripCell: View {
     let node: FSNode
     let isSelected: Bool
-    let onTap: () -> Void
+    let onTap: (NSEvent.ModifierFlags) -> Void
     let onDouble: () -> Void
     @State private var thumb: NSImage?
 
@@ -261,7 +271,9 @@ private struct StripCell: View {
                 .frame(maxWidth: 80)
         }
         .contentShape(Rectangle())
-        .onTapGesture { onTap() }
+        .onTapGesture {
+            onTap(NSApp.currentEvent?.modifierFlags ?? [])
+        }
         .gesture(TapGesture(count: 2).onEnded { onDouble() })
         .draggable(node.url)
         .task(id: node.url) {

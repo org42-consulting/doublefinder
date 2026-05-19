@@ -27,12 +27,12 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Tag dots** on files that have macOS user tags applied.
 - **Compare Folders mode** — toolbar toggle that tints rows red (unique to this side) and yellow (same name, different size or date) across the two panes; an inline legend appears above the file area so the tints aren't a mystery.
 - **`.app` bundles launch on double-click** — Finder-style package handling. Right-click ▸ Show Package Contents descends into the bundle.
-- **Marquee (drag-rectangle) selection** in both Icon view and the Gallery view's thumbnail strip.
-- **Hover preview popover** in Icon view — pause for ~500 ms on any cell to surface a thumbnail + name, size, modified date, and parent path without opening Quick Look.
+- **Marquee (drag-rectangle) selection** in both Icon view and the Gallery view's thumbnail strip — additive when ⌘ or ⇧ is held during the drag.
 - **Smart relative dates** everywhere — "Today 14:32 / Yesterday 09:12 / Mon 14:32 / 17 May / 17 May 2024" depending on recency.
 - **Loading spinner** appears in the lower-right while a slow network listing is in flight.
 - **List-view column widths persist** across launches — drag a column to your preferred width and it sticks.
 - **Adjustable icon size** — inline slider in Icon view (lower-right) sets the cell edge from 40-128 pt; persisted in `@AppStorage`.
+- **Status bar** at the bottom of each pane shows item count (or "N of M" when a filter is active), selected count and size, marked count (when any), and free space on the volume.
 - **Selection floating toolbar** above the path bar surfaces Open / Reveal in Finder / Trash when items are selected.
 - **Confirmation toasts** — ephemeral "Moved 3 files to Documents" capsule appears at the bottom of the window when a copy / move / trash finishes; click to dismiss or reveal.
 - **Visible pane divider** — a 1-pt hairline marks the splitter between panes so its draggable nature isn't a secret.
@@ -40,9 +40,11 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 ### Tabs
 
 - **Multiple tabs per pane** with `⌘T` new tab, `⌘W` close tab.
+- **Jump to tab** with ⌘1..⌘9 (focused pane). Mirrors browser convention.
 - **Drag tabs** within the tab bar to reorder; an accent-coloured insertion line shows where the dragged tab will land.
 - **Overflow menu** — when 5+ tabs are open, an "…" button in the tab bar surfaces every tab with a checkmark on the active one for fast jump-to-tab.
 - **Pinned tabs** — right-click a tab → Pin. Pinned tabs survive `⌘W`, restore on app launch, and *don't change directory*: opening a folder in a pinned tab spawns a new sibling tab instead, leaving the pinned one in place.
+- **Hidden-files indicator** — a small eye glyph appears on a tab pill while that tab has hidden files visible (⇧⌘.).
 - **Tab groups** — group tabs by color; right-click the group header to rename, disband, or drag a tab onto a header to assign it.
 - **Sync** the focused pane's URL onto the other pane (⌃⌘=).
 - **Swap** the two panes' tab lists entirely (⌥⌘\\).
@@ -63,6 +65,15 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Share…** in the context menu — opens the system share sheet (`NSSharingServicePicker`) for the current local selection.
 - **Native drag-and-drop**: drag between panes, into folders in any view, out to Finder or other apps. Multi-file drags render as a stacked-icon preview with a "+N" count badge.
 - **Transfer queue** in the toolbar — per-operation progress bars, cancel button, automatic retry hook; long copies / moves never block the UI.
+
+### Selecting & marking
+
+- **Click** to select, **⌘-click** to toggle into / out of the selection, **⇧-click** to extend from the last anchor over the visible order.
+- **Marquee** (drag-rectangle) in Icon and Gallery views; hold ⌘ or ⇧ while dragging to *add* swept items to the existing selection instead of replacing.
+- **Arrow keys** move the active selection; **⇧+arrow** extends from the anchor in the move direction.
+- **Invert Selection** (⇧⌘A) flips the selection over the currently-visible listing.
+- **Marked files** (⌃M to toggle, ⌃⇧M to clear) — independent of the selection; you can accumulate marks across multiple folders. When any items are marked, the toolbar's Copy / Move / Trash operate on the marked set instead of the current selection. A small orange flag badges marked rows / icons; the status bar shows the count.
+- **Group-by** in List and Icon views — section the listing by *Kind* (folders, images, video, documents, code, archives, …), *Date Modified* (today, yesterday, this week, …), or *Size* (Tiny / Small / Medium / Large / Very Large / Huge). Pick the grouping from the pane's sort/options popover; items inside each section still follow the active sort.
 
 ### Search
 
@@ -208,7 +219,8 @@ iconutil --convert icns Icons/AppIcon.iconset -o Sources/DoubleFinder/Resources/
 | Shortcut | Action |
 | --- | --- |
 | ⌘T | New tab |
-| ⌘W | Close tab (refuses on pinned) |
+| ⌘W | Close tab (last non-pinned tab closes the window) |
+| ⌘1 … ⌘9 | Activate tab N in the focused pane |
 | ⌥⌘N | New File |
 | ⇧⌘N | New folder |
 | ⌘K | Connect to Server… |
@@ -249,6 +261,9 @@ iconutil --convert icns Icons/AppIcon.iconset -o Sources/DoubleFinder/Resources/
 | ⌘Z | Undo (Move / Rename / Trash) |
 | ⇧⌘Z | Redo |
 | ⌘A | Select All Items |
+| ⇧⌘A | Invert Selection |
+| ⌃M | Toggle Mark on selected items (file-op toolbar uses marked when any are set) |
+| ⌃⇧M | Clear marks in the focused tab |
 
 ### View
 

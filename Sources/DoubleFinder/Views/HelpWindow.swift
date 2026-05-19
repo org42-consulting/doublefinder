@@ -165,6 +165,7 @@ extension HelpTopic {
         .compareDiff,
         .gitStatus,
         .tags,
+        .markedFiles,
         .cutPaste,
         .undo,
         .commandPalette,
@@ -329,6 +330,33 @@ extension HelpTopic {
                 "Directories always sort *before* files within a given direction.",
                 "**Sort by name** uses `localizedStandardCompare` — Finder-style natural number sorting (`file2.txt` before `file10.txt`).",
             ]),
+            HelpSection(heading: "Group-by", bullets: [
+                "Open the pane's sort/options popover (the small gear in the tab strip) and pick a **Group By** mode — None, *Kind*, *Date Modified*, or *Size*.",
+                "**Kind** buckets file types: Folders, Images, Video, Audio, Documents, Spreadsheets, Presentations, Archives, Code, Applications, plus an `EXT` fallback for one-off extensions.",
+                "**Date Modified** uses relative buckets: Today, Yesterday, This Week, This Month, This Year, Older.",
+                "**Size** buckets: Tiny (< 10 KB), Small (< 1 MB), Medium (< 10 MB), Large (< 100 MB), Very Large (< 1 GB), Huge (≥ 1 GB). Folders go in their own bucket since their size is calculate-on-demand.",
+                "Section headers are sticky in Icon view and rendered as group rows in List view. Items inside each bucket still follow the active sort.",
+            ]),
+        ]
+    )
+
+    static let markedFiles = HelpTopic(
+        id: "markedFiles",
+        title: "Marked files",
+        systemImage: "flag.fill",
+        sections: [
+            HelpSection(body: "**Marks** are an independent set, separate from the current selection. They let you stage work across multiple folders: walk through several directories, accumulate the files you care about, then act on the whole batch from one toolbar action."),
+            HelpSection(heading: "Toggling marks", bullets: [
+                "**⌃M** — toggle marks on the current selection. Mass-toggle behavior: if every selected item is already marked, all are unmarked; otherwise the whole selection is marked.",
+                "**⌃⇧M** — clear every mark in the focused tab.",
+                "Marks are *per tab*, not per window. Switching tabs preserves the marks; closing the tab discards them.",
+            ]),
+            HelpSection(heading: "Where marks show up", bullets: [
+                "**Icon view** — small orange flag overlaid on the top-right of each marked cell.",
+                "**List view** — orange flag badge on the file icon in the Name column.",
+                "**Status bar** — an orange \"N marked\" segment appears alongside the item / selection counts.",
+            ]),
+            HelpSection(heading: "How marks affect file ops", body: "When *any* file is marked in the focused tab, the toolbar's Copy / Move / Trash / Rename actions operate on the **marked set** instead of the current selection. With nothing marked, behavior falls back to the selection as usual. This means you can build a multi-folder set, then run a single Copy that touches all of it."),
         ]
     )
 
@@ -986,7 +1014,8 @@ extension HelpTopic {
         sections: [
             HelpSection(heading: "Files & tabs", shortcuts: [
                 ("⌘T", "New tab"),
-                ("⌘W", "Close tab"),
+                ("⌘W", "Close tab (closes window on last non-pinned tab)"),
+                ("⌘1…9", "Activate tab N in focused pane"),
                 ("⌥⌘N", "New File"),
                 ("⇧⌘N", "New folder"),
                 ("⌘K", "Connect to Server…"),
@@ -1017,6 +1046,9 @@ extension HelpTopic {
                 ("⇧⌘⌫", "Empty Trash…"),
                 ("⌘Z", "Undo"),
                 ("⌘A", "Select All"),
+                ("⇧⌘A", "Invert Selection"),
+                ("⌃M", "Toggle Mark (toolbar ops switch to marked when any)"),
+                ("⌃⇧M", "Clear Marks"),
             ]),
             HelpSection(heading: "View & inspection", shortcuts: [
                 ("⇧⌘.", "Toggle Hidden Files"),

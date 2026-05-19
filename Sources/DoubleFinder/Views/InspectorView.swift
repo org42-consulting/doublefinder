@@ -402,6 +402,38 @@ private struct InspectorContent: View {
         }
     }
 
+    /// Bundle of synchronous-but-blocking work the preamble used to do on
+    /// the main actor: resource-key reads, the POSIX permission stat, the
+    /// volume info `statfs`, and the symlink resolve. Computed off-main and
+    /// then applied back on the main actor in one hop.
+    private struct InspectorPreamble {
+        let attrs: [URLResourceKey: Any]
+        let tags: [Tag]
+        let permissions: Int?
+        let volume: VolumeInfo?
+        let symlink: SymlinkInfo?
+    }
+
+    /// `nonisolated` so it can run from a `Task.detached`. SwiftUI `View` types are
+    /// implicitly main-actor in recent Swift versions; the explicit annotation pulls
+    /// this static helper out of that isolation so the off-main call site compiles.
+    nonisolated private static func loadPreamble(for url: URL) -> InspectorPreamble {
+        let attrs = (try? url.resourceValues(forKeys: [
+            .isDirectoryKey, .fileSizeKey, .totalFileSizeKey,
+            .contentModificationDateKey, .creationDateKey, .typeIdentifierKey
+        ]).allValues) ?? [:]
+        let tags = TagStore.tags(for: url)
+        var permissions: Int? = nil
+        if !url.isRemoteSFTP,
+           let fmAttrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let n = fmAttrs[.posixPermissions] as? NSNumber {
+            permissions = n.intValue
+        }
+        let volume = url.isRemoteSFTP ? nil : VolumeInfo.load(for: url)
+        let symlink = url.isRemoteSFTP ? nil : SymlinkInfo.load(for: url)
+        return InspectorPreamble(attrs: attrs, tags: tags, permissions: permissions, volume: volume, symlink: symlink)
+    }
+
     private func loadInfo() async {
         // Reset transient state on every selection change so we don't show stale
         // hashes for the previously-selected file.
@@ -422,34 +454,36 @@ private struct InspectorContent: View {
             return
         }
         thumbnail = await ThumbnailService.shared.thumbnail(for: node.url, size: CGSize(width: 200, height: 200))
-        attrs = (try? node.url.resourceValues(forKeys: [
-            .isDirectoryKey, .fileSizeKey, .totalFileSizeKey,
-            .contentModificationDateKey, .creationDateKey, .typeIdentifierKey
-        ]).allValues) ?? [:]
-        tags = TagStore.tags(for: node.url)
-        if !node.url.isRemoteSFTP,
-           let fmAttrs = try? FileManager.default.attributesOfItem(atPath: node.url.path),
-           let n = fmAttrs[.posixPermissions] as? NSNumber {
-            permissions = n.intValue
-        } else {
-            permissions = nil
-        }
-        guard !node.url.isRemoteSFTP else { return }
-        volume = VolumeInfo.load(for: node.url)
-        gitDetail = await GitStatusService.shared.detail(for: node.url)
-        symlink = SymlinkInfo.load(for: node.url)
+
+        // Run the synchronous resource-value / stat / volume / symlink work
+        // off the main actor. Each of those calls is a kernel round-trip
+        // and used to block the UI for several ms on slow disks (especially
+        // network mounts). Hop back to main only to publish results.
         let url = node.url
+        let preamble = await Task.detached(priority: .userInitiated) {
+            InspectorContent.loadPreamble(for: url)
+        }.value
+        attrs = preamble.attrs
+        tags = preamble.tags
+        permissions = preamble.permissions
+        volume = preamble.volume
+        symlink = preamble.symlink
+
+        guard !node.url.isRemoteSFTP else { return }
+        // GitStatusService is an actor: the await already hops off-main
+        // automatically. Kept here so the call ordering matches the
+        // original code's expectations for downstream view updates.
+        gitDetail = await GitStatusService.shared.detail(for: node.url)
         signing = await Task.detached(priority: .userInitiated) {
             SigningInfo.load(for: url)
         }.value
-        let typeID = (attrs[.typeIdentifierKey] as? String).flatMap(UTType.init)
+        let typeID = (preamble.attrs[.typeIdentifierKey] as? String).flatMap(UTType.init)
         if let utype = typeID {
             if utype.conforms(to: .pdf) {
                 pdfInfo = await Task.detached(priority: .userInitiated) {
-                    PDFInfo.load(for: node.url)
+                    PDFInfo.load(for: url)
                 }.value
             } else if utype.conforms(to: .image) {
-                let url = node.url
                 media = await Task.detached(priority: .userInitiated) {
                     MediaInfo.loadImage(url: url)
                 }.value

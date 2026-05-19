@@ -10,6 +10,16 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 
 <img width="1347" height="931" alt="Image" src="https://github.com/user-attachments/assets/6d09f270-abb6-4c6e-84ae-3c4e3c5e349c" />
 
+## What's new in 1.5
+
+- **Faster directory listings.** Large folders open noticeably quicker — the local-FS list path now uses a single bulk-attribute pass per entry instead of three (~5–10× faster on 10k-entry cold-cache directories). File tags fade in shortly after the listing appears rather than blocking initial render.
+- **Smoother column view on slow or network folders.** Deeper-column listings load asynchronously: clicking into a slow folder no longer freezes the UI; columns reload when the listing arrives, mirroring the existing git-status load pattern.
+- **Snappier large directories.** Selection, right-click menus, and toolbar actions in folders with thousands of items are now O(1) instead of O(n²) — built around an internal URL-keyed lookup map, plus a row-index map inside the List view.
+- **Hardened remote connection handling.** Hostnames and usernames that would otherwise let an attacker inject OpenSSH options (e.g. `-oProxyCommand=…`) or FTP control-channel commands are rejected before connection. Saved-server JSON and cached remote-edit files are now written with 0600 permissions, and the SFTP command quoter now uses literal single-quote escaping.
+- **Quicker app launch with many tabs restored.** Only the active tab of each pane refreshes immediately on launch; inactive tabs load on first activation, so 30-tab workspaces no longer fire 30 concurrent directory listings at startup.
+- **Less main-thread work everywhere.** FSEvents now deliver the first change in a batch immediately (no more 300 ms refresh stalls during a build), the Inspector's stat-heavy preamble runs off-main, the sidebar no longer regenerates its row identity per render, and Spotlight searches are capped at 2000 results with URL extraction moved off the main queue.
+- **Bounded memory.** Thumbnail and file-icon caches are now byte-bounded (128 MB / 16 MB) and evict under memory pressure instead of by raw count — a few high-res gallery previews can no longer balloon the cache into the gigabytes.
+
 ## Features
 
 ### Browsing & navigation
@@ -192,7 +202,7 @@ The script:
 You can override `VERSION` and `BUILD_NUMBER` via env vars:
 
 ```bash
-VERSION=1.4.1 BUILD_NUMBER=42 ./scripts/package.sh
+VERSION=1.5 BUILD_NUMBER=42 ./scripts/package.sh
 ```
 
 To install:
@@ -201,7 +211,7 @@ To install:
 mv build/DoubleFinder.app /Applications/
 ```
 
-Or share `build/DoubleFinder-1.4.dmg` — mounting it gives users the familiar drag-onto-Applications experience.
+Or share `build/DoubleFinder-1.5.dmg` — mounting it gives users the familiar drag-onto-Applications experience.
 
 ### Regenerating the icon
 

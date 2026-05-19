@@ -20,10 +20,15 @@ final class DirectoryWatcher {
             let watcher = Unmanaged<DirectoryWatcher>.fromOpaque(info).takeUnretainedValue()
             watcher.onChange?()
         }
+        // NoDefer: deliver the FIRST event in a batch immediately, then coalesce
+        // subsequent events within the 0.3s latency window. Without this, FSEvents
+        // waits a full quiet period after each batch before delivering — stalling
+        // refreshes by 300+ms in actively churning directories.
         let flags = UInt32(
             kFSEventStreamCreateFlagFileEvents
             | kFSEventStreamCreateFlagUseCFTypes
             | kFSEventStreamCreateFlagIgnoreSelf
+            | kFSEventStreamCreateFlagNoDefer
         )
         stream = FSEventStreamCreate(
             kCFAllocatorDefault,

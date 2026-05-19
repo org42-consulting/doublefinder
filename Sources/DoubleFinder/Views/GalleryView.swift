@@ -15,10 +15,18 @@ struct GalleryView: View {
     /// selection at drag start when ⌘ / ⇧ are held so the swept rect is
     /// merged with the prior selection. Empty otherwise → marquee replaces.
     @State private var marqueeBaseSelection: Set<FSNode.ID> = []
+    /// Throttle clock for marquee commits — see IconView.lastMarqueeCommit
+    /// for the rationale. Selection writes during a drag are coalesced to
+    /// ~30 Hz so observers aren't republished at the gesture's full update
+    /// rate.
+    @State private var lastMarqueeCommit: Date = .distantPast
 
     private func urlsForMenu(targeting node: FSNode) -> [URL] {
         if tab.selection.contains(node.id), tab.selection.count > 1 {
-            return tab.selection.compactMap { id in tab.nodes.first { $0.id == id }?.url }
+            // O(1) lookup per ID via the FSNode-by-URL map kept on TabState;
+            // avoids the O(n) `tab.nodes.first(where:)` scan per selected
+            // item that scaled with directory size.
+            return tab.selection.compactMap { id in tab.nodesByID[id]?.url }
         }
         return [node.url]
     }
@@ -188,14 +196,26 @@ struct GalleryView: View {
                     marqueeBaseSelection = (mods.contains(.command) || mods.contains(.shift))
                         ? tab.selection
                         : []
+                    // First tick of a fresh drag always commits immediately;
+                    // reset the throttle so the user sees responsive feedback.
+                    lastMarqueeCommit = .distantPast
                 }
                 marqueeCurrent = value.location
+                // Coalesce: skip intermediate ticks that arrive faster than
+                // ~30 Hz so observers of `tab.selection` don't get hammered.
+                let now = Date()
+                guard now.timeIntervalSince(lastMarqueeCommit) >= 0.033 else { return }
+                lastMarqueeCommit = now
                 applyMarqueeSelection()
             }
             .onEnded { _ in
+                // Always commit the final state so the gesture's last frame
+                // isn't dropped by the throttle.
+                applyMarqueeSelection()
                 marqueeStart = nil
                 marqueeCurrent = nil
                 marqueeBaseSelection = []
+                lastMarqueeCommit = .distantPast
             }
     }
 

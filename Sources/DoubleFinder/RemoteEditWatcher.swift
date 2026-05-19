@@ -36,7 +36,9 @@ final class RemoteEditWatcher: ObservableObject {
         guard remoteURL.isRemoteSFTP, let endpoint = remoteURL.sftpEndpoint else {
             NSSound.beep(); return
         }
-        let localURL = cachedPath(for: endpoint, remotePath: remoteURL.sftpPath)
+        guard let localURL = cachedPath(for: endpoint, remotePath: remoteURL.sftpPath) else {
+            NSSound.beep(); return
+        }
 
         // Already being watched → just open again.
         if watches[localURL] != nil {
@@ -44,10 +46,16 @@ final class RemoteEditWatcher: ObservableObject {
             return
         }
 
-        // Create the cache directory hierarchy.
+        // Create the cache directory hierarchy; restrict to owner-only so cached
+        // remote file copies aren't world-readable.
+        let cacheDir = localURL.deletingLastPathComponent()
         try? FileManager.default.createDirectory(
-            at: localURL.deletingLastPathComponent(),
+            at: cacheDir,
             withIntermediateDirectories: true
+        )
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: cacheDir.path
         )
 
         let transport = SFTPFileTransport(endpoint: endpoint)
@@ -61,6 +69,11 @@ final class RemoteEditWatcher: ObservableObject {
                 try await transport.download(remoteCopy, to: localURL, progress: progress)
             },
             completion: { [weak self] in
+                // Restrict the cached copy to owner-read/write only.
+                try? FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600],
+                    ofItemAtPath: localURL.path
+                )
                 Task { @MainActor in
                     guard let self else { return }
                     let mtime = self.fileMtime(localURL) ?? Date()
@@ -89,7 +102,7 @@ final class RemoteEditWatcher: ObservableObject {
 
     // MARK: - Private
 
-    private func cachedPath(for endpoint: RemoteEndpoint, remotePath: String) -> URL {
+    private func cachedPath(for endpoint: RemoteEndpoint, remotePath: String) -> URL? {
         let cachesBase = (try? FileManager.default.url(
             for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         )) ?? URL(fileURLWithPath: NSTemporaryDirectory())
@@ -97,11 +110,20 @@ final class RemoteEditWatcher: ObservableObject {
         // Filesystem-safe leg: replace problematic characters in the host/user part.
         let accountLeg = endpoint.canonicalAccount.replacingOccurrences(of: "/", with: "_")
         let trimmed = remotePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        return cachesBase
+        let cacheRoot = cachesBase
             .appendingPathComponent("DoubleFinder", isDirectory: true)
             .appendingPathComponent("RemoteEdits", isDirectory: true)
             .appendingPathComponent(accountLeg, isDirectory: true)
-            .appendingPathComponent(trimmed)
+        let candidate = cacheRoot.appendingPathComponent(trimmed)
+
+        // Guard against path traversal: a remote path with ".." segments could escape
+        // the cache root. Standardize both sides and verify containment.
+        let rootStd = cacheRoot.standardized.path
+        let candStd = candidate.standardized.path
+        guard candStd.hasPrefix(rootStd + "/") || candStd == rootStd else {
+            return nil
+        }
+        return candidate
     }
 
     private func fileMtime(_ url: URL) -> Date? {

@@ -413,21 +413,51 @@ private struct PaneFooter: View {
         return "\(total) item\(plural)"
     }
 
+    /// 30-second TTL cache for `URL.volumeAvailableCapacityKey` lookups,
+    /// shared across all `PaneFooter` instances. The capacity stat is a
+    /// `statfs` under the hood and is invoked from `body` — so unthrottled
+    /// it ran on every tab event, every selection change, and every footer
+    /// republish. The volume's free space barely changes second-to-second,
+    /// so a coarse TTL is a strict improvement.
+    private static var volumeAvailableCache: [URL: (value: Int64?, fetchedAt: Date)] = [:]
+    private static let volumeAvailableTTL: TimeInterval = 30
+
     private func volumeAvailable(for url: URL) -> String {
         if url.isRemoteSFTP { return "" }
-        let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityKey])
-        if let bytes = values?.volumeAvailableCapacity {
-            return "\(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)) available"
+        let bytes = Self.cachedVolumeAvailable(for: url)
+        if let bytes {
+            return "\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) available"
         }
         return ""
+    }
+
+    /// Returns the cached free-space value for `url`, refreshing only if the
+    /// previously fetched value is older than `volumeAvailableTTL` seconds
+    /// (or never fetched). Returns nil when the resource value can't be read.
+    private static func cachedVolumeAvailable(for url: URL) -> Int64? {
+        let now = Date()
+        if let entry = volumeAvailableCache[url],
+           now.timeIntervalSince(entry.fetchedAt) < volumeAvailableTTL {
+            return entry.value
+        }
+        let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityKey])
+        let bytes = values?.volumeAvailableCapacity.map { Int64($0) }
+        volumeAvailableCache[url] = (value: bytes, fetchedAt: now)
+        return bytes
     }
 
     /// Sums file sizes of the selected nodes (directories count as 0 since we don't
     /// recurse). Returns "" when the selection has no measurable size — for example
     /// a folder-only selection — so the footer stays uncluttered.
     private var selectedSizeSuffix: String {
-        let selectedNodes = tab.nodes.filter { tab.selection.contains($0.id) && !$0.isDirectory }
-        let total = selectedNodes.compactMap(\.size).reduce(Int64(0), +)
+        // O(1)-per-ID lookups via TabState.nodesByID, then sum. Avoids
+        // scanning `tab.nodes` once per selected id and once more via the
+        // outer filter on every footer render.
+        var total: Int64 = 0
+        for id in tab.selection {
+            guard let node = tab.nodesByID[id], !node.isDirectory, let size = node.size else { continue }
+            total &+= size
+        }
         guard total > 0 else { return "" }
         return " · \(ByteCountFormatter.string(fromByteCount: total, countStyle: .file))"
     }

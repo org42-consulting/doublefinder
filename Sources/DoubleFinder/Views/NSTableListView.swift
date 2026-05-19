@@ -114,7 +114,15 @@ struct NSTableListView: NSViewRepresentable {
         // re-fit columns whenever the scroll view's content area changes.
         scroll.postsFrameChangedNotifications = true
         scroll.contentView.postsBoundsChangedNotifications = true
-        NotificationCenter.default.addObserver(
+        // Defense in depth: if SwiftUI ever recycles a coordinator with a
+        // stale token still attached, drop it before we register a new one.
+        // Without this, repeated `makeNSView` calls leak observers and the
+        // refit closure keeps the table/scroll alive past their useful life.
+        if let prior = coord.frameObserver {
+            NotificationCenter.default.removeObserver(prior)
+            coord.frameObserver = nil
+        }
+        coord.frameObserver = NotificationCenter.default.addObserver(
             forName: NSView.frameDidChangeNotification,
             object: scroll,
             queue: .main
@@ -251,6 +259,18 @@ struct NSTableListView: NSViewRepresentable {
         }
     }
 
+    /// SwiftUI calls this when the representable is torn down (tab close,
+    /// pane swap, window close). Drop the frame-change observer so its
+    /// closure stops holding references to the table/scroll. Required to be
+    /// `static` by `NSViewRepresentable`. Belt-and-braces with the
+    /// Coordinator's `deinit` — whichever fires first wins.
+    static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+        if let token = coordinator.frameObserver {
+            NotificationCenter.default.removeObserver(token)
+            coordinator.frameObserver = nil
+        }
+    }
+
     // MARK: - Coordinator
 
     enum ColumnID: String {
@@ -279,29 +299,59 @@ struct NSTableListView: NSViewRepresentable {
         /// list, with section headers interleaved when grouping is on. Every
         /// table delegate method that takes a row index reads this.
         var rowItems: [RowItem] = []
+        /// O(1) lookup from a node's URL to its row in `rowItems`. Rebuilt
+        /// alongside `rowItems` in `rebuildRowItems()`. Replaces a linear
+        /// scan in `rowIndex(of:)` that turned `updateNSView`'s selection
+        /// diff into O(n^2) on large tabs (n_selected * n_rows).
+        private var rowIndexByID: [URL: Int] = [:]
         var isSyncingSort = false
+        /// Token for the scroll view's `frameDidChangeNotification` observer
+        /// registered in `makeNSView`. Stored here so we can unregister on
+        /// dismantle/deinit — otherwise every re-evaluation of `body` (tab
+        /// switch, view-mode change) leaked another observer whose closure
+        /// kept the table and scroll alive indefinitely.
+        var frameObserver: NSObjectProtocol?
 
         init(parent: NSTableListView) {
             self.parent = parent
+        }
+
+        deinit {
+            // Safe to call from any queue; `NotificationCenter.removeObserver`
+            // doesn't require main-actor isolation. Covers the case where
+            // SwiftUI nils the representable before dismantleNSView runs.
+            if let token = frameObserver {
+                NotificationCenter.default.removeObserver(token)
+            }
         }
 
         var nodes: [FSNode] { parent.tab.visibleNodes }
 
         /// Recompute `rowItems` from the current tab's grouped nodes. Called
         /// from `updateNSView` whenever the node list or `tab.groupBy` changes.
+        /// Also rebuilds `rowIndexByID` so `rowIndex(of:)` stays O(1).
         func rebuildRowItems() {
             let groups = parent.tab.groupedVisibleNodes()
             var items: [RowItem] = []
+            var index: [URL: Int] = [:]
             if parent.tab.groupBy == .none {
                 items.reserveCapacity(nodes.count)
-                for node in nodes { items.append(.node(node)) }
+                index.reserveCapacity(nodes.count)
+                for node in nodes {
+                    index[node.url] = items.count
+                    items.append(.node(node))
+                }
             } else {
                 for (label, groupNodes) in groups {
                     items.append(.header(label: label, count: groupNodes.count))
-                    for node in groupNodes { items.append(.node(node)) }
+                    for node in groupNodes {
+                        index[node.url] = items.count
+                        items.append(.node(node))
+                    }
                 }
             }
             rowItems = items
+            rowIndexByID = index
         }
 
         /// Returns the FSNode at a given table row, or nil if the row is a
@@ -314,12 +364,11 @@ struct NSTableListView: NSViewRepresentable {
         }
 
         /// Row index of the given node in `rowItems`, or nil if it isn't
-        /// currently displayed.
+        /// currently displayed. O(1) via `rowIndexByID`. The dictionary is
+        /// rebuilt in lockstep with `rowItems` so they can't drift.
         func rowIndex(of nodeID: FSNode.ID) -> Int? {
-            for (idx, item) in rowItems.enumerated() {
-                if case .node(let n) = item, n.id == nodeID { return idx }
-            }
-            return nil
+            // FSNode.ID == URL, so the ID *is* the dictionary key.
+            return rowIndexByID[nodeID]
         }
 
         /// Distribute the scroll view's visible content width across all

@@ -14,30 +14,49 @@ import Foundation
 /// for those.
 @MainActor
 enum FileIconCache {
-    private static var cache: [String: NSImage] = [:]
-    private static let queueLock = NSLock()
+    /// Cost-bounded storage. Icons are small (16x16..128x128 @ 4 bytes/px), so
+    /// 16 MB comfortably holds thousands of variants. NSCache also evicts on
+    /// system memory-pressure warnings automatically.
+    private static let cache: NSCache<NSString, NSImage> = {
+        let c = NSCache<NSString, NSImage>()
+        c.totalCostLimit = 16 * 1024 * 1024
+        return c
+    }()
     /// Default size used by every view that just wants a recognisable thumbnail
     /// at row height. Callers that need a larger preview pass their own size.
     static let defaultSize = NSSize(width: 16, height: 16)
 
     /// Returns a cached icon for the file type of `url`. Falls back to a fresh
-    /// `NSWorkspace` lookup when the extension is unknown.
+    /// `NSWorkspace` lookup when the (type, size) combination isn't cached.
+    ///
+    /// Keyed by `(type-bucket, size)` so each size is fetched once and reused
+    /// directly thereafter — no per-call `lockFocus`/`unlockFocus` resize.
+    /// `NSWorkspace.icon(forFile:)` is itself Launch Services-cached, so the
+    /// few times we miss the in-process cache for a new size are cheap.
     static func icon(for url: URL, size: NSSize? = nil) -> NSImage {
-        let key = cacheKey(for: url)
-        if let cached = cache[key] {
-            if let size, cached.size != size {
-                let resized = NSImage(size: size)
-                resized.lockFocus()
-                cached.draw(in: NSRect(origin: .zero, size: size))
-                resized.unlockFocus()
-                return resized
-            }
-            return cached
+        let key = cacheKey(for: url, size: size) as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+        let raw = NSWorkspace.shared.icon(forFile: url.path)
+        let image: NSImage
+        if let size {
+            // Copy before mutating `.size` — `NSWorkspace.icon` returns a
+            // Launch Services-cached singleton, and other call sites at other
+            // sizes share the same instance. Mutating it would race their
+            // rendering.
+            image = (raw.copy() as? NSImage) ?? raw
+            image.size = size
+        } else {
+            image = raw
         }
-        let image = NSWorkspace.shared.icon(forFile: url.path)
-        if let size { image.size = size }
-        cache[key] = image
+        cache.setObject(image, forKey: key, cost: pixelCost(of: image))
         return image
+    }
+
+    private static func pixelCost(of image: NSImage) -> Int {
+        if let rep = image.representations.compactMap({ $0 as? NSBitmapImageRep }).first {
+            return rep.pixelsWide * rep.pixelsHigh * 4
+        }
+        return Int(image.size.width * image.size.height * 4)
     }
 
     /// For app-bundle icons (which are unique per app) the cache by extension
@@ -49,7 +68,17 @@ enum FileIconCache {
         return image
     }
 
-    private static func cacheKey(for url: URL) -> String {
+    /// `(type-bucket, size)` key. `size: nil` uses a "native" suffix so callers
+    /// that don't care about size share a separate cache slot from sized requests.
+    private static func cacheKey(for url: URL, size: NSSize?) -> String {
+        let base = baseKey(for: url)
+        if let size {
+            return "\(base)|w=\(Int(size.width))|h=\(Int(size.height))"
+        }
+        return "\(base)|native"
+    }
+
+    private static func baseKey(for url: URL) -> String {
         let ext = url.pathExtension.lowercased()
         // .app bundles vary per app — never bucket them by extension.
         if ext == "app" { return "app:\(url.path)" }
@@ -66,6 +95,6 @@ enum FileIconCache {
 
     /// Drop everything cached; intended for tests or low-memory pressure.
     static func clear() {
-        cache.removeAll(keepingCapacity: true)
+        cache.removeAllObjects()
     }
 }

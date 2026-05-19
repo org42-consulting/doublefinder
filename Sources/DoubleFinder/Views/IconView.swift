@@ -25,6 +25,18 @@ struct IconView: View {
     /// ⌘ or ⇧ held, this captures the pre-drag selection so we union the
     /// swept rect onto it — matches Finder's additive marquee behavior.
     @State private var marqueeBaseSelection: Set<FSNode.ID> = []
+    /// Timestamp of the last marquee selection commit during a drag. Used to
+    /// coalesce high-frequency `onChanged` ticks: we ignore anything that
+    /// arrives within ~33 ms of the prior commit so the selection set isn't
+    /// republished to every observer at the gesture's full update rate.
+    @State private var lastMarqueeCommit: Date = .distantPast
+    /// True only while a marquee drag is in flight. Gates per-cell frame
+    /// emission: cells publish their `IconCellFramesKey` preference only
+    /// during a marquee, so normal scrolling and selection ticks don't pay
+    /// the per-visible-cell preference cost. Cells re-render once when this
+    /// flips on (the gesture's `minimumDistance` of 6 pt gives SwiftUI a
+    /// frame to flush preferences before the first hit-test).
+    @State private var marqueeActive: Bool = false
 
     var body: some View {
         ScrollView {
@@ -37,30 +49,14 @@ struct IconView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .gesture(marqueeGesture)
 
-                LazyVGrid(columns: columns, spacing: 14, pinnedViews: [.sectionHeaders]) {
-                    ForEach(tab.groupedVisibleNodes(), id: \.0) { (label, nodes) in
-                        Section {
-                            ForEach(nodes) { node in
-                                iconCell(for: node)
-                            }
-                        } header: {
-                            if !label.isEmpty {
-                                HStack(spacing: 6) {
-                                    Text(label)
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                    Text("\(nodes.count)")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.tertiary)
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(.regularMaterial)
-                            }
-                        }
-                    }
-                }
+                // `tab.groupedNodes` is now memoized on TabState (rebuilt via
+                // `didSet` on nodes/quickFilter/groupBy), so reading it from
+                // `body` is an array fetch — no per-render grouping work.
+                IconViewGrid(
+                    tab: tab,
+                    columns: columns,
+                    cellBuilder: { iconCell(for: $0) }
+                )
                 .padding(16)
 
                 // Marquee rectangle overlay
@@ -169,11 +165,19 @@ struct IconView: View {
             onQuickLook: { quickLook(start: node.url) }
         )
         .background(
-            GeometryReader { geo in
-                Color.clear.preference(
-                    key: IconCellFramesKey.self,
-                    value: [node.id: geo.frame(in: .named("iconGrid"))]
-                )
+            // Per-cell frame publishing is only needed for the marquee
+            // hit-test. Outside a marquee gesture, skip emitting preferences
+            // entirely so cells appearing/disappearing during normal scroll
+            // don't pay the preference-reduce cost.
+            Group {
+                if marqueeActive {
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: IconCellFramesKey.self,
+                            value: [node.id: geo.frame(in: .named("iconGrid"))]
+                        )
+                    }
+                }
             }
         )
         .contextMenu {
@@ -197,7 +201,10 @@ struct IconView: View {
     /// otherwise operate on just the clicked node. Matches Finder's behavior.
     private func urlsForMenu(targeting node: FSNode) -> [URL] {
         if tab.selection.contains(node.id), tab.selection.count > 1 {
-            return tab.selection.compactMap { id in tab.nodes.first { $0.id == id }?.url }
+            // O(1) lookup per selected ID via the FSNode-by-URL map kept on
+            // TabState — avoids the previous O(n) `tab.nodes.first(where:)`
+            // scan that scaled with directory size for every selected item.
+            return tab.selection.compactMap { id in tab.nodesByID[id]?.url }
         }
         return [node.url]
     }
@@ -261,14 +268,36 @@ struct IconView: View {
                     marqueeBaseSelection = (mods.contains(.command) || mods.contains(.shift))
                         ? tab.selection
                         : []
+                    // First tick of a fresh drag always commits so the user
+                    // sees immediate feedback; reset the throttle clock too.
+                    lastMarqueeCommit = .distantPast
+                    // Activate per-cell preference emission and discard any
+                    // stale frames left over from cells that have scrolled
+                    // out of view since the previous marquee ended.
+                    cellFrames.removeAll(keepingCapacity: true)
+                    marqueeActive = true
                 }
                 marqueeCurrent = value.location
+                // Coalesce: skip intermediate ticks that arrive faster than
+                // ~30 Hz. Every TabState mutation republishes through every
+                // observer, so writing the selection on every gesture frame
+                // (which can fire at the display refresh rate or higher) is
+                // an O(observers × selection.count) cost we don't need.
+                let now = Date()
+                guard now.timeIntervalSince(lastMarqueeCommit) >= 0.033 else { return }
+                lastMarqueeCommit = now
                 applyMarqueeSelection()
             }
             .onEnded { _ in
+                // Always commit the final state so the gesture's last frame
+                // isn't dropped by the throttle.
+                applyMarqueeSelection()
                 marqueeStart = nil
                 marqueeCurrent = nil
                 marqueeBaseSelection = []
+                lastMarqueeCommit = .distantPast
+                marqueeActive = false
+                cellFrames.removeAll(keepingCapacity: true)
             }
     }
 
@@ -280,6 +309,44 @@ struct IconView: View {
         }
         let merged = marqueeBaseSelection.union(hits)
         if tab.selection != merged { tab.selection = merged }
+    }
+}
+
+// MARK: - Grid renderer
+//
+// Reads `tab.groupedNodes` directly — that property is memoized on TabState
+// and rebuilt only when `nodes`, `quickFilter`, or `groupBy` actually change,
+// so this view's `body` does no grouping work itself.
+private struct IconViewGrid<Cell: View>: View {
+    @ObservedObject var tab: TabState
+    let columns: [GridItem]
+    let cellBuilder: (FSNode) -> Cell
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 14, pinnedViews: [.sectionHeaders]) {
+            ForEach(tab.groupedNodes, id: \.0) { (label, nodes) in
+                Section {
+                    ForEach(nodes) { node in
+                        cellBuilder(node)
+                    }
+                } header: {
+                    if !label.isEmpty {
+                        HStack(spacing: 6) {
+                            Text(label)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Text("\(nodes.count)")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(.regularMaterial)
+                    }
+                }
+            }
+        }
     }
 }
 

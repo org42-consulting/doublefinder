@@ -12,7 +12,11 @@ struct FSNode: Identifiable, Hashable {
     let isDirectory: Bool
     let size: Int64?
     let modified: Date?
-    let tags: [Tag]
+    /// Mutable so `TabState.loadTagsInBackground(for:)` can patch xattr-derived
+    /// tags into already-listed nodes without re-listing. The initial listing
+    /// returns nodes with `tags: []`, then a follow-up off-actor pass enriches
+    /// them — keeps the directory render fast on cold caches.
+    var tags: [Tag]
     var gitStatus: GitFileState? = nil
     /// Recursive folder size, populated on-demand by the "Calculate Size" action.
     /// Cleared on the next `tab.refresh()` since the listing replaces all nodes.
@@ -446,13 +450,66 @@ final class TabState: ObservableObject, Identifiable {
     /// Trash operations act on this set instead of `selection`, letting users
     /// stage work across multiple folders without losing context.
     @Published var marked: Set<URL> = []
-    @Published var nodes: [FSNode] = []
+    @Published var nodes: [FSNode] = [] {
+        didSet { rebuildDerivedFromNodes() }
+    }
+    /// O(1) lookup map mirroring `nodes`, kept in sync via the `didSet` above.
+    /// Views and notification handlers should prefer `nodesByID[url]` over
+    /// `nodes.first(where:)` to avoid O(n²) hotspots on large listings.
+    @Published private(set) var nodesByID: [URL: FSNode] = [:]
+
+    /// `nodes` with `quickFilter` applied. Memoized via `didSet` on the inputs
+    /// (`nodes`, `quickFilter`) so views can read `tab.visibleNodes` in `body`
+    /// without re-running the filter on every SwiftUI publish.
+    @Published private(set) var visibleNodes: [FSNode] = []
+
+    /// `visibleNodes` bucketed by `groupBy`. Single source of truth for the
+    /// list / icon / gallery views — they read this directly instead of each
+    /// caching their own grouping in `@State`.
+    @Published private(set) var groupedNodes: [(String, [FSNode])] = [("", [])]
+
+    private func rebuildDerivedFromNodes() {
+        rebuildNodesByID()
+        rebuildVisibleNodes()
+        rebuildGroupedNodes()
+    }
+    private func rebuildNodesByID() {
+        var map: [URL: FSNode] = [:]
+        map.reserveCapacity(nodes.count)
+        for node in nodes { map[node.url] = node }
+        nodesByID = map
+    }
+    private func rebuildVisibleNodes() {
+        let q = quickFilter.trimmingCharacters(in: .whitespaces)
+        if q.isEmpty {
+            visibleNodes = nodes
+        } else {
+            visibleNodes = nodes.filter { $0.name.localizedStandardContains(q) }
+        }
+    }
+    private func rebuildGroupedNodes() {
+        let visible = visibleNodes
+        if groupBy == .none {
+            groupedNodes = [("", visible)]
+            return
+        }
+        var buckets: [String: [FSNode]] = [:]
+        var order: [String] = []
+        for node in visible {
+            let label = groupBy.bucket(for: node)
+            if buckets[label] == nil { order.append(label) }
+            buckets[label, default: []].append(node)
+        }
+        groupedNodes = order.map { ($0, buckets[$0] ?? []) }
+    }
     @Published var sortKey: SortKey = .name
     @Published var sortAscending: Bool = true
     /// Section grouping for List and Icon views. `.none` (default) renders
     /// the listing flat; other values insert section headers between buckets
     /// while still ordering items inside each bucket by `sortKey`.
-    @Published var groupBy: GroupBy = .none
+    @Published var groupBy: GroupBy = .none {
+        didSet { rebuildGroupedNodes() }
+    }
     @Published var loadError: String?
     /// Counter of in-flight ops this tab is the source or destination of.
     /// Bumped/decremented by `CopyMoveCoordinator` around its TransferQueue
@@ -467,13 +524,11 @@ final class TabState: ObservableObject, Identifiable {
     @Published var renameRequest: FSNode.ID?
     /// In-place name filter applied on top of `nodes`. Independent from Spotlight
     /// search (`searchText`); the filter never touches disk. Cleared with Esc.
-    @Published var quickFilter: String = ""
-
-    /// What the file views actually render — `nodes` with the quick-filter applied.
-    var visibleNodes: [FSNode] {
-        let q = quickFilter.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return nodes }
-        return nodes.filter { $0.name.localizedStandardContains(q) }
+    @Published var quickFilter: String = "" {
+        didSet {
+            rebuildVisibleNodes()
+            rebuildGroupedNodes()
+        }
     }
     @Published var showHidden: Bool = false {
         didSet {
@@ -493,6 +548,13 @@ final class TabState: ObservableObject, Identifiable {
     }
     @Published var searchKind: SearchKind = .byName
 
+    /// False until the tab has had its first directory listing (either via
+    /// `refresh()` or because a snapshot-restore deferred it). PaneState uses
+    /// this on activation to trigger a lazy refresh the first time the user
+    /// switches to a restored-but-not-yet-loaded tab. Distinct from
+    /// `isLoading` (which is true only while a refresh is in flight).
+    var isInitiallyLoaded: Bool = false
+
     weak var window: WindowState?
 
     private var history: [URL] = []
@@ -506,7 +568,19 @@ final class TabState: ObservableObject, Identifiable {
     /// Mirrors `url.sftpEndpoint` so `deinit` (which is nonisolated) can read it safely.
     nonisolated(unsafe) private var _currentSFTPEndpoint: RemoteEndpoint?
 
-    init(url: URL) {
+    /// Designated initializer.
+    /// - Parameter url: the directory this tab points at.
+    /// - Parameter refreshImmediately: when true (the default, used for fresh
+    ///   tabs and brand-new windows), the tab kicks off `refresh()` and starts
+    ///   FSEvents watching during init. When false (used by snapshot-restore
+    ///   for *inactive* tabs), the tab stays idle until `markActivated()` is
+    ///   called by PaneState — avoiding e.g. 50 concurrent directory listings
+    ///   on launch of a 50-tab workspace.
+    convenience init(url: URL) {
+        self.init(url: url, refreshImmediately: true)
+    }
+
+    init(url: URL, refreshImmediately: Bool) {
         self.url = url
         self.viewMode = ViewMode.userDefault
         self._currentSFTPEndpoint = url.sftpEndpoint
@@ -536,11 +610,35 @@ final class TabState: ObservableObject, Identifiable {
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            // Refresh the cache eagerly so the re-sort that follows picks up
+            // the new value. This observer fires on the .main queue, so it's
+            // safe to update the nonisolated cache from here.
+            let fresh = UserDefaults.standard.object(forKey: SettingsKey.foldersOnTop) as? Bool ?? true
+            TabState.cachedFoldersOnTop = fresh
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.nodes = TabState.sorted(self.nodes, by: self.sortKey, ascending: self.sortAscending)
             }
         }
+        if refreshImmediately {
+            restartWatching()
+            isInitiallyLoaded = true
+            Task { await self.refresh() }
+        }
+        // When refreshImmediately is false, restartWatching() and refresh()
+        // are deferred until `markActivated()` is invoked by PaneState the
+        // first time this tab becomes the active tab.
+    }
+
+    /// Called by `PaneState` when this tab becomes active. If it hasn't loaded
+    /// yet (i.e. it was restored from a snapshot as a background tab and never
+    /// activated), kick off the FS watcher and a refresh. Idempotent — once
+    /// `isInitiallyLoaded` flips to true, subsequent calls no-op so the user's
+    /// existing nodes / selection aren't clobbered when they tab-switch back
+    /// and forth.
+    func markActivated() {
+        guard !isInitiallyLoaded else { return }
+        isInitiallyLoaded = true
         restartWatching()
         Task { await self.refresh() }
     }
@@ -557,17 +655,21 @@ final class TabState: ObservableObject, Identifiable {
         }
     }
 
-    convenience init(from persisted: StatePersistence.Snapshot.Pane.Tab) {
+    /// Snapshot-restoring convenience init. `refreshImmediately` defaults to
+    /// true so legacy call sites are unaffected; PaneState's restore path
+    /// passes false for non-active tabs so they stay idle until activated.
+    convenience init(from persisted: StatePersistence.Snapshot.Pane.Tab,
+                     refreshImmediately: Bool = true) {
         // Remote URLs are stored as absolute strings (sftp://...); local tabs as plain paths.
         if let full = URL(string: persisted.path), full.isRemoteSFTP {
-            self.init(url: full)
+            self.init(url: full, refreshImmediately: refreshImmediately)
             self.connectionState = .remoteDisconnected(reason: "Reconnect to restore this session.")
         } else {
             let local = URL(fileURLWithPath: persisted.path)
             let fallback = FileManager.default.fileExists(atPath: local.path)
                 ? local
                 : FileManager.default.homeDirectoryForCurrentUser
-            self.init(url: fallback)
+            self.init(url: fallback, refreshImmediately: refreshImmediately)
         }
         self.viewMode = ViewMode(rawValue: persisted.viewMode) ?? ViewMode.userDefault
         self.sortKey = SortKey(rawValue: persisted.sortKey) ?? .name
@@ -673,26 +775,63 @@ final class TabState: ObservableObject, Identifiable {
     }
 
     private func applySearchResults(_ urls: [URL]) async {
-        let fm = FileManager.default
         let hidden = showHidden
-        let mapped: [FSNode] = urls.compactMap { u in
-            if !hidden && u.lastPathComponent.hasPrefix(".") { return nil }
-            let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isPackageKey])
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: u.path, isDirectory: &isDir) else { return nil }
-            return FSNode(
-                url: u,
-                isDirectory: isDir.boolValue,
-                size: v?.fileSize.map(Int64.init),
-                modified: v?.contentModificationDate,
-                tags: TagStore.tags(for: u),
-                isPackage: v?.isPackage ?? false
-            )
-        }
+        let target = url
+        // The mapping does per-URL resourceValues / fileExists reads. Run
+        // off the main actor so big result batches don't block UI updates.
+        // Tags are loaded by `loadTagsInBackground` after the initial render.
+        let mapped: [FSNode] = await Task.detached(priority: .userInitiated) {
+            let fm = FileManager.default
+            return urls.compactMap { u -> FSNode? in
+                if !hidden && u.lastPathComponent.hasPrefix(".") { return nil }
+                let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isPackageKey])
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: u.path, isDirectory: &isDir) else { return nil }
+                return FSNode(
+                    url: u,
+                    isDirectory: isDir.boolValue,
+                    size: v?.fileSize.map(Int64.init),
+                    modified: v?.contentModificationDate,
+                    tags: [],
+                    isPackage: v?.isPackage ?? false
+                )
+            }
+        }.value
         self.nodes = sorted(mapped)
         if searchScope == .folder {
             await decorateWithGitStatus()
         }
+        await loadTagsInBackground(for: target)
+    }
+
+    /// Patches xattr-derived tags onto already-listed nodes. Runs the syscalls
+    /// off the main actor so the directory listing stays responsive on cold
+    /// caches; guards against navigation races so a slow tag pass from the
+    /// previous directory can't clobber the new one.
+    private func loadTagsInBackground(for target: URL) async {
+        // SFTP nodes don't carry xattrs; nothing to do.
+        guard !target.isRemoteSFTP else { return }
+        let urls = nodes.map(\.url)
+        guard !urls.isEmpty else { return }
+        let tagMap: [URL: [Tag]] = await Task.detached(priority: .utility) {
+            var out: [URL: [Tag]] = [:]
+            out.reserveCapacity(urls.count / 4)
+            for u in urls {
+                let t = TagStore.tags(for: u)
+                if !t.isEmpty { out[u] = t }
+            }
+            return out
+        }.value
+        guard self.url == target, !tagMap.isEmpty else { return }
+        var newNodes = nodes
+        var changed = false
+        for (url, tags) in tagMap {
+            guard let idx = newNodes.firstIndex(where: { $0.url == url }),
+                  newNodes[idx].tags != tags else { continue }
+            newNodes[idx].tags = tags
+            changed = true
+        }
+        if changed { nodes = newNodes }
     }
 
     var transport: any FileTransport {
@@ -765,6 +904,7 @@ final class TabState: ObservableObject, Identifiable {
         selection.removeAll()
         quickFilter = ""
         RecentLocationsStore.shared.push(resolved)
+        isInitiallyLoaded = true
         Task { await self.refresh() }
 
         _currentSFTPEndpoint = willBeRemote ? newEndpoint : nil
@@ -786,6 +926,7 @@ final class TabState: ObservableObject, Identifiable {
         future.append(url)
         url = prev
         selection.removeAll()
+        isInitiallyLoaded = true
         Task { await self.refresh() }
     }
 
@@ -795,6 +936,7 @@ final class TabState: ObservableObject, Identifiable {
         history.append(url)
         url = next
         selection.removeAll()
+        isInitiallyLoaded = true
         Task { await self.refresh() }
     }
 
@@ -885,6 +1027,7 @@ final class TabState: ObservableObject, Identifiable {
             self.loadError = nil
             if !target.isRemoteSFTP {
                 await decorateWithGitStatus()
+                await loadTagsInBackground(for: target)
             }
         } catch {
             self.nodes = []
@@ -913,19 +1056,25 @@ final class TabState: ObservableObject, Identifiable {
     @MainActor
     private func handleSessionDisconnect(reason: String, endpoint: RemoteEndpoint) {
         guard url.sftpEndpoint == endpoint else { return }
+        // Drop the subscription marker so that after we re-acquire the
+        // session the next `subscribeToSessionDisconnectIfNeeded` call
+        // attaches an observer to the brand-new session instead of
+        // early-returning on the stale entry.
+        disconnectSubscribed.remove(endpoint)
         connectionState = .remoteReconnecting
-        Task { @MainActor in
+        Task { @MainActor [weak self] in
             RemoteSessionManager.shared.release(endpoint)
-            guard let window = window else {
-                connectionState = .remoteDisconnected(reason: reason)
+            guard let self else { return }
+            guard let window = self.window else {
+                self.connectionState = .remoteDisconnected(reason: reason)
                 return
             }
             do {
                 _ = try await RemoteSessionManager.shared.acquire(endpoint, in: window)
                 await self.refresh()
-                connectionState = .remoteConnected
+                self.connectionState = .remoteConnected
             } catch {
-                connectionState = .remoteDisconnected(reason: error.localizedDescription)
+                self.connectionState = .remoteDisconnected(reason: error.localizedDescription)
             }
         }
     }
@@ -936,44 +1085,57 @@ final class TabState: ObservableObject, Identifiable {
         guard !statuses.isEmpty else { return }
         // ensure the current listing still corresponds to the directory we queried
         guard url == dir else { return }
-        let updated = nodes.map { node -> FSNode in
-            guard let state = statuses[node.url.standardizedFileURL] else { return node }
-            var copy = node
-            copy.gitStatus = state
-            return copy
+        // O(|nodes|) build-once index of standardized URL → array slot, so the
+        // per-status update below is O(|statuses|) rather than O(|statuses| ·
+        // |nodes|). For typical small `statuses` and large directories this
+        // collapses the prior O(n) map-allocation into an O(|statuses|) patch.
+        var indexByURL: [URL: Int] = [:]
+        indexByURL.reserveCapacity(nodes.count)
+        for (i, node) in nodes.enumerated() {
+            indexByURL[node.url.standardizedFileURL] = i
         }
-        if updated != nodes { nodes = updated }
+        var newNodes = nodes
+        var changed = false
+        for (url, state) in statuses {
+            guard let idx = indexByURL[url] else { continue }
+            if newNodes[idx].gitStatus != state {
+                newNodes[idx].gitStatus = state
+                changed = true
+            }
+        }
+        if changed { nodes = newNodes }
     }
 
     private func sorted(_ list: [FSNode]) -> [FSNode] {
         TabState.sorted(list, by: sortKey, ascending: sortAscending)
     }
 
-    /// Bucket the current `visibleNodes` under the active `groupBy` rule. Returns
-    /// `[(label, nodes)]` in a stable header order. When `groupBy == .none`,
-    /// returns a single `("", visibleNodes)` tuple so views can use the same
-    /// rendering path either way.
-    func groupedVisibleNodes() -> [(String, [FSNode])] {
-        let visible = visibleNodes
-        if groupBy == .none { return [("", visible)] }
-        var buckets: [String: [FSNode]] = [:]
-        var order: [String] = []
-        for node in visible {
-            let label = groupBy.bucket(for: node)
-            if buckets[label] == nil { order.append(label) }
-            buckets[label, default: []].append(node)
+    /// Backwards-compatible alias for the memoized `groupedNodes` property.
+    /// Prefer `tab.groupedNodes` directly in new code — the property is
+    /// `@Published` and stays in sync via `didSet` on `nodes`/`quickFilter`/`groupBy`.
+    func groupedVisibleNodes() -> [(String, [FSNode])] { groupedNodes }
+
+    /// Cached value of the `df.foldersOnTop` user preference so `sorted` doesn't
+    /// hit UserDefaults on every comparator call. Seeded lazily on first read
+    /// and refreshed by the `.foldersOnTopChanged` notification handler in
+    /// `TabState.init`. Marked `nonisolated(unsafe)` so off-actor callers (e.g.
+    /// detached sort tasks) can read it without hopping back to the main actor.
+    nonisolated(unsafe) private static var _foldersOnTopCache: Bool? = nil
+    nonisolated(unsafe) static var cachedFoldersOnTop: Bool {
+        get {
+            if let v = _foldersOnTopCache { return v }
+            let v = UserDefaults.standard.object(forKey: SettingsKey.foldersOnTop) as? Bool ?? true
+            _foldersOnTopCache = v
+            return v
         }
-        // Stable header order for kind/size buckets; date buckets are already
-        // chronological by virtue of `order` (first-seen order in `visible`,
-        // which is sorted by `sortKey`). For kind/size we'd rather see fixed
-        // semantic order (Folders first, then alphabetical for kinds; "Tiny"
-        // → "Huge" for size). Use the bucket(for:) output for any node from
-        // each label to anchor the ordering.
-        return order.map { ($0, buckets[$0] ?? []) }
+        set { _foldersOnTopCache = newValue }
     }
 
-    static func sorted(_ list: [FSNode], by sortKey: SortKey, ascending: Bool) -> [FSNode] {
-        let foldersOnTop = UserDefaults.standard.object(forKey: SettingsKey.foldersOnTop) as? Bool ?? true
+    /// Pure sort; reads only the `nonisolated(unsafe)` foldersOnTop cache. Marked
+    /// `nonisolated` so detached background listings (e.g. ColumnView's deeper-column
+    /// async loader) can sort without hopping back to the main actor.
+    nonisolated static func sorted(_ list: [FSNode], by sortKey: SortKey, ascending: Bool) -> [FSNode] {
+        let foldersOnTop = TabState.cachedFoldersOnTop
         return list.sorted { a, b in
             if foldersOnTop, a.isDirectory != b.isDirectory { return a.isDirectory }
             let asc: Bool
@@ -998,7 +1160,17 @@ final class TabState: ObservableObject, Identifiable {
 final class PaneState: ObservableObject, Identifiable {
     let id = UUID()
     @Published var tabs: [TabState]
-    @Published var activeTabID: TabState.ID
+    @Published var activeTabID: TabState.ID {
+        didSet {
+            // Lazy activation: a tab restored from snapshot as a *background*
+            // tab gets its first refresh + FSEvents watcher here, the moment
+            // the user first switches to it. Active tabs always loaded
+            // eagerly at construction time, so this is a no-op for them.
+            if let tab = tabs.first(where: { $0.id == activeTabID }) {
+                tab.markActivated()
+            }
+        }
+    }
     /// Ordered list of named tab groups in this pane. Order controls the
     /// rendering order of the group headers in the tab bar; tab membership is
     /// stored on `TabState.groupID`.
@@ -1012,12 +1184,27 @@ final class PaneState: ObservableObject, Identifiable {
     }
 
     convenience init(from persisted: StatePersistence.Snapshot.Pane) {
-        let tabs = persisted.tabs.map { TabState(from: $0) }
-        let safeTabs = tabs.isEmpty ? [TabState(url: FileManager.default.homeDirectoryForCurrentUser)] : tabs
-        let idx = max(0, min(persisted.activeIndex, safeTabs.count - 1))
-        self.init(url: safeTabs[idx].url)
+        // Pick the active index first, then construct tabs with
+        // `refreshImmediately: true` only for that index. Inactive tabs are
+        // built with refreshImmediately=false so they don't kick off a
+        // directory listing or start an FSEvents watcher until the user
+        // actually switches to them. For a 50-tab workspace this drops the
+        // launch-time fan-out from O(tabs) listings to O(panes).
+        let safeCount = max(persisted.tabs.count, 1)
+        let activeIdx = max(0, min(persisted.activeIndex, safeCount - 1))
+        let constructed: [TabState] = persisted.tabs.enumerated().map { i, snap in
+            TabState(from: snap, refreshImmediately: i == activeIdx)
+        }
+        let safeTabs = constructed.isEmpty
+            ? [TabState(url: FileManager.default.homeDirectoryForCurrentUser)]
+            : constructed
+        self.init(url: safeTabs[activeIdx].url)
+        // Replace the placeholder tab from `init(url:)` with the restored set.
+        // `activeTabID`'s didSet will call `markActivated()` on the new active
+        // tab, but since we built it with refreshImmediately: true above, it
+        // already started loading — `markActivated()` is idempotent.
         self.tabs = safeTabs
-        self.activeTabID = safeTabs[idx].id
+        self.activeTabID = safeTabs[activeIdx].id
         self.tabGroups = (persisted.groups ?? []).compactMap { g in
             guard let uuid = UUID(uuidString: g.id) else { return nil }
             return TabGroup(id: uuid, name: g.name, colorRaw: g.color, collapsed: g.collapsed)
@@ -1258,8 +1445,12 @@ final class WindowState: ObservableObject {
         for token in observerTokens {
             NotificationCenter.default.removeObserver(token)
         }
-        let weakSelf = self
-        Task { @MainActor in WindowRegistry.shared.unregister(weakSelf) }
+        // Capture only the stable identity — never `self` — and hop to the
+        // main actor via the registry's nonisolated entry point. Spawning a
+        // `Task` from `deinit` that captures `self` is undefined behaviour;
+        // passing an `ObjectIdentifier` value sidesteps that entirely.
+        let identity = ObjectIdentifier(self)
+        WindowRegistry.unregister(byIdentity: identity)
     }
 
     private func registerCommandObservers() {
@@ -1324,7 +1515,10 @@ final class WindowState: ObservableObject {
                     }
                     Task { @MainActor in
                         await tab.refresh()
-                        if let node = tab.nodes.first(where: { $0.url.standardizedFileURL == hit.standardizedFileURL }) {
+                        // Try the O(1) map first; fall back to a linear scan
+                        // if `hit` isn't already in standardized form.
+                        if let node = tab.nodesByID[hit] ?? tab.nodesByID[hit.standardizedFileURL]
+                            ?? tab.nodes.first(where: { $0.url.standardizedFileURL == hit.standardizedFileURL }) {
                             tab.selection = [node.id]
                         }
                     }
@@ -1336,7 +1530,7 @@ final class WindowState: ObservableObject {
                 guard let self else { return }
                 let tab = self.focusedPane.activeTab
                 guard let id = tab.selection.first,
-                      let node = tab.nodes.first(where: { $0.id == id }) else {
+                      let node = tab.nodesByID[id] else {
                     NSSound.beep()
                     return
                 }
@@ -1360,7 +1554,7 @@ final class WindowState: ObservableObject {
                 guard let self else { return }
                 let tab = self.focusedPane.activeTab
                 guard let id = tab.selection.first,
-                      let node = tab.nodes.first(where: { $0.id == id }) else { return }
+                      let node = tab.nodesByID[id] else { return }
                 if node.isOpenableDirectory {
                     tab.navigate(to: node.url)
                 } else {
@@ -1410,7 +1604,7 @@ final class WindowState: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let tab = self.focusedPane.activeTab
-                let urls = tab.selection.compactMap { id in tab.nodes.first(where: { $0.id == id })?.url }
+                let urls = tab.selection.compactMap { id in tab.nodesByID[id]?.url }
                 guard !urls.isEmpty else { NSSound.beep(); return }
                 FileContextMenu.duplicate(urls, refresh: { Task { @MainActor in await tab.refresh() } })
             }
@@ -1423,7 +1617,7 @@ final class WindowState: ObservableObject {
                     NSSound.beep()
                     return
                 }
-                let urls = tab.selection.compactMap { id in tab.nodes.first(where: { $0.id == id })?.url }
+                let urls = tab.selection.compactMap { id in tab.nodesByID[id]?.url }
                 if urls.isEmpty {
                     NSWorkspace.shared.activateFileViewerSelecting([tab.url])
                 } else {
@@ -1474,7 +1668,7 @@ final class WindowState: ObservableObject {
                         let url = try await FileOps.makeFile(in: tab.url)
                         await tab.refresh()
                         // Land on the new file and immediately offer inline rename.
-                        if let id = tab.nodes.first(where: { $0.url == url })?.id {
+                        if let id = tab.nodesByID[url]?.id {
                             tab.selection = [id]
                             tab.renameRequest = id
                         }
@@ -1652,7 +1846,7 @@ final class WindowState: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let tab = self.focusedPane.activeTab
-                let urls = tab.selection.compactMap { id in tab.nodes.first(where: { $0.id == id })?.url }
+                let urls = tab.selection.compactMap { id in tab.nodesByID[id]?.url }
                 guard !urls.isEmpty else { NSSound.beep(); return }
                 CutClipboard.shared.cut(urls)
             }
@@ -1707,24 +1901,67 @@ final class WindowState: ObservableObject {
         favourites.append(SidebarFavourite(title: title, systemImage: "folder", path: url.path))
     }
 
+    /// POSIX-shell quote `s`: wrap in single quotes and escape any embedded
+    /// single quote with the `'\''` trick. Safe to embed inside any shell
+    /// command line — no interpolation, no glob, no metacharacter wins.
+    private static func posixQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// Escape `s` for embedding in an AppleScript double-quoted string
+    /// literal. Backslashes first, then double quotes.
+    private static func appleScriptQuote(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\", with: "\\\\")
+         .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
     /// Launch Terminal.app and ssh into the given endpoint, cd'ing to `path` on
     /// arrival. Uses `ssh -t` so the remote tty is allocated; the remote shell
     /// inherits via `exec $SHELL -l` (with `$SHELL` expanded on the remote, not
     /// locally — that's why we escape the `$`).
+    ///
+    /// Two layers of quoting are required because the user's input is passed
+    /// through *two* interpreters in sequence: AppleScript's `do script` first
+    /// hands a string to `/bin/sh`, which then parses it as a shell command.
+    /// So every untrusted interpolation is POSIX-shell-quoted (single-quote
+    /// wrapped) before the whole shell command is AppleScript-escaped and
+    /// embedded in `do script "…"`. Skipping either layer permits injection.
     static func openSSHTerminal(endpoint: RemoteEndpoint, path: String) {
-        // POSIX-shell quote the remote path: wrap in single quotes and escape any
-        // embedded single quote with the `'\''` trick.
-        let escapedPath = path.replacingOccurrences(of: "'", with: "'\\''")
-        let quotedPath = "'\(escapedPath)'"
-        let portArg = endpoint.port == 22 ? "" : " -p \(endpoint.port)"
-        // The LOCAL shell command that Terminal will run. `\$SHELL` keeps `$SHELL`
-        // unexpanded locally so the REMOTE shell expands it after ssh hands off.
-        let shellCmd = "ssh -t\(portArg) \(endpoint.user)@\(endpoint.host) \"cd \(quotedPath) && exec \\$SHELL -l\""
+        // Validate the connection tokens before we hand anything to Terminal.
+        // `RemoteEndpoint.isValidHost`/`isValidUser` reject leading `-`
+        // (OpenSSH option injection), embedded whitespace, and other tokens
+        // that would break out of even single-quoted argv positions in
+        // pathological ways (e.g. via `user@host` token surgery).
+        guard RemoteEndpoint.isValidHost(endpoint.host),
+              RemoteEndpoint.isValidUser(endpoint.user) else {
+            NSLog("openSSHTerminal: rejected invalid host/user (%@@%@)", endpoint.user, endpoint.host)
+            NSSound.beep()
+            return
+        }
 
-        // Escape for AppleScript string literal.
-        let asEscaped = shellCmd
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
+        // Build the remote `cd … && exec $SHELL -l` payload. `\$SHELL` keeps
+        // `$SHELL` unexpanded locally so the REMOTE shell expands it after
+        // ssh hands off. The path is POSIX-quoted so embedded quotes, spaces,
+        // semicolons, etc. cannot break out.
+        let quotedPath = posixQuote(path)
+        let remoteCmd = "cd \(quotedPath) && exec \\$SHELL -l"
+
+        // Build the local shell argv. Every interpolation that originates
+        // from user data (port, user, host, the entire remote command) is
+        // POSIX-quoted at the local-shell layer.
+        let userAtHost = posixQuote("\(endpoint.user)@\(endpoint.host)")
+        var parts: [String] = ["ssh", "-t"]
+        if endpoint.port != 22 {
+            parts.append("-p")
+            parts.append(posixQuote(String(endpoint.port)))
+        }
+        parts.append(userAtHost)
+        parts.append(posixQuote(remoteCmd))
+        let shellCmd = parts.joined(separator: " ")
+
+        // AppleScript layer: escape the *already-shell-quoted* command for
+        // embedding in `do script "…"`.
+        let asEscaped = appleScriptQuote(shellCmd)
         let source = """
         tell application "Terminal"
             activate
@@ -1798,7 +2035,9 @@ final class WindowState: ObservableObject {
         for n in rightNodes {
             map[n.url] = Self.compareTwo(here: n, there: leftByName[n.name])
         }
-        compareStatuses = map
+        // Only publish when the result actually changes — otherwise SwiftUI
+        // observers re-render every pane on a no-op refresh.
+        if map != compareStatuses { compareStatuses = map }
     }
 
     private static func compareTwo(here: FSNode, there: FSNode?) -> CompareStatus {
@@ -1927,7 +2166,7 @@ final class WindowState: ObservableObject {
     func mirrorSelection() {
         let src = focusedPane.activeTab
         let dst = otherPane.activeTab
-        let names = Set(src.selection.compactMap { id in src.nodes.first(where: { $0.id == id })?.name })
+        let names = Set(src.selection.compactMap { id in src.nodesByID[id]?.name })
         guard !names.isEmpty else { return }
         let dstIDs = dst.nodes.filter { names.contains($0.name) }.map(\.id)
         dst.selection = Set(dstIDs)
@@ -1943,7 +2182,7 @@ final class WindowState: ObservableObject {
         guard !tab.selection.isEmpty else { return }
 
         if tab.selection.count > 1 {
-            let urls = tab.selection.compactMap { id in tab.nodes.first(where: { $0.id == id })?.url }
+            let urls = tab.selection.compactMap { id in tab.nodesByID[id]?.url }
             guard !urls.isEmpty else { return }
             self.batchRenamePrompt = BatchRenamePrompt(urls: urls) { [weak self] pairs in
                 guard let self else { return }
@@ -1964,7 +2203,7 @@ final class WindowState: ObservableObject {
         }
 
         guard let id = tab.selection.first,
-              let node = tab.nodes.first(where: { $0.id == id }) else { return }
+              let node = tab.nodesByID[id] else { return }
 
         if tab.viewMode == .list {
             tab.renameRequest = id

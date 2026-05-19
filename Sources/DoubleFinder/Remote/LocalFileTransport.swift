@@ -7,21 +7,34 @@ struct LocalFileTransport: FileTransport {
     func list(_ url: URL) async throws -> [FSNode] {
         try await Task.detached(priority: .userInitiated) {
             let fm = FileManager.default
+            // Prefetch all needed attributes in a single readdir+stat pass.
+            // Including .isDirectoryKey eliminates the separate fileExists(atPath:isDirectory:)
+            // call that was making a redundant stat() per entry.
+            //
+            // Tags are intentionally returned empty here. Fetching them inline
+            // costs 2 getxattr calls per entry — for a 10k-file directory that's
+            // 20k syscalls on the hot listing path. `TabState.refresh` follows
+            // up with a background `loadTagsInBackground(for:)` pass that
+            // patches tags onto already-rendered nodes once the listing is
+            // visible.
+            let keys: [URLResourceKey] = [
+                .isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isPackageKey, .nameKey
+            ]
             let contents = try fm.contentsOfDirectory(
                 at: url,
-                includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isPackageKey],
+                includingPropertiesForKeys: keys,
                 options: []
             )
             return contents.map { u in
-                let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isPackageKey])
-                var isDir: ObjCBool = false
-                fm.fileExists(atPath: u.path, isDirectory: &isDir)
+                // resourceValues reads from the prefetched cache — no extra stat().
+                let v = try? u.resourceValues(forKeys: Set(keys))
+                let isDir = v?.isDirectory ?? false
                 return FSNode(
                     url: u,
-                    isDirectory: isDir.boolValue,
-                    size: v?.fileSize.map(Int64.init),
+                    isDirectory: isDir,
+                    size: isDir ? nil : v?.fileSize.map(Int64.init) ?? nil,
                     modified: v?.contentModificationDate,
-                    tags: TagStore.tags(for: u),
+                    tags: [],
                     gitStatus: nil,
                     isPackage: v?.isPackage ?? false
                 )

@@ -24,6 +24,22 @@ final class WindowRegistry {
         stack.removeAll { $0 === s }
     }
 
+    /// Remove a `WindowState` by its `ObjectIdentifier`. Safe to call from
+    /// `deinit`: callers must pass `ObjectIdentifier(self)` captured BEFORE
+    /// any async hop so the dying object is never re-referenced. The hop to
+    /// the main actor is done via `DispatchQueue.main.async` (not a `Task`
+    /// capturing `self`) so the object is allowed to finish deallocating.
+    /// Exposed as a static `nonisolated` entry point so callers don't need to
+    /// touch the main-actor-isolated `shared` reference from a nonisolated
+    /// context (which Swift 6 would reject).
+    nonisolated static func unregister(byIdentity identity: ObjectIdentifier) {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                shared.stack.removeAll { ObjectIdentifier($0) == identity }
+            }
+        }
+    }
+
     func bringFront(_ s: WindowState) {
         guard !(stack.first === s) else { return }
         stack.removeAll { $0 === s }

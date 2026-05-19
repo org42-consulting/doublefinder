@@ -94,6 +94,12 @@ final class RemoteServerStore: ObservableObject {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let data = try? encoder.encode(bookmarks) {
             try? data.write(to: storeURL, options: .atomic)
+            // Restrict to owner-read/write only; the file contains bookmark metadata
+            // (host, user, port) and must not be world-readable.
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: storeURL.path
+            )
         }
     }
 }

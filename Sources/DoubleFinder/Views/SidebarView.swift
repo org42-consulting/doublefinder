@@ -1,14 +1,31 @@
 import SwiftUI
 
 struct SidebarItem: Identifiable, Hashable {
-    let id = UUID()
+    /// Stable, content-derived identity. The previous `let id = UUID()` minted
+    /// a fresh identifier on every render of the parent view, defeating
+    /// SwiftUI's diffing for `List`/`ForEach` and forcing each row to be torn
+    /// down and rebuilt on every parent body pass. Hashing the section + URL
+    /// gives every logical sidebar entry a stable id across re-renders.
+    let id: String
     let title: String
     let systemImage: String
     let url: URL
+
+    init(title: String, systemImage: String, url: URL, section: String = "") {
+        // URL.standardizedFileURL collapses /private/var <-> /var, trailing
+        // slashes, etc. so the same logical location stays under one id.
+        self.id = "\(section)|\(url.standardizedFileURL.absoluteString)|\(title)"
+        self.title = title
+        self.systemImage = systemImage
+        self.url = url
+    }
 }
 
 struct SidebarSection: Identifiable {
-    let id = UUID()
+    /// Sections are keyed by title (titles are unique within the sidebar).
+    /// Using the title keeps the id stable across renders — see SidebarItem
+    /// above for the same reasoning.
+    var id: String { title }
     let title: String
     let items: [SidebarItem]
 }
@@ -32,26 +49,34 @@ struct SidebarView: View {
         }
     }
 
-    private var staticSections: [SidebarSection] {
+    /// Static sidebar contents (iCloud, drives, trash, tag-colour rows). The
+    /// pre-optimisation version of this property re-ran `fileExists`,
+    /// `trashDirectory` lookup, and the tag-colour map on every body pass —
+    /// none of those values change at runtime, so the result is computed
+    /// exactly once and cached process-wide.
+    private var staticSections: [SidebarSection] { Self.cachedStaticSections }
+    private static let cachedStaticSections: [SidebarSection] = computeStaticSections()
+
+    private static func computeStaticSections() -> [SidebarSection] {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let icloudURL = home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
         let icloud: [SidebarItem] = FileManager.default.fileExists(atPath: icloudURL.path)
-            ? [.init(title: "iCloud Drive", systemImage: "cloud", url: icloudURL)]
+            ? [SidebarItem(title: "iCloud Drive", systemImage: "cloud", url: icloudURL, section: "iCloud")]
             : []
         let trashURL = (try? FileManager.default.url(for: .trashDirectory, in: .userDomainMask, appropriateFor: nil, create: false))
             ?? home.appendingPathComponent(".Trash")
         let locations: [SidebarItem] = [
-            .init(title: "Macintosh HD", systemImage: "internaldrive", url: URL(fileURLWithPath: "/")),
-            .init(title: "Network", systemImage: "network", url: URL(fileURLWithPath: "/Volumes")),
-            .init(title: "Trash", systemImage: "trash", url: trashURL),
+            SidebarItem(title: "Macintosh HD", systemImage: "internaldrive", url: URL(fileURLWithPath: "/"), section: "Locations"),
+            SidebarItem(title: "Network", systemImage: "network", url: URL(fileURLWithPath: "/Volumes"), section: "Locations"),
+            SidebarItem(title: "Trash", systemImage: "trash", url: trashURL, section: "Locations"),
         ]
         let tags: [SidebarItem] = Tag.Color.allCases
             .filter { $0 != .none }
-            .map { .init(title: $0.displayName, systemImage: "circle.fill", url: home) }
+            .map { SidebarItem(title: $0.displayName, systemImage: "circle.fill", url: home, section: "Tags") }
         return [
-            .init(title: "iCloud",    items: icloud),
-            .init(title: "Locations", items: locations),
-            .init(title: "Tags",      items: tags),
+            SidebarSection(title: "iCloud",    items: icloud),
+            SidebarSection(title: "Locations", items: locations),
+            SidebarSection(title: "Tags",      items: tags),
         ].filter { !$0.items.isEmpty }
     }
 

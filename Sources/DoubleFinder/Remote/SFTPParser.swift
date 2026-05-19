@@ -144,18 +144,23 @@ enum SFTPParser {
     // MARK: - sftp argument quoting
 
     /// Shell-quote a path for use as an `sftp` interactive command argument.
-    /// Throws if the path contains a character `sftp` cannot represent (notably newlines or `"`).
+    ///
+    /// Uses single-quote wrapping because sftp's REPL treats `'...'` as a
+    /// literal string with no escape processing, unlike double-quotes where
+    /// backslash sequences are interpreted. A single-quote itself cannot be
+    /// safely represented inside a single-quoted string, so paths containing
+    /// `'`, NUL, CR, or LF are rejected outright.
     static func quoteArgument(_ path: String) throws -> String {
-        if path.contains("\n") || path.contains("\"") {
+        // Single-quote strings have no escape mechanism — reject chars that
+        // cannot be safely represented or that would corrupt the command stream.
+        if path.contains("'") || path.contains("\0") || path.contains("\r") || path.contains("\n") {
             throw QuotingError.unsupportedCharacters
         }
-        // Wrap in double quotes; escape backslashes.
-        let escaped = path.replacingOccurrences(of: "\\", with: "\\\\")
-        return "\"\(escaped)\""
+        return "'\(path)'"
     }
 
     enum QuotingError: Error, LocalizedError {
         case unsupportedCharacters
-        var errorDescription: String? { "File name contains characters unsupported over SFTP (newline or double-quote)." }
+        var errorDescription: String? { "File name contains characters unsupported over SFTP (single-quote, NUL, CR, or LF)." }
     }
 }

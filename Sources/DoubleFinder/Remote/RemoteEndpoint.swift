@@ -21,6 +21,28 @@ struct RemoteEndpoint: Codable, Hashable, Sendable {
         self.scheme = scheme
     }
 
+    // MARK: - Input validation
+
+    /// Reject hosts that start with `-` (OpenSSH option injection like `-oProxyCommand=`),
+    /// are empty, or contain characters that cannot appear in a safe hostname token.
+    static func isValidHost(_ host: String) -> Bool {
+        guard !host.isEmpty else { return false }
+        // A leading `-` would be parsed as an SSH option flag.
+        guard !host.hasPrefix("-") else { return false }
+        // These characters either break shell tokenization or are protocol-illegal in hostnames.
+        let forbidden: [Character] = [" ", "\t", "\r", "\n", "/", "=", "\0"]
+        return !host.contains(where: { forbidden.contains($0) })
+    }
+
+    /// Reject usernames that start with `-` (would be passed positionally and treated as an SSH
+    /// flag), are empty, or contain characters that cannot appear safely in `user@host` tokens.
+    static func isValidUser(_ user: String) -> Bool {
+        guard !user.isEmpty else { return false }
+        guard !user.hasPrefix("-") else { return false }
+        let forbidden: [Character] = [" ", "\t", "\r", "\n", "@", "\0"]
+        return !user.contains(where: { forbidden.contains($0) })
+    }
+
     /// "user@host" or "user@host:port" when port != 22. Used for Keychain account key, sheet titles.
     var canonicalAccount: String {
         port == 22 ? "\(user)@\(host)" : "\(user)@\(host):\(port)"
@@ -54,6 +76,7 @@ extension URL {
     /// scheme, or nil for local file URLs.
     var remoteEndpoint: RemoteEndpoint? {
         guard let s = scheme, let host, let user else { return nil }
+        guard RemoteEndpoint.isValidHost(host), RemoteEndpoint.isValidUser(user) else { return nil }
         switch s {
         case "sftp": return RemoteEndpoint(host: host, user: user, port: port ?? 22, scheme: s)
         case "webdav": return RemoteEndpoint(host: host, user: user, port: port ?? 80, scheme: s)
@@ -68,6 +91,7 @@ extension URL {
     /// Note: identityFile and displayName are never carried in URLs.
     var sftpEndpoint: RemoteEndpoint? {
         guard scheme == "sftp", let host, let user else { return nil }
+        guard RemoteEndpoint.isValidHost(host), RemoteEndpoint.isValidUser(user) else { return nil }
         return RemoteEndpoint(host: host, user: user, port: port ?? 22)
     }
 

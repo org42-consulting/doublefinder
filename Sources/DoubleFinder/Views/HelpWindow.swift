@@ -144,6 +144,7 @@ struct HelpSection {
 extension HelpTopic {
     static let all: [HelpTopic] = [
         .overview,
+        .whatsNew,
         .gettingStarted,
         .panesAndTabs,
         .tabGroups,
@@ -210,6 +211,31 @@ extension HelpTopic {
             ]),
             HelpSection(heading: "Reading this help", body: "Use the **filter** at the top of the topic list to jump around. Topics are short and self-contained; you don't have to read them in order. Keyboard shortcuts on the right of each topic are also collected in the **Keyboard shortcuts** topic for quick reference."),
             HelpSection(tip: "Press ⌘? from anywhere in the app to open this window."),
+        ]
+    )
+
+    // MARK: What's new
+
+    static let whatsNew = HelpTopic(
+        id: "whatsNew",
+        title: "What's new in 1.5",
+        systemImage: "star.fill",
+        sections: [
+            HelpSection(body: "Version 1.5 focuses on speed, smoothness in large folders, and tighter handling of saved remote connections. Most changes are invisible — DoubleFinder just feels quicker and safer to use."),
+            HelpSection(heading: "Faster directory listings", body: "Large folders open noticeably quicker. The local-disk listing path used to make three round trips per file (stat, attribute fetch, and tag read); it now bundles those into a single pass. On a folder with 10 000 items on a cold cache, that's roughly 5–10× faster."),
+            HelpSection(heading: "Tag dots fade in", body: "macOS file tags used to block the initial directory render while their metadata was read. They now load in the background after the listing appears — you see files immediately, and any tagged ones gain their colour dots a moment later."),
+            HelpSection(heading: "Column view never freezes on slow folders", body: "Drilling into a folder on a network mount or a path with many entries used to lock the UI until the listing finished. Column view now loads deeper columns asynchronously: the column briefly shows empty, then fills in when the listing arrives, just like git decoration always has."),
+            HelpSection(heading: "Snappier large directories", body: "Selecting, right-clicking, and toolbar actions in folders with thousands of items no longer slow down as the directory grows. Lookups that used to scan the entire list per selected item now hit an internal URL-keyed map directly."),
+            HelpSection(heading: "Quicker app launch", body: "Restoring a workspace with many tabs no longer fires a separate directory listing for every tab at startup. Only the active tab in each pane refreshes immediately; the others load on first activation."),
+            HelpSection(heading: "Tighter remote security", bullets: [
+                "Hostnames or usernames that would let an attacker inject SSH options (anything starting with `-`, or containing whitespace, `/`, `=`) are now rejected before connecting.",
+                "FTP filenames containing carriage returns or newlines — which could splice extra commands into the FTP control channel — are blocked.",
+                "Saved server bookmarks and cached remote-edit files are now written with owner-only permissions (`0600`) so other users on the same Mac can't read them.",
+                "The SFTP command quoter switched to literal single-quoted strings, which closes a subtle quoting-escape edge case."
+            ]),
+            HelpSection(heading: "Smaller memory footprint", body: "Thumbnail and file-icon caches are now bounded by bytes (128 MB and 16 MB respectively) and evict automatically under memory pressure, so a few high-resolution gallery previews can no longer push the cache into the gigabytes."),
+            HelpSection(heading: "Less jitter during heavy disk activity", body: "Builds and other workloads that write many files in quick succession now produce smoother refreshes — FSEvents deliver the first change in a batch immediately rather than waiting for the batching window to close."),
+            HelpSection(tip: "Nothing in 1.5 changes how you use the app day-to-day — everything you knew still works the same way. The window snapshot from 1.4 restores cleanly."),
         ]
     )
 

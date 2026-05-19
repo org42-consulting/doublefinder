@@ -45,6 +45,13 @@ enum StatePersistence {
 
     static func save(_ snapshot: Snapshot) {
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        try? data.write(to: stateURL, options: .atomic)
+        let url = stateURL
+        try? data.write(to: url, options: .atomic)
+        // Restrict to owner-read/write only; state.json records window paths and
+        // tab history which are personal navigation data.
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: url.path
+        )
     }
 }

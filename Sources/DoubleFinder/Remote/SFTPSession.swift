@@ -76,6 +76,9 @@ actor SFTPSession {
         if let id = endpoint.identityFile {
             args += ["-i", id.path]
         }
+        // `--` ends option parsing so a host/user that starts with `-` cannot be
+        // interpreted as an OpenSSH flag (e.g. -oProxyCommand=…).
+        args.append("--")
         args.append("\(endpoint.user)@\(endpoint.host)")
 
         do {

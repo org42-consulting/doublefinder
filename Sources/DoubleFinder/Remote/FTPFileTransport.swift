@@ -70,6 +70,8 @@ struct FTPFileTransport: FileTransport {
     }
 
     func rename(_ from: URL, to dest: URL) async throws {
+        try validateFTPPath(from.path)
+        try validateFTPPath(dest.path)
         guard let baseURL = curlURL(for: from) else { throw FileTransportError.notSupported("Bad URL") }
         let parent = baseURL.deletingLastPathComponent()
         var args = credentialsArg()
@@ -107,10 +109,19 @@ struct FTPFileTransport: FileTransport {
 
     // MARK: - Helpers
 
+    /// Reject paths that contain CR, LF, or NUL — these would splice extra FTP
+    /// verbs into curl's -Q argument and constitute CRLF injection.
+    private func validateFTPPath(_ path: String) throws {
+        if path.contains("\r") || path.contains("\n") || path.contains("\0") {
+            throw FileTransportError.notSupported("FTP path contains invalid characters (CR, LF, or NUL).")
+        }
+    }
+
     /// Issue a raw FTP command (MKD / RMD / DELE / etc.) against the parent
     /// directory of `url`. curl needs the URL to be a directory it can CWD to,
     /// hence the trailing slash on the parent path.
     private func quote(_ url: URL, command: String, path: String) async throws {
+        try validateFTPPath(path)
         guard let curlURL = curlURL(for: url) else { throw FileTransportError.notSupported("Bad URL") }
         let parent = curlURL.deletingLastPathComponent()
         var args = credentialsArg()

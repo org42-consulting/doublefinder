@@ -19,11 +19,14 @@ struct OpenFolderInDoubleFinderIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        guard let url = folder.fileURL else {
+            throw $folder.needsValueError("Folder must be a local file URL.")
+        }
         NSApp.activate(ignoringOtherApps: true)
         NotificationCenter.default.post(
             name: .openFolderRequested,
             object: nil,
-            userInfo: ["url": folder.fileURL]
+            userInfo: ["url": url]
         )
         return .result()
     }
@@ -112,11 +115,14 @@ struct OpenDiskUsageIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        guard let url = folder.fileURL else {
+            throw $folder.needsValueError("Folder must be a local file URL.")
+        }
         NSApp.activate(ignoringOtherApps: true)
         NotificationCenter.default.post(
             name: .openDiskUsageWindow,
             object: nil,
-            userInfo: ["url": folder.fileURL]
+            userInfo: ["url": url]
         )
         return .result()
     }

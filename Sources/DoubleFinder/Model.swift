@@ -297,6 +297,12 @@ struct GetInfoPrompt: Identifiable {
     let onTagsChanged: () -> Void
 }
 
+struct NewFolderPrompt: Identifiable {
+    let id = UUID()
+    let parentURL: URL
+    let onCommit: (String) -> Void
+}
+
 struct BatchRenamePrompt: Identifiable {
     let id = UUID()
     let urls: [URL]
@@ -1300,6 +1306,7 @@ final class WindowState: ObservableObject {
     @Published var conflict: ConflictPrompt?
     @Published var remotePrompt: RemotePrompt? = nil
     @Published var connectError: ConnectError? = nil
+    @Published var newFolderPrompt: NewFolderPrompt?
     @Published var renamePrompt: RenamePromptModel?
     @Published var goToPrompt: GoToFolderPrompt?
     @Published var getInfoPrompt: GetInfoPrompt?

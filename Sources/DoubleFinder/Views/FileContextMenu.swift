@@ -231,11 +231,13 @@ enum FileContextMenu {
         let isRemote = directory.isRemoteSFTP
 
         addItem(menu, "New Folder", key: "n") {
-            Task { @MainActor in
-                do {
-                    _ = try await FileOps.makeFolder(in: directory)
-                    await tab.refresh()
-                } catch { NSSound.beep() }
+            state.newFolderPrompt = NewFolderPrompt(parentURL: directory) { name in
+                Task { @MainActor in
+                    do {
+                        _ = try await FileOps.makeFolder(in: directory, name: name)
+                        await tab.refresh()
+                    } catch { NSSound.beep() }
+                }
             }
         }
         if !isRemote {
@@ -491,11 +493,13 @@ enum FileContextMenu {
         let isRemote = directory.isRemoteSFTP
 
         Button("New Folder") {
-            Task { @MainActor in
-                do {
-                    _ = try await FileOps.makeFolder(in: directory)
-                    await tab.refresh()
-                } catch { NSSound.beep() }
+            state.newFolderPrompt = NewFolderPrompt(parentURL: directory) { name in
+                Task { @MainActor in
+                    do {
+                        _ = try await FileOps.makeFolder(in: directory, name: name)
+                        await tab.refresh()
+                    } catch { NSSound.beep() }
+                }
             }
         }
         if !isRemote {

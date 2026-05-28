@@ -404,12 +404,12 @@ struct WindowView: View {
 
     private func newFolder() {
         let src = state.focusedPane.activeTab
-        Task { @MainActor in
-            do {
-                _ = try await FileOps.makeFolder(in: src.url)
-                await src.refresh()
-            } catch {
-                NSSound.beep()
+        state.newFolderPrompt = NewFolderPrompt(parentURL: src.url) { name in
+            Task { @MainActor in
+                do {
+                    _ = try await FileOps.makeFolder(in: src.url, name: name)
+                    await src.refresh()
+                } catch { NSSound.beep() }
             }
         }
     }

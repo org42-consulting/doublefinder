@@ -791,6 +791,10 @@ final class TabState: ObservableObject, Identifiable {
             return urls.compactMap { u -> FSNode? in
                 if !hidden && u.lastPathComponent.hasPrefix(".") { return nil }
                 let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isPackageKey])
+                // fileExists(atPath:isDirectory:) follows symlinks, so this
+                // already reports true for symlink-to-folder entries (e.g.
+                // Google Drive shortcuts) — matches the resolution that
+                // LocalFileTransport.list does for plain directory listings.
                 var isDir: ObjCBool = false
                 guard fm.fileExists(atPath: u.path, isDirectory: &isDir) else { return nil }
                 return FSNode(

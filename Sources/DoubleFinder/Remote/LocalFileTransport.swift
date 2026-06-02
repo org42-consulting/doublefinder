@@ -18,7 +18,8 @@ struct LocalFileTransport: FileTransport {
             // patches tags onto already-rendered nodes once the listing is
             // visible.
             let keys: [URLResourceKey] = [
-                .isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isPackageKey, .nameKey
+                .isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isPackageKey, .nameKey,
+                .isSymbolicLinkKey, .isAliasFileKey
             ]
             let contents = try fm.contentsOfDirectory(
                 at: url,
@@ -28,7 +29,19 @@ struct LocalFileTransport: FileTransport {
             return contents.map { u in
                 // resourceValues reads from the prefetched cache — no extra stat().
                 let v = try? u.resourceValues(forKeys: Set(keys))
-                let isDir = v?.isDirectory ?? false
+                var isDir = v?.isDirectory ?? false
+                // Google Drive (and any File Provider) surfaces folder shortcuts
+                // as symlinks/aliases that point to directories. .isDirectoryKey
+                // reports the link itself, so it returns false and a double-click
+                // would otherwise fall through to NSWorkspace.open and launch
+                // Finder. Resolve the link once and treat it as a directory if
+                // the target is one.
+                if !isDir, (v?.isSymbolicLink == true || v?.isAliasFile == true) {
+                    var b: ObjCBool = false
+                    if fm.fileExists(atPath: u.path, isDirectory: &b), b.boolValue {
+                        isDir = true
+                    }
+                }
                 return FSNode(
                     url: u,
                     isDirectory: isDir,

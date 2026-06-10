@@ -145,6 +145,7 @@ extension HelpTopic {
     static let all: [HelpTopic] = [
         .overview,
         .whatsNew,
+        .whatsNew15,
         .gettingStarted,
         .panesAndTabs,
         .tabGroups,
@@ -218,8 +219,23 @@ extension HelpTopic {
 
     static let whatsNew = HelpTopic(
         id: "whatsNew",
-        title: "What's new in 1.5",
+        title: "What's new in 1.6",
         systemImage: "star.fill",
+        sections: [
+            HelpSection(body: "Version 1.6 is a focused performance pass — arrow-key navigation, Column-view scrolling, refresh cadence, and batch file operations all do less work. Nothing about the app's behaviour changes; it just feels lighter."),
+            HelpSection(heading: "Snappier arrow-key navigation", body: "Holding the arrow key in a folder with tens of thousands of items used to trigger a linear scan of the visible listing on every keypress (twice for shift-extend). Selection lookups now go through an internal URL-keyed index — O(1) regardless of folder size."),
+            HelpSection(heading: "Lighter Column View scrolling", body: "Cells in Column view used to issue a `stat` + `getxattr` syscall pair on every reload to figure out folder-vs-package and tag colours. Both are now cached during the column's listing pass, so scrolling a deep column with thousands of entries stops hitting the main thread."),
+            HelpSection(heading: "One less rebuild per refresh", body: "After each directory listing, DoubleFinder applies git status and macOS tag decorations. Previously they fired two sequential updates, each rebuilding the by-ID / visible / grouped maps from scratch. They now run concurrently off-main and apply a single batched update — about a third less per-refresh CPU work on big folders with both git changes and tagged files."),
+            HelpSection(heading: "Lighter batch operations", body: "Copy, Move, Trash, Duplicate, and Batch Rename used to hop to the main thread once per file to update their progress counter. For a 5000-file copy that's 5000 main-actor hops removed; the transfer queue's progress indicator updates at the same rate via its existing polling timer."),
+            HelpSection(heading: "Cheaper list-view diffing", body: "Every change to the underlying node list used to allocate two URL arrays of the row count just to check whether the ordering changed. The check now iterates without the allocation, so model updates in a 10000-row table do a lot less throwaway work."),
+            HelpSection(tip: "If you'd been seeing UI hitches when scrolling deep Column views or holding arrow keys in big folders, you should notice them gone. Day-to-day behaviour is otherwise unchanged."),
+        ]
+    )
+
+    static let whatsNew15 = HelpTopic(
+        id: "whatsNew15",
+        title: "What's new in 1.5",
+        systemImage: "star",
         sections: [
             HelpSection(body: "Version 1.5 focuses on speed, smoothness in large folders, and tighter handling of saved remote connections. Most changes are invisible — DoubleFinder just feels quicker and safer to use."),
             HelpSection(heading: "Faster directory listings", body: "Large folders open noticeably quicker. The local-disk listing path used to make three round trips per file (stat, attribute fetch, and tag read); it now bundles those into a single pass. On a folder with 10 000 items on a cold cache, that's roughly 5–10× faster."),

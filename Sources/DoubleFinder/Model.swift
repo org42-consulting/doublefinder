@@ -360,6 +360,7 @@ extension Notification.Name {
     static let parentFolderRequested = Notification.Name("doublefinder.parentFolder")
     static let openSelectionRequested = Notification.Name("doublefinder.openSelection")
     static let openTerminalRequested = Notification.Name("doublefinder.openTerminal")
+    static let openEditorRequested = Notification.Name("df.openEditorRequested")
     static let addToSidebarRequested = Notification.Name("doublefinder.addToSidebar")
     static let toggleInspectorRequested = Notification.Name("doublefinder.toggleInspector")
     static let connectToServerRequested = Notification.Name("df.connectToServerRequested")
@@ -469,6 +470,12 @@ final class TabState: ObservableObject, Identifiable {
     /// without re-running the filter on every SwiftUI publish.
     @Published private(set) var visibleNodes: [FSNode] = []
 
+    /// O(1) lookup from a visible node's ID to its row in `visibleNodes`.
+    /// Rebuilt alongside `visibleNodes`. Replaces O(n) `firstIndex(where:)`
+    /// scans in `applyClickSelection` and `moveSelection` that turned every
+    /// arrow-key press in a 20k-entry directory into a linear scan.
+    @Published private(set) var visibleIndexByID: [FSNode.ID: Int] = [:]
+
     /// `visibleNodes` bucketed by `groupBy`. Single source of truth for the
     /// list / icon / gallery views — they read this directly instead of each
     /// caching their own grouping in `@State`.
@@ -487,11 +494,17 @@ final class TabState: ObservableObject, Identifiable {
     }
     private func rebuildVisibleNodes() {
         let q = quickFilter.trimmingCharacters(in: .whitespaces)
+        let result: [FSNode]
         if q.isEmpty {
-            visibleNodes = nodes
+            result = nodes
         } else {
-            visibleNodes = nodes.filter { $0.name.localizedStandardContains(q) }
+            result = nodes.filter { $0.name.localizedStandardContains(q) }
         }
+        var idx: [FSNode.ID: Int] = [:]
+        idx.reserveCapacity(result.count)
+        for (i, n) in result.enumerated() { idx[n.id] = i }
+        visibleNodes = result
+        visibleIndexByID = idx
     }
     private func rebuildGroupedNodes() {
         let visible = visibleNodes
@@ -565,6 +578,10 @@ final class TabState: ObservableObject, Identifiable {
 
     private var history: [URL] = []
     private var future: [URL] = []
+    /// URL to pre-select in the next refresh, if it appears in the listing.
+    /// Set by `navigateUp()` so the user lands oriented on the folder they
+    /// just came from; consumed once and cleared in `refresh()`.
+    private var pendingSelectionURL: URL?
     private let watcher = DirectoryWatcher()
     private let searchEngine = SearchEngine()
     private var searchTask: Task<Void, Never>?
@@ -608,7 +625,7 @@ final class TabState: ObservableObject, Identifiable {
                 let tabPath = self.url.standardizedFileURL.path
                 let repoPath = repoRoot.path
                 guard tabPath == repoPath || tabPath.hasPrefix(repoPath + "/") else { return }
-                await self.decorateWithGitStatus()
+                await self.loadDecorations(for: self.url, includeGit: true, includeTags: false)
             }
         }
         foldersOnTopToken = NotificationCenter.default.addObserver(
@@ -808,22 +825,79 @@ final class TabState: ObservableObject, Identifiable {
             }
         }.value
         self.nodes = sorted(mapped)
-        if searchScope == .folder {
-            await decorateWithGitStatus()
-        }
-        await loadTagsInBackground(for: target)
+        await loadDecorations(for: target, includeGit: searchScope == .folder, includeTags: true)
     }
 
-    /// Patches xattr-derived tags onto already-listed nodes. Runs the syscalls
-    /// off the main actor so the directory listing stays responsive on cold
-    /// caches; guards against navigation races so a slow tag pass from the
-    /// previous directory can't clobber the new one.
-    private func loadTagsInBackground(for target: URL) async {
-        // SFTP nodes don't carry xattrs; nothing to do.
+    /// Apply git status and/or tag decorations to the current listing as a
+    /// single batched `nodes` mutation. Replaces two sequential surgical
+    /// updates that each triggered the full `nodes.didSet` cascade
+    /// (rebuild nodesByID + visibleNodes + groupedNodes + republish to
+    /// every observer). Running git + tags concurrently off-main and
+    /// applying both with one assignment drops per-refresh rebuild
+    /// passes from three to two on big directories.
+    private func loadDecorations(for target: URL, includeGit: Bool, includeTags: Bool) async {
+        guard includeGit || includeTags else { return }
         guard !target.isRemoteSFTP else { return }
         let urls = nodes.map(\.url)
         guard !urls.isEmpty else { return }
-        let tagMap: [URL: [Tag]] = await Task.detached(priority: .utility) {
+
+        var gitMap: [URL: GitFileState] = [:]
+        var tagMap: [URL: [Tag]] = [:]
+
+        if includeGit && includeTags {
+            async let gitTask = GitStatusService.shared.statuses(in: target)
+            async let tagTask = TabState.loadTagsOffMain(for: urls)
+            gitMap = await gitTask
+            tagMap = await tagTask
+        } else if includeGit {
+            gitMap = await GitStatusService.shared.statuses(in: target)
+        } else if includeTags {
+            tagMap = await TabState.loadTagsOffMain(for: urls)
+        }
+
+        guard self.url == target else { return }
+        guard !gitMap.isEmpty || !tagMap.isEmpty else { return }
+
+        var newNodes = nodes
+        var changed = false
+
+        if !gitMap.isEmpty {
+            // Git keys are standardized; build a matching index.
+            var indexByStdURL: [URL: Int] = [:]
+            indexByStdURL.reserveCapacity(newNodes.count)
+            for (i, node) in newNodes.enumerated() {
+                indexByStdURL[node.url.standardizedFileURL] = i
+            }
+            for (gitURL, state) in gitMap {
+                guard let idx = indexByStdURL[gitURL] else { continue }
+                if newNodes[idx].gitStatus != state {
+                    newNodes[idx].gitStatus = state
+                    changed = true
+                }
+            }
+        }
+
+        if !tagMap.isEmpty {
+            // Tags keyed by the same URL stored on FSNode.
+            var indexByURL: [URL: Int] = [:]
+            indexByURL.reserveCapacity(newNodes.count)
+            for (i, node) in newNodes.enumerated() {
+                indexByURL[node.url] = i
+            }
+            for (tagURL, tags) in tagMap {
+                guard let idx = indexByURL[tagURL] else { continue }
+                if newNodes[idx].tags != tags {
+                    newNodes[idx].tags = tags
+                    changed = true
+                }
+            }
+        }
+
+        if changed { nodes = newNodes }
+    }
+
+    nonisolated private static func loadTagsOffMain(for urls: [URL]) async -> [URL: [Tag]] {
+        await Task.detached(priority: .utility) {
             var out: [URL: [Tag]] = [:]
             out.reserveCapacity(urls.count / 4)
             for u in urls {
@@ -832,16 +906,6 @@ final class TabState: ObservableObject, Identifiable {
             }
             return out
         }.value
-        guard self.url == target, !tagMap.isEmpty else { return }
-        var newNodes = nodes
-        var changed = false
-        for (url, tags) in tagMap {
-            guard let idx = newNodes.firstIndex(where: { $0.url == url }),
-                  newNodes[idx].tags != tags else { continue }
-            newNodes[idx].tags = tags
-            changed = true
-        }
-        if changed { nodes = newNodes }
     }
 
     var transport: any FileTransport {
@@ -878,6 +942,25 @@ final class TabState: ObservableObject, Identifiable {
         if window.left.tabs.contains(where: { $0 === self }) { return window.left }
         if window.right.tabs.contains(where: { $0 === self }) { return window.right }
         return nil
+    }
+
+    /// Open `url` in a new tab in this tab's owning pane, making the new tab
+    /// active. Used by ⌘-double-click on a folder (browser convention).
+    func openInNewTab(_ url: URL) {
+        containingPane()?.addTab(url: url)
+    }
+
+    /// Navigate to the parent directory, preserving the current folder name
+    /// as a pending selection so the user lands oriented inside the parent.
+    /// No-op at the filesystem root. Pinned tabs spawn a sibling tab at the
+    /// parent URL (per the existing pinned-tab navigation rules) and the
+    /// pending selection is lost — acceptable since the original tab stays
+    /// put on its anchor.
+    func navigateUp() {
+        let parent = url.deletingLastPathComponent()
+        guard parent.path != url.path else { return }
+        pendingSelectionURL = url
+        navigate(to: parent)
     }
 
     func navigate(to newURL: URL) {
@@ -964,8 +1047,8 @@ final class TabState: ObservableObject, Identifiable {
         let visible = visibleNodes
         if shift,
            let anchor = selectionAnchor,
-           let anchorIdx = visible.firstIndex(where: { $0.id == anchor }),
-           let clickIdx = visible.firstIndex(where: { $0.id == nodeID }) {
+           let anchorIdx = visibleIndexByID[anchor],
+           let clickIdx = visibleIndexByID[nodeID] {
             let lo = min(anchorIdx, clickIdx)
             let hi = max(anchorIdx, clickIdx)
             selection = Set(visible[lo...hi].map(\.id))
@@ -992,7 +1075,7 @@ final class TabState: ObservableObject, Identifiable {
         guard !visible.isEmpty else { return }
         let pivot = selectionAnchor ?? selection.first
         let currentIndex: Int
-        if let pivot, let i = visible.firstIndex(where: { $0.id == pivot }) {
+        if let pivot, let i = visibleIndexByID[pivot] {
             currentIndex = i
         } else {
             currentIndex = offset >= 0 ? -1 : visible.count
@@ -1000,7 +1083,7 @@ final class TabState: ObservableObject, Identifiable {
         let target = max(0, min(visible.count - 1, currentIndex + offset))
         let targetID = visible[target].id
         if extend, let anchor = selectionAnchor,
-           let anchorIdx = visible.firstIndex(where: { $0.id == anchor }) {
+           let anchorIdx = visibleIndexByID[anchor] {
             let lo = min(anchorIdx, target)
             let hi = max(anchorIdx, target)
             selection = Set(visible[lo...hi].map(\.id))
@@ -1035,9 +1118,17 @@ final class TabState: ObservableObject, Identifiable {
             let filtered = useHiddenFilter ? raw.filter { !$0.name.hasPrefix(".") } : raw
             self.nodes = sorted(filtered)
             self.loadError = nil
+            if let pending = pendingSelectionURL {
+                let std = pending.standardizedFileURL
+                if let node = nodesByID[pending]
+                    ?? nodes.first(where: { $0.url.standardizedFileURL == std }) {
+                    selection = [node.id]
+                    selectionAnchor = node.id
+                }
+                pendingSelectionURL = nil
+            }
             if !target.isRemoteSFTP {
-                await decorateWithGitStatus()
-                await loadTagsInBackground(for: target)
+                await loadDecorations(for: target, includeGit: true, includeTags: true)
             }
         } catch {
             self.nodes = []
@@ -1087,33 +1178,6 @@ final class TabState: ObservableObject, Identifiable {
                 self.connectionState = .remoteDisconnected(reason: error.localizedDescription)
             }
         }
-    }
-
-    private func decorateWithGitStatus() async {
-        let dir = url
-        let statuses = await GitStatusService.shared.statuses(in: dir)
-        guard !statuses.isEmpty else { return }
-        // ensure the current listing still corresponds to the directory we queried
-        guard url == dir else { return }
-        // O(|nodes|) build-once index of standardized URL → array slot, so the
-        // per-status update below is O(|statuses|) rather than O(|statuses| ·
-        // |nodes|). For typical small `statuses` and large directories this
-        // collapses the prior O(n) map-allocation into an O(|statuses|) patch.
-        var indexByURL: [URL: Int] = [:]
-        indexByURL.reserveCapacity(nodes.count)
-        for (i, node) in nodes.enumerated() {
-            indexByURL[node.url.standardizedFileURL] = i
-        }
-        var newNodes = nodes
-        var changed = false
-        for (url, state) in statuses {
-            guard let idx = indexByURL[url] else { continue }
-            if newNodes[idx].gitStatus != state {
-                newNodes[idx].gitStatus = state
-                changed = true
-            }
-        }
-        if changed { nodes = newNodes }
     }
 
     private func sorted(_ list: [FSNode]) -> [FSNode] {
@@ -1552,12 +1616,7 @@ final class WindowState: ObservableObject {
         })
         observerTokens.append(nc.addObserver(forName: .parentFolderRequested, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                let parent = tab.url.deletingLastPathComponent()
-                if parent.path != tab.url.path {
-                    tab.navigate(to: parent)
-                }
+                self?.focusedPane.activeTab.navigateUp()
             }
         })
         observerTokens.append(nc.addObserver(forName: .openSelectionRequested, object: nil, queue: .main) { [weak self] _ in
@@ -1586,6 +1645,21 @@ final class WindowState: ObservableObject {
                         if error != nil { DispatchQueue.main.async { NSSound.beep() } }
                     }
                 }
+            }
+        })
+        observerTokens.append(nc.addObserver(forName: .openEditorRequested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let tab = self.focusedPane.activeTab
+                guard !tab.url.isRemoteSFTP else { NSSound.beep(); return }
+                let urls: [URL]
+                if tab.selection.isEmpty {
+                    urls = [tab.url]
+                } else {
+                    urls = tab.selection.compactMap { tab.nodesByID[$0]?.url }
+                }
+                guard !urls.isEmpty else { return }
+                WindowState.openInEditor(urls)
             }
         })
         observerTokens.append(nc.addObserver(forName: .addToSidebarRequested, object: nil, queue: .main) { [weak self] _ in
@@ -1982,6 +2056,66 @@ final class WindowState: ObservableObject {
         var error: NSDictionary?
         _ = NSAppleScript(source: source)?.executeAndReturnError(&error)
         if error != nil { NSSound.beep() }
+    }
+
+    /// Resolve the editor executable for **Go ▸ Open in Editor**. Honours the
+    /// user's explicit `df.editorCommand` setting when present (absolute path
+    /// or path beginning with `~`); otherwise probes a short list of common
+    /// GUI-editor install locations (VS Code, Cursor, Sublime Text).
+    /// Terminal-only editors (vim, nvim, helix) aren't probed because they'd
+    /// land in a detached process with no controlling tty — use Open in
+    /// Terminal for those.
+    static func resolveEditor() -> URL? {
+        let userPath = (UserDefaults.standard.string(forKey: SettingsKey.editorCommand) ?? "")
+            .trimmingCharacters(in: .whitespaces)
+        if !userPath.isEmpty {
+            let expanded = (userPath as NSString).expandingTildeInPath
+            if FileManager.default.isExecutableFile(atPath: expanded) {
+                return URL(fileURLWithPath: expanded)
+            }
+        }
+        let candidates: [String] = [
+            "/opt/homebrew/bin/code",
+            "/usr/local/bin/code",
+            "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+            "/opt/homebrew/bin/cursor",
+            "/usr/local/bin/cursor",
+            "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+            "/opt/homebrew/bin/subl",
+            "/usr/local/bin/subl",
+            "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl",
+            "/opt/homebrew/bin/mate",
+            "/usr/local/bin/mate",
+        ]
+        for path in candidates {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return URL(fileURLWithPath: path)
+            }
+        }
+        return nil
+    }
+
+    /// Launch the resolved editor on `urls`. Shows a one-shot alert pointing
+    /// the user at Settings ▸ Files when no editor command can be found.
+    static func openInEditor(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        guard let editor = resolveEditor() else {
+            let alert = NSAlert()
+            alert.messageText = "No editor configured"
+            alert.informativeText = "Open Settings ▸ Files and set the Editor command (e.g. /usr/local/bin/code or /opt/homebrew/bin/cursor). DoubleFinder also auto-discovers VS Code, Cursor, and Sublime Text in the usual install locations."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+        let proc = Process()
+        proc.executableURL = editor
+        proc.arguments = urls.map(\.path)
+        do {
+            try proc.run()
+        } catch {
+            NSSound.beep()
+        }
     }
 
     static func emptyTrashWithConfirmation() {

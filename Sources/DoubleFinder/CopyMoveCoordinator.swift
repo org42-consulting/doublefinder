@@ -106,7 +106,7 @@ enum CopyMoveCoordinator {
         for src in urls {
             if progress.isCancelled { return }
             try await performOne(kind: kind, src: src, dest: dest, resolution: resolution, progress: progress)
-            await MainActor.run { progress.completedUnitCount += 1 }
+            progress.completedUnitCount += 1
         }
     }
 

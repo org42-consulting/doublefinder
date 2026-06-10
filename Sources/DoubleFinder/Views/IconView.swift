@@ -156,8 +156,13 @@ struct IconView: View {
                 state.focus = side
             },
             onOpen: {
+                let mods = NSApp.currentEvent?.modifierFlags ?? []
                 if node.isOpenableDirectory {
-                    tab.navigate(to: node.url)
+                    if mods.contains(.command) {
+                        tab.openInNewTab(node.url)
+                    } else {
+                        tab.navigate(to: node.url)
+                    }
                 } else {
                     NSWorkspace.shared.open(node.url)
                 }

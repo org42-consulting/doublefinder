@@ -211,6 +211,11 @@ struct DoubleFinderApp: App {
                 }
                 .keyboardShortcut("t", modifiers: [.command, .control])
 
+                Button("Open in Editor") {
+                    NotificationCenter.default.post(name: .openEditorRequested, object: nil)
+                }
+                .keyboardShortcut("e", modifiers: [.command, .control])
+
                 Button("Add to Sidebar") {
                     NotificationCenter.default.post(name: .addToSidebarRequested, object: nil)
                 }

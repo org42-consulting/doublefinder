@@ -23,6 +23,10 @@ struct NSTableListView: NSViewRepresentable {
     /// URLs currently flagged for Cut → Paste-as-Move. Cells for these URLs render
     /// dimmed so users see what would move on the next paste.
     var cutURLs: Set<URL> = []
+    /// When true, the Date Modified column tints rows whose mtime is inside
+    /// `recentWindowSeconds`. Drives the "recently changed" highlight setting.
+    var highlightRecent: Bool = false
+    var recentWindowSeconds: TimeInterval = 600
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -195,6 +199,18 @@ struct NSTableListView: NSViewRepresentable {
             }
         }
 
+        // Recent-change highlight settings changed: reload only the Date column.
+        if coord.lastHighlightRecent != highlightRecent
+            || coord.lastRecentWindow != recentWindowSeconds {
+            coord.lastHighlightRecent = highlightRecent
+            coord.lastRecentWindow = recentWindowSeconds
+            let dateIdx = table.column(withIdentifier: .date)
+            let allRows = IndexSet(integersIn: 0..<table.numberOfRows)
+            if dateIdx >= 0, !allRows.isEmpty {
+                table.reloadData(forRowIndexes: allRows, columnIndexes: IndexSet(integer: dateIdx))
+            }
+        }
+
         // sync node changes — use granular reload when only cell data changed.
         // A change in `tab.groupBy` also forces a full rebuild of `rowItems`
         // because the header positions shift.
@@ -205,7 +221,11 @@ struct NSTableListView: NSViewRepresentable {
             coord.lastNodes = new
             coord.lastGroupBy = tab.groupBy
             coord.rebuildRowItems()
-            if !groupByChanged, old.map(\.id) == new.map(\.id) {
+            // Cheap order check: avoid two .map(\.id) allocations of n URLs each.
+            let sameOrder = !groupByChanged
+                && old.count == new.count
+                && zip(old, new).allSatisfy { $0.id == $1.id }
+            if sameOrder {
                 // Same rows, same order — reload only cells whose data changed.
                 // Map node-list indexes through `rowItems` so header offsets
                 // don't throw the reload off when grouping is on.
@@ -295,6 +315,8 @@ struct NSTableListView: NSViewRepresentable {
         var lastCutURLs: Set<URL> = []
         var lastMarked: Set<URL> = []
         var lastGroupBy: GroupBy = .none
+        var lastHighlightRecent: Bool = false
+        var lastRecentWindow: TimeInterval = 0
         /// Source-of-truth for row indexing. Always mirrors the current node
         /// list, with section headers interleaved when grouping is on. Every
         /// table delegate method that takes a row index reads this.
@@ -543,7 +565,13 @@ struct NSTableListView: NSViewRepresentable {
             case .date:
                 let cell = makeOrReuse(tableView, identifier: colID, kind: TextCell.self)
                 cell.alphaValue = cellAlpha
-                cell.set(text: node.modified.map { SmartDateFormatter.string(from: $0) } ?? "—")
+                let isRecent = parent.highlightRecent
+                    && parent.recentWindowSeconds > 0
+                    && (node.modified.map { Date().timeIntervalSince($0) < parent.recentWindowSeconds } ?? false)
+                cell.set(
+                    text: node.modified.map { SmartDateFormatter.string(from: $0) } ?? "—",
+                    isRecent: isRecent
+                )
                 return cell
             case .size:
                 let cell = makeOrReuse(tableView, identifier: colID, kind: TextCell.self)
@@ -617,8 +645,13 @@ struct NSTableListView: NSViewRepresentable {
             guard let table else { return }
             let row = table.clickedRow
             guard let node = nodeAt(row: row) else { return }
+            let mods = NSApp.currentEvent?.modifierFlags ?? []
             if node.isOpenableDirectory {
-                parent.tab.navigate(to: node.url)
+                if mods.contains(.command) {
+                    parent.tab.openInNewTab(node.url)
+                } else {
+                    parent.tab.navigate(to: node.url)
+                }
             } else {
                 NSWorkspace.shared.open(node.url)
             }
@@ -885,7 +918,10 @@ private final class TextCell: NSTableCellView {
             label.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
     }
-    func set(text: String) { label.stringValue = text }
+    func set(text: String, isRecent: Bool = false) {
+        label.stringValue = text
+        label.textColor = isRecent ? .systemOrange : .secondaryLabelColor
+    }
 }
 
 private final class NameCell: NSTableCellView, NSTextFieldDelegate {

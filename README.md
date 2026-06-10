@@ -10,6 +10,18 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 
 <img width="1347" height="931" alt="Image" src="https://github.com/user-attachments/assets/6d09f270-abb6-4c6e-84ae-3c4e3c5e349c" />
 
+## What's new in 1.6
+
+- **Snappier arrow-key navigation in big folders.** Selection lookups in List, Icon, and Gallery views are now O(1) via an internal URL-keyed index — holding ↓ in a 20k-entry directory no longer triggers a linear scan per keypress.
+- **Lighter Column View scrolling.** Visible cells used to issue a `stat` + `getxattr` syscall pair on every reload to figure out folder-vs-package and tag colours; both are now cached during the column's listing pass, so scrolling a deep column with thousands of entries stops hitting the main thread.
+- **One less rebuild per refresh.** Git status decoration and tag loading used to fire two sequential `nodes` updates after every directory listing, each one rebuilding the visible / grouped / by-ID maps from scratch. They now run concurrently off-main and apply a single batched update — about a third less per-refresh CPU on big folders with both git changes and tags.
+- **Lighter batch file operations.** Copy / Move / Trash / Duplicate / Batch Rename loops no longer hop to the main thread to increment progress per item. For a 5000-file copy that's 5000 main-actor hops removed; the transfer-queue progress indicator updates at the same rate via its existing polling timer.
+- **Cheaper list-view updates.** The List view's "did the row set change?" check used to allocate two URL arrays of the row count on every model update just to compare them. It now compares by iteration without the allocations, so model changes in a 10k-row table touch a lot less memory.
+- **⌘-double-click a folder to open it in a new tab.** Browser convention; saves a context-menu trip when you want to peek inside a folder without losing your current view. Works across List, Icon, Column, and Gallery views.
+- **Stay on the child folder after ⌘↑.** Walking up to the parent directory now pre-selects the folder you came from, so deep-tree navigation doesn't lose your place.
+- **Open in Editor (⌃⌘E).** Mirrors Open in Terminal — launches your configured editor on the current selection, or the active tab's folder when nothing's selected. Auto-discovers VS Code, Cursor, and Sublime Text in the usual Homebrew and `/Applications` install paths; Settings ▸ Files lets you set an absolute path for anything else.
+- **Highlight recently changed files.** New opt-in setting (Settings ▸ Files ▸ Activity) tints the List view's Date Modified column orange for files modified inside a configurable window (default 10 minutes). Useful right after a build, an import, or a `git pull`.
+
 ## What's new in 1.5
 
 - **Faster directory listings.** Large folders open noticeably quicker — the local-FS list path now uses a single bulk-attribute pass per entry instead of three (~5–10× faster on 10k-entry cold-cache directories). File tags fade in shortly after the listing appears rather than blocking initial render.
@@ -29,6 +41,8 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Finder-style path bar** at the bottom of every pane — one-click navigation to ancestor folders, with editable typed-path mode that accepts both local paths and `sftp://user@host/path` URLs. The bar adapts to light / dark mode for visual continuity with the rest of the chrome.
 - **Recent locations dropdown** on the path bar — the 15 most-recent folders you've visited, persisted across launches.
 - **Back / Forward history** (⌘[ / ⌘]) per tab.
+- **⌘-double-click a folder** opens it in a new tab in the same pane; the current tab stays where it is. Browser-convention shortcut for the existing context-menu **Open in New Tab**.
+- **⌘↑ preserves orientation** — walking up to the parent folder lands with the folder you came from already selected, so deep-tree navigation doesn't lose your place.
 - **Quick filter bar** (⌘F) — incrementally filter the visible listing by name without leaving the folder.
 - **Single-pane / two-pane toggle** in the View menu — hide one pane to give the other full width; toggling back redistributes evenly.
 - **Sidebar** with reorderable favourites (drag in to add, drag out to remove), collapsable Locations / Tags / Smart Folders / Servers sections, and an **eject icon** on connected servers.
@@ -39,6 +53,7 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **`.app` bundles launch on double-click** — Finder-style package handling. Right-click ▸ Show Package Contents descends into the bundle.
 - **Marquee (drag-rectangle) selection** in both Icon view and the Gallery view's thumbnail strip — additive when ⌘ or ⇧ is held during the drag.
 - **Smart relative dates** everywhere — "Today 14:32 / Yesterday 09:12 / Mon 14:32 / 17 May / 17 May 2024" depending on recency.
+- **Recently changed highlight** (opt-in via Settings ▸ Files ▸ Activity) — the List view's Date Modified column tints orange for files modified inside a configurable time window. Useful right after a build or a `git pull`.
 - **Loading spinner** appears in the lower-right while a slow network listing is in flight.
 - **List-view column widths persist** across launches — drag a column to your preferred width and it sticks.
 - **Adjustable icon size** — inline slider in Icon view (lower-right) sets the cell edge from 40-128 pt; persisted in `@AppStorage`.
@@ -149,6 +164,7 @@ The same menu shape is exposed from list, icon, gallery, and column views — `F
 ### Tools
 
 - **Command Palette** (⇧⌘P) — fuzzy filter over every menu action, sidebar favourite, smart folder, workspace, and recent location. ↑/↓ to move, Return to invoke, Esc to dismiss.
+- **Open in Editor** (⌃⌘E) — launches your configured editor on the current selection, or the active tab's folder when nothing is selected. Auto-discovers VS Code / Cursor / Sublime Text in the usual Homebrew and `/Applications` install paths; set an absolute path in Settings ▸ Files for anything else. Skipped for remote tabs (the editor needs local files).
 - **Image Viewer / slideshow** (⌘Y) — full-window dark-background photo browser. Launches on the selected images (or all images in the tab if nothing is selected). Arrow keys move, Space toggles 4-second auto-advance, Esc closes.
 - **Disk Usage** (⇧⌘D) — opens a squarified treemap rooted at the focused tab's directory. Each rectangle is sized by its descendant byte total; click a folder to descend, click a file to reveal in Finder.
 - **Archive Browser** — right-click any `.zip`, `.tar`, `.tar.gz`, or `.tgz` and pick **Browse Archive** to list contents without extracting. Extract All to a user-chosen destination, or Add Files… to append into an existing zip / tar in place.
@@ -166,7 +182,7 @@ The same menu shape is exposed from list, icon, gallery, and column views — `F
 - **Settings (DoubleFinder → Settings…)** — tabbed panel:
   - *General*: Starting Directory, Restore windows and tabs on startup, default pane layout for new windows (Two panes / One pane), Show Inspector by default. The pane-layout and Inspector defaults only apply to fresh windows; restored windows keep the previous session's state.
   - *Appearance*: Enable Dark Mode (overrides the system appearance).
-  - *Files*: Default view mode for new tabs (Icon / List / Columns), Show folders on top (groups directories before files in Icon and List views; toggle off for a strict by-name / by-size / by-date / by-kind sort).
+  - *Files*: Default view mode for new tabs (Icon / List / Columns), Show folders on top (groups directories before files in Icon and List views; toggle off for a strict by-name / by-size / by-date / by-kind sort), Highlight recently changed files (opt-in orange tint on the List view's Date Modified column for items modified inside a configurable window; default 10 minutes), and Editor command (absolute path to your preferred editor for ⌃⌘E; leave empty to auto-discover VS Code / Cursor / Sublime Text in the standard install locations).
 
 ## Requirements
 
@@ -202,7 +218,7 @@ The script:
 You can override `VERSION` and `BUILD_NUMBER` via env vars:
 
 ```bash
-VERSION=1.5 BUILD_NUMBER=42 ./scripts/package.sh
+VERSION=1.6 BUILD_NUMBER=42 ./scripts/package.sh
 ```
 
 To install:
@@ -211,7 +227,7 @@ To install:
 mv build/DoubleFinder.app /Applications/
 ```
 
-Or share `build/DoubleFinder-1.5.dmg` — mounting it gives users the familiar drag-onto-Applications experience.
+Or share `build/DoubleFinder-1.6.dmg` — mounting it gives users the familiar drag-onto-Applications experience.
 
 ### Regenerating the icon
 
@@ -296,6 +312,7 @@ iconutil --convert icns Icons/AppIcon.iconset -o Sources/DoubleFinder/Resources/
 | ⇧⌘D | Disk Usage |
 | ⌥⌘S | Save Workspace… |
 | ⌃⌘T | Open in Terminal (local) or `ssh -t user@host` (remote) |
+| ⌃⌘E | Open in Editor (auto-discovered or configurable in Settings ▸ Files) |
 | ⌃⌘B | Add focused folder to Sidebar |
 
 ## Architecture

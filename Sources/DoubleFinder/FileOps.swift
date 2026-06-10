@@ -41,7 +41,7 @@ enum FileOps {
                 } else {
                     try fm.copyItem(at: src, to: target)
                 }
-                await MainActor.run { progress?.completedUnitCount += 1 }
+                progress?.completedUnitCount += 1
             }
         }.value
     }
@@ -67,7 +67,7 @@ enum FileOps {
                 } else {
                     try fm.moveItem(at: src, to: target)
                 }
-                await MainActor.run { progress?.completedUnitCount += 1 }
+                progress?.completedUnitCount += 1
             }
         }.value
     }
@@ -98,7 +98,7 @@ enum FileOps {
             let t = await MainActor.run { Self.transport(for: u) }
             let trashedURL = try await t.trash(u)
             results.append((u, trashedURL))
-            await MainActor.run { progress?.completedUnitCount += 1 }
+            progress?.completedUnitCount += 1
         }
         return results
     }
@@ -141,7 +141,7 @@ enum FileOps {
             if progress?.isCancelled == true { break }
             let new = try await rename(src, to: newName)
             done.append((src, new))
-            await MainActor.run { progress?.completedUnitCount += 1 }
+            progress?.completedUnitCount += 1
         }
         return done
     }
@@ -221,7 +221,7 @@ enum FileOps {
             } else {
                 try await copy([url], to: url.deletingLastPathComponent(), resolution: .keepBoth)
             }
-            await MainActor.run { progress?.completedUnitCount += 1 }
+            progress?.completedUnitCount += 1
         }
     }
 

@@ -11,6 +11,8 @@ struct FileAreaView: View {
     /// Observed so a Cut / paste in another pane re-renders the list views here
     /// with updated cell alpha (dimmed cut cells).
     @ObservedObject private var cutClipboard: CutClipboard = .shared
+    @AppStorage(SettingsKey.highlightRecentChanges) private var highlightRecent: Bool = false
+    @AppStorage(SettingsKey.recentChangeMinutes) private var recentMinutes: Int = 10
 
     var body: some View {
         switch tab.connectionState {
@@ -98,7 +100,9 @@ struct FileAreaView: View {
                     CopyMoveCoordinator.copy(urls, to: tab, from: tab, via: state)
                 },
                 compareStatuses: state.compareMode ? state.compareStatuses : [:],
-                cutURLs: CutClipboard.shared.pendingMove
+                cutURLs: CutClipboard.shared.pendingMove,
+                highlightRecent: highlightRecent,
+                recentWindowSeconds: TimeInterval(recentMinutes * 60)
             )
         case .icon:
             IconView(tab: tab, side: side)
@@ -143,7 +147,9 @@ struct FileAreaView: View {
                     },
                     onDropToTab: { urls in
                         CopyMoveCoordinator.copy(urls, to: tab, from: tab, via: state)
-                    }
+                    },
+                    highlightRecent: highlightRecent,
+                    recentWindowSeconds: TimeInterval(recentMinutes * 60)
                 )
             } else {
                 GalleryView(tab: tab, side: side)

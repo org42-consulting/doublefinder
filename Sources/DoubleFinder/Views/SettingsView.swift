@@ -10,6 +10,9 @@ enum SettingsKey {
     static let startWithSinglePane   = "df.startWithSinglePane"
     static let showInspectorByDefault = "df.showInspectorByDefault"
     static let defaultViewMode       = "df.defaultViewMode"
+    static let editorCommand         = "df.editorCommand"
+    static let highlightRecentChanges = "df.highlightRecentChanges"
+    static let recentChangeMinutes   = "df.recentChangeMinutes"
 }
 
 /// Top-level Settings window. Tabbed layout (General / Appearance / Files) so
@@ -116,6 +119,9 @@ private struct AppearanceSettings: View {
 private struct FilesSettings: View {
     @AppStorage(SettingsKey.defaultViewMode) private var defaultViewMode: String = "list"
     @AppStorage(SettingsKey.foldersOnTop)    private var foldersOnTop: Bool = true
+    @AppStorage(SettingsKey.editorCommand)   private var editorCommand: String = ""
+    @AppStorage(SettingsKey.highlightRecentChanges) private var highlightRecent: Bool = false
+    @AppStorage(SettingsKey.recentChangeMinutes)    private var recentMinutes: Int = 10
 
     var body: some View {
         Form {
@@ -134,6 +140,36 @@ private struct FilesSettings: View {
                 Text("Display")
             } footer: {
                 Text("Default view mode applies to new tabs only — already-open tabs keep their current view, and restored tabs keep the view they were last using. Folders-on-top applies live to every open tab, but only in Icon and List views (Columns and Gallery use their own ordering).")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Toggle(isOn: $highlightRecent) {
+                    Text("Highlight files changed recently")
+                }
+                if highlightRecent {
+                    Stepper(value: $recentMinutes, in: 1...1440) {
+                        Text("Within the last \(recentMinutes) minute\(recentMinutes == 1 ? "" : "s")")
+                    }
+                }
+            } header: {
+                Text("Activity")
+            } footer: {
+                Text("List view tints the Date Modified column orange for files modified inside the window. Useful right after a build, import, or `git pull`. Off by default — recent changes are otherwise indistinguishable from older ones at a glance.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                LabeledContent("Editor command") {
+                    TextField("auto-discover (code, cursor, subl)", text: $editorCommand)
+                        .textFieldStyle(.roundedBorder)
+                }
+            } header: {
+                Text("Tools")
+            } footer: {
+                Text("Used by Go ▸ Open in Editor (⌃⌘E). Leave empty to auto-discover VS Code, Cursor, and Sublime Text in /usr/local/bin, /opt/homebrew/bin, and their .app bundles. Set an absolute path (or one starting with ~) to override.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }

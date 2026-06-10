@@ -94,7 +94,11 @@ struct ColumnView: NSViewRepresentable {
         weak var splitView: NSSplitView?
 
         private(set) var rootURL: URL = URL(fileURLWithPath: "/")
-        private var cache: [URL: [URL]] = [:]
+        /// FSNode cache per column directory. Carrying full nodes means
+        /// `willDisplayCell` reads `isDirectory`/`isPackage`/`tags` from
+        /// memory instead of issuing a `resourceValues` + `TagStore.tags`
+        /// syscall pair per cell on every reload.
+        private var cache: [URL: [FSNode]] = [:]
         private var gitStatusByParent: [URL: [URL: GitFileState]] = [:]
         /// URLs currently being listed off-actor. Prevents re-firing the
         /// detached task on every browser delegate call while we wait.
@@ -162,7 +166,7 @@ struct ColumnView: NSViewRepresentable {
                 // deeper parents stays cached too. The root URL is the only
                 // cache key column 0 ever uses (urlForColumn(0) returns
                 // rootURL literally), so this single write is sufficient.
-                cache[rootURL] = newTab.nodes.map(\.url)
+                cache[rootURL] = newTab.nodes
                 browser?.reloadColumn(0)
                 lastNodesSignature = signature
             }
@@ -192,28 +196,23 @@ struct ColumnView: NSViewRepresentable {
         func browser(_ sender: NSBrowser, willDisplayCell cell: Any, atRow row: Int, column: Int) {
             guard let cell = cell as? ColumnBrowserCell else { return }
             let parent = urlForColumn(column, in: sender)
-            let kids = children(of: parent, column: column, browser: sender)
+            let kids = childNodes(of: parent, column: column, browser: sender)
             guard row < kids.count else { return }
             let child = kids[row]
-            cell.title = child.lastPathComponent
-            let resVals = try? child.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
-            let isDir = resVals?.isDirectory ?? false
-            let isPackage = resVals?.isPackage ?? false
+            cell.title = child.name
             // Treat .app bundles and other Launch Services packages as leaves
             // so NSBrowser doesn't open a disclosure column into them.
-            cell.isLeaf = !isDir || isPackage
-            // Cached per-extension lookup; column-view rows are 20-pt high.
-            let icon = isPackage
-                ? FileIconCache.iconExact(for: child, size: NSSize(width: 16, height: 16))
-                : FileIconCache.icon(for: child, size: NSSize(width: 16, height: 16))
+            cell.isLeaf = !child.isDirectory || child.isPackage
+            let icon = child.isPackage
+                ? FileIconCache.iconExact(for: child.url, size: NSSize(width: 16, height: 16))
+                : FileIconCache.icon(for: child.url, size: NSSize(width: 16, height: 16))
             cell.image = icon
 
-            cell.tagColors = TagStore.tags(for: child).map { NSColor($0.color.swiftUI) }
+            cell.tagColors = child.tags.map { NSColor($0.color.swiftUI) }
             if column == 0 {
-                // F3: O(1) lookup via tab.nodesByID instead of scanning tab.nodes.
-                cell.gitState = tab.nodesByID[child]?.gitStatus
+                cell.gitState = child.gitStatus
             } else {
-                cell.gitState = gitStatusByParent[parent.standardizedFileURL]?[child.standardizedFileURL]
+                cell.gitState = gitStatusByParent[parent.standardizedFileURL]?[child.url.standardizedFileURL]
             }
             cell.isCurrentColumn = column == sender.selectedColumn
         }
@@ -245,17 +244,18 @@ struct ColumnView: NSViewRepresentable {
                   let rows = browser.selectedRowIndexes(inColumn: col),
                   let row = rows.first else { return }
             let parent = urlForColumn(col, in: browser)
-            let kids = children(of: parent, column: col, browser: browser)
+            let kids = childNodes(of: parent, column: col, browser: browser)
             guard row < kids.count else { return }
             let target = kids[row]
-            var isDirFlag: ObjCBool = false
-            FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirFlag)
-            let isDir = isDirFlag.boolValue
-            let isPackage = (try? target.resourceValues(forKeys: [.isPackageKey]))?.isPackage ?? false
-            if isDir && !isPackage {
-                tab.navigate(to: target)
+            let mods = NSApp.currentEvent?.modifierFlags ?? []
+            if target.isDirectory && !target.isPackage {
+                if mods.contains(.command) {
+                    tab.openInNewTab(target.url)
+                } else {
+                    tab.navigate(to: target.url)
+                }
             } else {
-                NSWorkspace.shared.open(target)
+                NSWorkspace.shared.open(target.url)
             }
         }
 
@@ -422,6 +422,13 @@ struct ColumnView: NSViewRepresentable {
             return kids[r]
         }
 
+        /// Returns the URLs of `url`'s children in `column`. Convenience derived
+        /// from `childNodes(of:column:browser:)` — keep callers that only need
+        /// URLs (drag/drop, context menu, double-click) on this signature.
+        private func children(of url: URL, column: Int? = nil, browser: NSBrowser? = nil) -> [URL] {
+            childNodes(of: url, column: column, browser: browser).map(\.url)
+        }
+
         /// Returns the children of `url` for display in `column`.
         ///
         /// Column 0 mirrors `tab.nodes` and is always available synchronously.
@@ -430,35 +437,29 @@ struct ColumnView: NSViewRepresentable {
         /// the directory and sort it, then on completion stash the result in
         /// `cache` and call `browser.reloadColumn(column)` to repopulate.
         ///
-        /// Mirrors the pattern in `ensureGitStatusLoaded(forColumn:parent:browser:)`.
-        private func children(of url: URL, column: Int? = nil, browser: NSBrowser? = nil) -> [URL] {
+        /// Carrying FSNodes through the cache (rather than bare URLs) means
+        /// `willDisplayCell` reads `isDirectory`/`isPackage`/`tags` from
+        /// memory instead of issuing per-cell syscalls every reload.
+        private func childNodes(of url: URL, column: Int? = nil, browser: NSBrowser? = nil) -> [FSNode] {
             if let cached = cache[url] { return cached }
 
             // Column 0 mirrors tab.nodes — already filtered (showHidden) and sorted by TabState.
             if url.standardizedFileURL == rootURL.standardizedFileURL {
-                let urls = tab.nodes.map(\.url)
-                cache[url] = urls
-                return urls
+                cache[url] = tab.nodes
+                return tab.nodes
             }
 
             // Cache miss for a deeper column. Spawn an async listing if one
             // isn't already in flight, and return empty for now.
             guard !loadingURLs.contains(url) else { return [] }
-            // Without a column/browser we can't tell anyone the result is
-            // ready, so don't bother launching a task — a subsequent delegate
-            // call from the browser will fire one.
             guard let column, let browser else { return [] }
 
             loadingURLs.insert(url)
             let showHidden = tab.showHidden
             let sortKey = tab.sortKey
             let sortAscending = tab.sortAscending
-            // `Task { ... }` inherits the surrounding @MainActor isolation, so the
-            // weak captures aren't crossed across a concurrency boundary (Swift 6).
-            // The expensive listAndSort hop is done inside a `Task.detached` whose
-            // result is awaited synchronously into the main-actor body.
             Task { [weak self, weak browser] in
-                let urls = await Task.detached(priority: .userInitiated) {
+                let nodes = await Task.detached(priority: .userInitiated) {
                     Self.listAndSort(
                         url: url,
                         showHidden: showHidden,
@@ -468,11 +469,8 @@ struct ColumnView: NSViewRepresentable {
                 }.value
                 guard let self else { return }
                 self.loadingURLs.remove(url)
-                self.cache[url] = urls
+                self.cache[url] = nodes
                 guard let browser else { return }
-                // The column for this URL may have moved (or been pruned)
-                // by the time the listing returns. Reload only if the
-                // column still exists and still maps to the same URL.
                 guard column <= browser.lastColumn else { return }
                 let current = self.urlForColumn(column, in: browser)
                 guard current.standardizedFileURL == url.standardizedFileURL else { return }
@@ -482,12 +480,14 @@ struct ColumnView: NSViewRepresentable {
         }
 
         /// Off-actor directory enumeration + sort. Pure (no `self` capture).
+        /// Tags are loaded inline here (off main) so willDisplayCell doesn't
+        /// pay a per-cell `getxattr` on every reload.
         nonisolated private static func listAndSort(
             url: URL,
             showHidden: Bool,
             sortKey: SortKey,
             sortAscending: Bool
-        ) -> [URL] {
+        ) -> [FSNode] {
             let fm = FileManager.default
             let options: FileManager.DirectoryEnumerationOptions = showHidden ? [] : [.skipsHiddenFiles]
             let contents = (try? fm.contentsOfDirectory(
@@ -503,12 +503,11 @@ struct ColumnView: NSViewRepresentable {
                     isDirectory: v?.isDirectory ?? false,
                     size: v?.fileSize.map(Int64.init),
                     modified: v?.contentModificationDate,
-                    tags: [],
+                    tags: TagStore.tags(for: u),
                     isPackage: v?.isPackage ?? false
                 )
             }
-            let sorted = TabState.sorted(nodes, by: sortKey, ascending: sortAscending)
-            return sorted.map(\.url)
+            return TabState.sorted(nodes, by: sortKey, ascending: sortAscending)
         }
 
         private func ensureGitStatusLoaded(forColumn column: Int, parent: URL, browser: NSBrowser) {

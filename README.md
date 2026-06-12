@@ -215,12 +215,12 @@ open build/DoubleFinder.app
 
 The script:
 
-1. Runs `swift build -c release --arch arm64`.
-2. Wraps any SwiftPM resource bundles into the proper macOS bundle layout under `Contents/MacOS/`.
+1. Runs `swift build -c release --arch arm64 --arch x86_64` (universal binary; the multi-arch build also makes the app's resource lookup relocatable — see comments in the script).
+2. Copies the SwiftPM resource bundles into `Contents/Resources/`.
 3. Installs the `.icns` icon.
 4. Writes `Info.plist` (Desktop / Documents / Downloads usage strings included).
-5. Ad-hoc code-signs the bundle (`codesign --force --deep --sign -`).
-6. Bundles the `.app` with an `/Applications` symlink and writes `build/DoubleFinder-$VERSION.dmg` via `hdiutil create -format UDZO`.
+5. Code-signs the bundle: with a `Developer ID Application` identity when one is in the keychain (or set `SIGN_IDENTITY`), otherwise ad-hoc.
+6. Bundles the `.app` with an `/Applications` symlink and writes `build/DoubleFinder-$VERSION.dmg` via `hdiutil create -format UDZO`, then signs, notarizes, and staples the DMG when `NOTARY_PROFILE` (a `notarytool` keychain profile) is set.
 
 You can override `VERSION` and `BUILD_NUMBER` via env vars:
 
@@ -235,6 +235,23 @@ mv build/DoubleFinder.app /Applications/
 ```
 
 Or share `build/DoubleFinder-1.6.dmg` — mounting it gives users the familiar drag-onto-Applications experience.
+
+#### Distributing to other Macs
+
+An ad-hoc-signed build runs on the machine that built it (no quarantine attribute is set locally), but on any other Mac Gatekeeper blocks it because the app has no Developer ID signature and isn't notarized. To distribute properly:
+
+```bash
+# one-time: store App Store Connect credentials for notarytool
+xcrun notarytool store-credentials "AC_PASSWORD" --apple-id you@example.com --team-id TEAMID
+
+NOTARY_PROFILE=AC_PASSWORD ./scripts/package.sh   # Developer ID auto-detected from keychain
+```
+
+Without a Developer ID certificate, recipients must clear quarantine manually after copying the app:
+
+```bash
+xattr -d com.apple.quarantine /Applications/DoubleFinder.app
+```
 
 ### Regenerating the icon
 

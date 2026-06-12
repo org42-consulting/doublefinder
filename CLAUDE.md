@@ -21,7 +21,7 @@ VERSION=1.4.1 BUILD_NUMBER=4 ./scripts/package.sh
 open build/DoubleFinder.app
 ```
 
-`Package.swift` declares `.copy("Resources/DoubleFinder.icns")` so the icon ships as a SwiftPM resource bundle. `scripts/package.sh` re-wraps any `*.bundle` produced under `.build/release/` into a proper macOS bundle layout inside `Contents/MacOS/`, copies the icon to `Contents/Resources/AppIcon.icns`, writes `Info.plist` (Desktop/Documents/Downloads usage strings), and runs `codesign --force --deep --sign -`. Don't change the resource layout without updating that script.
+`Package.swift` declares `.copy("Resources/DoubleFinder.icns")` so the icon ships as a SwiftPM resource bundle. `scripts/package.sh` builds a **universal** binary (`--arch arm64 --arch x86_64`) — this must stay multi-arch: multi-arch builds use the Xcode build system, whose generated `Bundle.module` accessor resolves resource bundles relative to `Contents/Resources/`, whereas single-arch SwiftPM-native builds hardcode an absolute `.build/` path that only exists on the build machine (the app would crash at launch anywhere else). The script copies each `*.bundle` from the build dir into `Contents/Resources/`, copies the icon to `Contents/Resources/AppIcon.icns`, writes `Info.plist` (Desktop/Documents/Downloads usage strings), and signs: with a `Developer ID Application` identity (auto-detected, or set `SIGN_IDENTITY`) plus optional notarization (`NOTARY_PROFILE`), or falls back to ad-hoc signing, which Gatekeeper blocks on other machines. Don't change the resource layout without updating that script.
 
 ## Architecture
 

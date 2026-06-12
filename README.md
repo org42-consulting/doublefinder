@@ -2,7 +2,7 @@
 
 A dual-pane file manager for macOS, built with SwiftUI and AppKit.
 
-DoubleFinder gives you two independent file views side-by-side — each with its own tabs, sort, hidden-files toggle, search, and history. Copy and move between panes with a single keystroke, navigate to remote SFTP / WebDAV / FTP servers as easily as local folders, edit remote files in your favourite editor, compare and sync two directories, browse archives in place, visualise disk usage as a treemap, save your favourite searches as Smart Folders, drive everything with a command palette or Shortcuts.app, and preview anything with QuickLook — all inside one window.
+DoubleFinder gives you two independent file views side-by-side — each with its own tabs, sort, hidden-files toggle, search, and history. Copy and move between panes with a single keystroke, navigate to remote SFTP / WebDAV / FTP servers as easily as local folders, edit remote files in your favourite editor, compare two directories side by side, browse archives in place, mount disk images with a double-click and see their Finder-authored installer layouts, visualise disk usage as a treemap, save your favourite searches as Smart Folders, drive everything with a command palette or Shortcuts.app, and preview anything with QuickLook — all inside one window.
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-blue) ![Swift](https://img.shields.io/badge/swift-6.2-orange) ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -46,6 +46,7 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Quick filter bar** (⌘F) — incrementally filter the visible listing by name without leaving the folder.
 - **Single-pane / two-pane toggle** in the View menu — hide one pane to give the other full width; toggling back redistributes evenly.
 - **Sidebar** with reorderable favourites (drag in to add, drag out to remove), collapsable Locations / Tags / Smart Folders / Servers sections, and an **eject icon** on connected servers.
+- **Mounted volumes under Locations** — external drives, disk images, and network shares appear below Macintosh HD with an eject button each, just like Finder; the row shows a spinner while an eject is in flight.
 - **Smart Folders** — save the current search (query, scope, kind) as a one-click sidebar entry; right-click to rename, remove, or apply to the other pane.
 - **Git status badges** decorate every file inside a working tree (M, A, D, U, R, C, I); folder badges aggregate descendant changes.
 - **Tag dots** on files that have macOS user tags applied.
@@ -90,6 +91,13 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 - **Share…** in the context menu — opens the system share sheet (`NSSharingServicePicker`) for the current local selection.
 - **Native drag-and-drop**: drag between panes, into folders in any view, out to Finder or other apps. Multi-file drags render as a stacked-icon preview with a "+N" count badge.
 - **Transfer queue** in the toolbar — per-operation progress bars, cancel button, automatic retry hook; long copies / moves never block the UI.
+
+### Disk images
+
+- **Double-click a `.dmg` to mount it** — DoubleFinder attaches the image via `hdiutil` and navigates the pane straight into the mounted volume. A toast reports mounting progress and any attach error. Also covers `.iso`, `.sparseimage`, `.sparsebundle`, `.cdr`, and `.img`; opening an already-mounted image just jumps to the existing volume.
+- **Finder-style installer window** — a DMG's volume root renders the layout authored in its `.DS_Store`: background artwork, authored icon positions, and icon size — the classic "drag the app to Applications" look. Icons are draggable so the drag-to-Applications gesture works; items without an authored position (or hidden files, when shown) flow into a grid strip below the canvas. Not a view mode and no toolbar button — it activates automatically at the image's root and disappears as you navigate elsewhere.
+- **Eject from the sidebar** — every mounted volume under Locations has an eject button (and an Eject context-menu item).
+- **Eject returns you to the image** — when a mounted DMG is ejected (sidebar button, Finder, or `hdiutil detach`), any tab browsing that volume navigates back to the folder containing the `.dmg`, with the image file selected. Falls back to the tab's history, then the starting folder, when the image's location is unknown.
 
 ### Selecting & marking
 
@@ -168,7 +176,6 @@ The same menu shape is exposed from list, icon, gallery, and column views — `F
 - **Image Viewer / slideshow** (⌘Y) — full-window dark-background photo browser. Launches on the selected images (or all images in the tab if nothing is selected). Arrow keys move, Space toggles 4-second auto-advance, Esc closes.
 - **Disk Usage** (⇧⌘D) — opens a squarified treemap rooted at the focused tab's directory. Each rectangle is sized by its descendant byte total; click a folder to descend, click a file to reveal in Finder.
 - **Archive Browser** — right-click any `.zip`, `.tar`, `.tar.gz`, or `.tgz` and pick **Browse Archive** to list contents without extracting. Extract All to a user-chosen destination, or Add Files… to append into an existing zip / tar in place.
-- **Folder Sync** — toolbar button while Compare Folders is on. Plans Left→Right / Right→Left / Two-way copies and replacements with an explicit toggle for deletes; runs them via `FileManager` after you confirm.
 
 ### Automation
 
@@ -392,6 +399,10 @@ Independent of Spotlight. `TabState.quickFilter` (`@Published`) is applied as a 
 │   ├── Model.swift               # WindowState, PaneState, TabState, FSNode, enums, UndoableOp
 │   ├── CopyMoveCoordinator.swift
 │   ├── FileOps.swift             # transport-aware ops + recursive size
+│   ├── FileOpener.swift          # double-click open; mounts disk images via hdiutil
+│   ├── VolumeStore.swift         # mounted-volume watcher + eject (sidebar Locations)
+│   ├── DSStore.swift             # read-only .DS_Store (Bud1) parser
+│   ├── DiskImageLayoutService.swift # Finder-authored DMG layout extraction + cache
 │   ├── DirectoryWatcher.swift    # FSEventStream wrapper
 │   ├── SearchEngine.swift        # NSMetadataQuery wrapper
 │   ├── GitStatusService.swift
@@ -422,6 +433,7 @@ Independent of Spotlight. `TabState.quickFilter` (`@Published`) is applied as a 
 │       ├── DualPaneArea.swift
 │       ├── PaneView.swift        # + TabBarView, PathBarView, PaneFilterBar
 │       ├── FileAreaView.swift
+│       ├── DiskImageFinderView.swift # Finder-style authored DMG layout renderer
 │       ├── IconView.swift        # + marquee selection
 │       ├── NSTableListView.swift # + CompareRowView
 │       ├── ColumnView.swift

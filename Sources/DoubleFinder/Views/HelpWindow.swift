@@ -178,9 +178,11 @@ extension HelpTopic {
         .cutPaste,
         .undo,
         .commandPalette,
+        .openInEditor,
         .imageViewer,
         .diskUsage,
         .archiveBrowser,
+        .diskImages,
         .trashWindow,
         .shortcutsApp,
         .shortcuts,
@@ -221,13 +223,17 @@ extension HelpTopic {
         title: "What's new in 1.6",
         systemImage: "star.fill",
         sections: [
-            HelpSection(body: "Version 1.6 is a focused performance pass — arrow-key navigation, Column-view scrolling, refresh cadence, and batch file operations all do less work. Nothing about the app's behaviour changes; it just feels lighter."),
+            HelpSection(body: "Version 1.6 pairs a performance pass — arrow-key navigation, Column-view scrolling, refresh cadence, and batch file operations all do less work — with a handful of productivity features."),
+            HelpSection(heading: "⌘-double-click opens a folder in a new tab", body: "Browser convention, works in List, Icon, Column, and Gallery views. The current tab stays where it is; the new tab gets focus."),
+            HelpSection(heading: "⌘↑ keeps you oriented", body: "Walking up to the enclosing folder now lands with the folder you came from already selected, so deep-tree navigation doesn't lose your place."),
+            HelpSection(heading: "Open in Editor (⌃⌘E)", body: "Launches your editor on the current selection, or the active tab's folder when nothing is selected. Auto-discovers VS Code, Cursor, and Sublime Text; configurable in Settings ▸ Files. See the **Open in Editor** topic."),
+            HelpSection(heading: "Highlight recently changed files", body: "Opt-in setting (Settings ▸ Files) that tints the List view's Date Modified column orange for files modified inside a configurable window — handy right after a build or a `git pull`."),
             HelpSection(heading: "Snappier arrow-key navigation", body: "Holding the arrow key in a folder with tens of thousands of items used to trigger a linear scan of the visible listing on every keypress (twice for shift-extend). Selection lookups now go through an internal URL-keyed index — O(1) regardless of folder size."),
             HelpSection(heading: "Lighter Column View scrolling", body: "Cells in Column view used to issue a `stat` + `getxattr` syscall pair on every reload to figure out folder-vs-package and tag colours. Both are now cached during the column's listing pass, so scrolling a deep column with thousands of entries stops hitting the main thread."),
             HelpSection(heading: "One less rebuild per refresh", body: "After each directory listing, DoubleFinder applies git status and macOS tag decorations. Previously they fired two sequential updates, each rebuilding the by-ID / visible / grouped maps from scratch. They now run concurrently off-main and apply a single batched update — about a third less per-refresh CPU work on big folders with both git changes and tagged files."),
             HelpSection(heading: "Lighter batch operations", body: "Copy, Move, Trash, Duplicate, and Batch Rename used to hop to the main thread once per file to update their progress counter. For a 5000-file copy that's 5000 main-actor hops removed; the transfer queue's progress indicator updates at the same rate via its existing polling timer."),
             HelpSection(heading: "Cheaper list-view diffing", body: "Every change to the underlying node list used to allocate two URL arrays of the row count just to check whether the ordering changed. The check now iterates without the allocation, so model updates in a 10000-row table do a lot less throwaway work."),
-            HelpSection(tip: "If you'd been seeing UI hitches when scrolling deep Column views or holding arrow keys in big folders, you should notice them gone. Day-to-day behaviour is otherwise unchanged."),
+            HelpSection(tip: "If you'd been seeing UI hitches when scrolling deep Column views or holding arrow keys in big folders, you should notice them gone."),
         ]
     )
 
@@ -259,6 +265,7 @@ extension HelpTopic {
         title: "Getting started",
         systemImage: "play.circle",
         sections: [
+            HelpSection(heading: "The welcome tour", body: "On first launch, DoubleFinder shows a short five-card tour of the muscle-memory basics (panes, copy/move, Command Palette, Compare, this help). To see it again, quit and run `defaults delete com.doublefinder.app df.firstRunTourSeen` in a terminal, then relaunch."),
             HelpSection(heading: "Your first minute", bullets: [
                 "Both panes open at your home folder. Click anywhere in the right pane and press **Tab** to flip focus.",
                 "Press **⌘T** to open a second tab in the focused pane.",
@@ -370,6 +377,8 @@ extension HelpTopic {
                 "**Click empty space** — clears the selection. ⌘- or ⇧-clicking empty space preserves it.",
                 "**Arrow keys** — move the active selection; **⇧+arrow** extends from the anchor in the move direction.",
                 "**Space** — Quick Look the focused item.",
+                "**⌘-double-click a folder** — opens it in a new tab in the same pane (browser convention); the current tab stays put. Works in every view mode.",
+                "When items are selected, a **floating capsule** above the path bar surfaces Open / Reveal in Finder / Trash for the selection.",
                 "List view rides on `NSTableView`'s native multi-select; Column view rides on `NSBrowser`'s. Icon and Gallery views implement the same modifier behaviour in SwiftUI via `TabState.applyClickSelection`.",
             ]),
             HelpSection(heading: "Sorting", bullets: [
@@ -378,8 +387,9 @@ extension HelpTopic {
                 "Directories always sort *before* files within a given direction.",
                 "**Sort by name** uses `localizedStandardCompare` — Finder-style natural number sorting (`file2.txt` before `file10.txt`).",
             ]),
+            HelpSection(heading: "Recently changed highlight", body: "An opt-in setting (Settings ▸ Files ▸ Highlight recently changed files) tints the List view's **Date Modified** column orange for files modified inside a configurable window (default 10 minutes). Useful right after a build, an import, or a `git pull`."),
             HelpSection(heading: "Group-by", bullets: [
-                "Open the pane's sort/options popover (the small gear in the tab strip) and pick a **Group By** mode — None, *Kind*, *Date Modified*, or *Size*.",
+                "Open the pane's sort/options popover (the sliders button in the tab strip) and pick a **Group By** mode — None, *Kind*, *Date Modified*, or *Size*.",
                 "**Kind** buckets file types: Folders, Images, Video, Audio, Documents, Spreadsheets, Presentations, Archives, Code, Applications, plus an `EXT` fallback for one-off extensions.",
                 "**Date Modified** uses relative buckets: Today, Yesterday, This Week, This Month, This Year, Older.",
                 "**Size** buckets: Tiny (< 10 KB), Small (< 1 MB), Medium (< 10 MB), Large (< 100 MB), Very Large (< 1 GB), Huge (≥ 1 GB). Folders go in their own bucket since their size is calculate-on-demand.",
@@ -421,7 +431,7 @@ extension HelpTopic {
                 "**Right-click** a favourite for Open in Other Pane, Open in New Tab, or Remove.",
                 "**⌥⌘1 … ⌥⌘9** — jump the focused tab to the Nth favourite.",
             ]),
-            HelpSection(heading: "Locations", body: "Macintosh HD, Network, and Trash. Click Network to browse `/Volumes` for mounted shares."),
+            HelpSection(heading: "Locations", body: "Macintosh HD, then every mounted volume — external drives, disk images, network shares — each with an **eject button**, then Network and Trash. Click Network to browse `/Volumes` for mounted shares. See the **Disk images (DMG)** topic for how disk images behave."),
             HelpSection(heading: "Tags", body: "Eight color rows — click one to pivot to a Spotlight search across Home for files with that tag."),
             HelpSection(heading: "Smart Folders", body: "Saved searches you've created — see the **Smart Folders** topic for details."),
             HelpSection(heading: "Servers", body: "SFTP bookmarks. Each connected server shows an eject icon — see the **Remote (SFTP)** topic."),
@@ -573,7 +583,7 @@ extension HelpTopic {
         sections: [
             HelpSection(body: "Press **Space** with a selection to preview without opening the file in its app. Arrow keys cycle through the previews."),
             HelpSection(heading: "Where it works", bullets: [
-                "**Icon, Gallery, Column views** — Space opens a full Quick Look panel.",
+                "**All four views** — Space opens a full Quick Look panel in List, Icon, Column, and Gallery.",
                 "**Column view** also shows a *persistent* `QLPreviewView` in the rightmost column for the focused row.",
                 "**Gallery view** has Quick Look baked into the large preview area.",
             ]),
@@ -925,6 +935,23 @@ extension HelpTopic {
         ]
     )
 
+    static let openInEditor = HelpTopic(
+        id: "openInEditor",
+        title: "Open in Editor",
+        systemImage: "chevron.left.forwardslash.chevron.right",
+        sections: [
+            HelpSection(body: "**⌃⌘E** (Go ▸ Open in Editor) launches your code editor on the current selection — or on the active tab's folder when nothing is selected, which is the fast way to open a whole project."),
+            HelpSection(heading: "Which editor", bullets: [
+                "With no configuration, DoubleFinder **auto-discovers** VS Code (`code`), Cursor (`cursor`), and Sublime Text (`subl`) in the usual Homebrew and `/Applications` install locations, in that order.",
+                "To use anything else, set an **absolute path** in Settings ▸ Files ▸ Editor command — any binary that accepts file/folder arguments works.",
+            ]),
+            HelpSection(heading: "Limitations", bullets: [
+                "Skipped for **remote tabs** — the editor needs local files. Use **Edit Locally** (right-click a remote file) for the download-edit-reupload workflow instead.",
+            ]),
+            HelpSection(tip: "Pairs well with Open in Terminal (⌃⌘T): editor on one shortcut, shell on the other, both pointed at the folder you're looking at."),
+        ]
+    )
+
     static let imageViewer = HelpTopic(
         id: "imageViewer",
         title: "Image Viewer",
@@ -976,6 +1003,43 @@ extension HelpTopic {
                 "**Reveal in Finder** — surface the archive file itself.",
             ]),
             HelpSection(heading: "Implementation", body: "Listing and extraction shell out to `/usr/bin/unzip` and `/usr/bin/tar`. The archive itself never has to be copied or partially extracted to be browsed."),
+        ]
+    )
+
+    static let diskImages = HelpTopic(
+        id: "diskImages",
+        title: "Disk images (DMG)",
+        systemImage: "externaldrive",
+        sections: [
+            HelpSection(body: "DoubleFinder handles disk images the way Finder does: double-click to mount, browse the image's authored installer layout, eject from the sidebar — and when the volume goes away, your tab lands back on the folder containing the image."),
+            HelpSection(heading: "Mounting", bullets: [
+                "**Double-click** a `.dmg` (or `.iso`, `.sparseimage`, `.sparsebundle`, `.cdr`, `.img`) in any view — the image attaches via `hdiutil` and the pane navigates into the mounted volume.",
+                "A **toast** shows \u{201C}Mounting…\u{201D} while the image is verified, then \u{201C}Mounted\u{201D} — or the `hdiutil` error message when attaching fails.",
+                "Opening an image that's already mounted just navigates to the existing volume.",
+                "**⌘↓** (Open Selection) and the context menu's **Open** behave the same as a double-click.",
+            ]),
+            HelpSection(heading: "Locations in the sidebar", bullets: [
+                "Mounted volumes — external drives, disk images, network shares — appear in the sidebar's **Locations** section, right below Macintosh HD.",
+                "Ejectable volumes get an **eject button**; it becomes a small spinner while the eject is in flight.",
+                "**Right-click** a volume for Open in active / other pane, Open in new tab, and Eject.",
+            ]),
+            HelpSection(heading: "The Finder-style installer window", bullets: [
+                "A DMG's volume root renders the layout authored in the image's `.DS_Store`: the **background artwork** plus the authored **icon positions** and **icon size** — the classic \u{201C}drag the app to Applications\u{201D} window.",
+                "Icons are **draggable**, so the drag-onto-Applications gesture works as intended.",
+                "Files with no authored position (and hidden files, when shown with ⇧⌘.) flow into a **grid strip below** the canvas.",
+                "This is **not a view mode** — there's no toolbar button. It activates automatically at the image's root and goes away as you navigate into subfolders or anywhere else.",
+                "Images without an authored layout (no background, no stored icon positions) fall back to your normal view mode.",
+            ]),
+            HelpSection(heading: "Ejecting", bullets: [
+                "Click the sidebar's **eject button** — or eject from Finder, or run `hdiutil detach`; DoubleFinder reacts the same way to all of them.",
+                "Any tab browsing the ejected volume navigates back to the **folder containing the `.dmg`**, with the image file selected so you keep your bearings.",
+                "When the image's location is unknown, the tab falls back to its most recent history entry off the dead volume, then to your starting folder.",
+            ]),
+            HelpSection(heading: "Limitations", bullets: [
+                "Images with a **license agreement** can't be mounted yet — the attach fails with `hdiutil`'s SLA error instead of showing the license dialog.",
+                "Mounting works for **local** images only; disk images in remote (SFTP / WebDAV / FTP) tabs open via the system default app instead.",
+            ]),
+            HelpSection(tip: "The eject button isn't DMG-specific — external drives and network shares under Locations get one too, mirroring Finder."),
         ]
     )
 
@@ -1044,6 +1108,7 @@ extension HelpTopic {
         title: "Keyboard shortcuts",
         systemImage: "keyboard",
         sections: [
+            HelpSection(heading: "Hold ⌘ for the cheat sheet", body: "Hold the **⌘ key alone** for about half a second anywhere in the app and a floating shortcut overlay appears with the most-used bindings. Releasing ⌘ — or pressing any other key, since that means you're invoking a shortcut — dismisses it instantly."),
             HelpSection(heading: "Files & tabs", shortcuts: [
                 ("⌘T", "New tab"),
                 ("⌘W", "Close tab (closes window on last non-pinned tab)"),
@@ -1061,7 +1126,7 @@ extension HelpTopic {
                 ("⌥⌘1…9", "Jump to favourite N"),
             ]),
             HelpSection(heading: "Navigation", shortcuts: [
-                ("⌘↑", "Enclosing folder"),
+                ("⌘↑", "Enclosing folder (lands with the child folder pre-selected)"),
                 ("⌘↓", "Open selection"),
                 ("⌘[", "Back"),
                 ("⌘]", "Forward"),
@@ -1077,6 +1142,7 @@ extension HelpTopic {
                 ("⌥⌘V", "Paste Files"),
                 ("⇧⌘⌫", "Empty Trash…"),
                 ("⌘Z", "Undo"),
+                ("⇧⌘Z", "Redo"),
                 ("⌘A", "Select All"),
                 ("⇧⌘A", "Invert Selection"),
                 ("⌃M", "Toggle Mark (toolbar ops switch to marked when any)"),
@@ -1089,11 +1155,15 @@ extension HelpTopic {
                 ("⌘I", "Get Info"),
                 ("⌥⌘I", "Toggle Inspector"),
                 ("⌥⌘R", "Reveal in Finder"),
+                ("⌘Y", "View Images (slideshow)"),
                 ("Space", "Quick Look"),
             ]),
             HelpSection(heading: "Workspaces & tools", shortcuts: [
+                ("⇧⌘P", "Command Palette"),
+                ("⇧⌘D", "Disk Usage"),
                 ("⌥⌘S", "Save Workspace…"),
                 ("⌃⌘T", "Open in Terminal / SSH"),
+                ("⌃⌘E", "Open in Editor"),
                 ("⌃⌘B", "Add folder to Sidebar"),
                 ("⌘?", "Open this help window"),
             ]),
@@ -1120,6 +1190,8 @@ extension HelpTopic {
             HelpSection(heading: "Files", bullets: [
                 "**Default view mode** — *Icon*, *List*, or *Columns* for new tabs. Already-open tabs keep their current view; restored tabs keep the view they were last using.",
                 "**Show folders on top (Icon and List views)** — when on (default), directories sort before files inside the active sort key; toggle off for a strict by-name / by-size / by-date / by-kind sort that interleaves folders and files. The change applies live to every open tab.",
+                "**Highlight recently changed files** — opt-in orange tint on the List view's Date Modified column for files modified inside a configurable window (1–1440 minutes, default 10).",
+                "**Editor command** — absolute path to the editor that ⌃⌘E launches. Leave empty to auto-discover VS Code, Cursor, or Sublime Text in the standard install locations.",
             ]),
             HelpSection(heading: "Where preferences live", body: "Settings are written to the standard `UserDefaults` domain (`com.doublefinder.app`). Use `defaults read com.doublefinder.app` from a terminal to dump them; `defaults delete com.doublefinder.app` to reset everything."),
         ]
@@ -1149,7 +1221,7 @@ extension HelpTopic {
         systemImage: "wrench.and.screwdriver",
         sections: [
             HelpSection(heading: "DoubleFinder won't restore my tabs on launch", bullets: [
-                "Check **DoubleFinder ▸ Settings… ▸ Restore state on startup** is on.",
+                "Check **DoubleFinder ▸ Settings… ▸ Restore windows and tabs on startup** is on.",
                 "If `~/Library/Application Support/DoubleFinder/state.json` is missing or zero-length, the file wasn't written cleanly on the last quit.",
                 "Delete the file and re-launch — DoubleFinder will start fresh.",
             ]),

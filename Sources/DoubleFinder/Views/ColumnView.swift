@@ -255,7 +255,7 @@ struct ColumnView: NSViewRepresentable {
                     tab.navigate(to: target.url)
                 }
             } else {
-                NSWorkspace.shared.open(target.url)
+                FileOpener.open(target.url, in: tab)
             }
         }
 

@@ -39,6 +39,7 @@ struct SidebarView: View {
     @AppStorage("df.sidebar.tagsExpanded") private var tagsExpanded = true
     @AppStorage("df.sidebar.smartFoldersExpanded") private var smartFoldersExpanded = true
     @ObservedObject private var smartFolderStore = SmartFolderStore.shared
+    @ObservedObject private var volumeStore = VolumeStore.shared
 
     private func binding(for sectionTitle: String) -> Binding<Bool> {
         switch sectionTitle {
@@ -109,6 +110,14 @@ struct SidebarView: View {
                 Section(isExpanded: binding(for: section.title)) {
                     ForEach(section.items) { item in
                         row(for: item, in: section.title)
+                        // Mounted volumes (external drives, DMGs, network
+                        // shares) slot in right after the boot disk, matching
+                        // Finder's Locations ordering.
+                        if section.title == "Locations" && item.title == "Macintosh HD" {
+                            ForEach(volumeStore.volumes) { volume in
+                                volumeRow(volume)
+                            }
+                        }
                     }
                 } header: {
                     Text(section.title)
@@ -225,6 +234,61 @@ struct SidebarView: View {
             Divider()
             Button("Remove from Sidebar", role: .destructive) {
                 state.favourites.removeAll { $0.id == fav.id }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func volumeRow(_ volume: MountedVolume) -> some View {
+        HStack(spacing: 0) {
+            Button {
+                state.focusedPane.activeTab.navigate(to: volume.url)
+            } label: {
+                Label {
+                    Text(volume.name)
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+                } icon: {
+                    Image(systemName: volume.systemImage)
+                        .foregroundStyle(Color.primary)
+                }
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 4)
+
+            if volume.isEjectable {
+                if volumeStore.ejecting.contains(volume.id) {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Button {
+                        volumeStore.eject(volume)
+                    } label: {
+                        Image(systemName: "eject.fill")
+                            .foregroundStyle(Color.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Eject “\(volume.name)”")
+                }
+            }
+        }
+        .contextMenu {
+            Button("Open in active pane") {
+                state.focusedPane.activeTab.navigate(to: volume.url)
+            }
+            Button("Open in other pane") {
+                state.otherPane.activeTab.navigate(to: volume.url)
+            }
+            Button("Open in new tab (active pane)") {
+                state.focusedPane.addTab(url: volume.url)
+            }
+            if volume.isEjectable {
+                Divider()
+                Button("Eject “\(volume.name)”") {
+                    volumeStore.eject(volume)
+                }
+                .disabled(volumeStore.ejecting.contains(volume.id))
             }
         }
     }

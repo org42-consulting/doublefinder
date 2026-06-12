@@ -956,6 +956,31 @@ final class TabState: ObservableObject, Identifiable {
         navigate(to: parent)
     }
 
+    /// Called when the volume this tab is browsing was unmounted. Prefers the
+    /// folder containing the backing disk image (with the image left selected
+    /// for orientation, mirroring `navigateUp`), then the most recent history
+    /// entry off the dead volume, then the default starting folder.
+    func escapeUnmountedVolume(at volumePath: String, backingImage: URL?) {
+        if let backingImage {
+            let folder = backingImage.deletingLastPathComponent()
+            if FileManager.default.fileExists(atPath: folder.path) {
+                pendingSelectionURL = backingImage
+                navigate(to: folder)
+                return
+            }
+        }
+        for entry in history.reversed() {
+            guard entry.isFileURL else { continue }
+            let p = entry.standardizedFileURL.path
+            if p != volumePath, !p.hasPrefix(volumePath + "/"),
+               FileManager.default.fileExists(atPath: p) {
+                navigate(to: entry)
+                return
+            }
+        }
+        navigate(to: WindowState.defaultStartingURL())
+    }
+
     func navigate(to newURL: URL) {
         let resolved = newURL.resolvingSymlinksInPath()
 
@@ -1395,6 +1420,9 @@ final class WindowState: ObservableObject {
     private static let maxUndoStack = 50
 
     private var observerTokens: [NSObjectProtocol] = []
+    /// Tokens registered on `NSWorkspace.shared.notificationCenter` (volume
+    /// mount/unmount); a different center than `observerTokens`.
+    private var workspaceObserverTokens: [NSObjectProtocol] = []
     private var favouritesCancellable: AnyCancellable?
 
     /// The configured starting directory from Settings, falling back to home if the
@@ -1420,6 +1448,23 @@ final class WindowState: ObservableObject {
                 guard let tabEndpoint = tab.url.sftpEndpoint,
                       tabEndpoint.sameConnection(as: endpoint) else { continue }
                 tab.navigate(to: target)
+            }
+        }
+    }
+
+    /// Move every tab that is browsing the just-unmounted volume somewhere
+    /// alive — for ejected disk images that's the folder containing the .dmg,
+    /// matching what the user expects after an eject.
+    @MainActor
+    func navigateTabsAway(fromUnmountedVolume volumeURL: URL) {
+        let volPath = volumeURL.standardizedFileURL.path
+        let backingImage = VolumeStore.shared.backingImage(forVolumePath: volPath)
+        for pane in [left, right] {
+            for tab in pane.tabs {
+                guard tab.url.isFileURL else { continue }
+                let p = tab.url.standardizedFileURL.path
+                guard p == volPath || p.hasPrefix(volPath + "/") else { continue }
+                tab.escapeUnmountedVolume(at: volPath, backingImage: backingImage)
             }
         }
     }
@@ -1471,8 +1516,25 @@ final class WindowState: ObservableObject {
         left.window = self
         right.window = self
         registerCommandObservers()
+        registerVolumeObservers()
         registerPersistenceHook()
         WindowRegistry.shared.register(self)
+    }
+
+    /// Volume events arrive on NSWorkspace's own notification center, so the
+    /// tokens live in `workspaceObserverTokens` and are removed from that
+    /// center (not `NotificationCenter.default`) in deinit.
+    private func registerVolumeObservers() {
+        workspaceObserverTokens.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didUnmountNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let volumeURL = note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL
+                else { return }
+                self.navigateTabsAway(fromUnmountedVolume: volumeURL)
+            }
+        })
     }
 
     func snapshot() -> StatePersistence.Snapshot {
@@ -1510,6 +1572,9 @@ final class WindowState: ObservableObject {
     deinit {
         for token in observerTokens {
             NotificationCenter.default.removeObserver(token)
+        }
+        for token in workspaceObserverTokens {
+            NSWorkspace.shared.notificationCenter.removeObserver(token)
         }
         // Capture only the stable identity — never `self` — and hop to the
         // main actor via the registry's nonisolated entry point. Spawning a
@@ -1619,7 +1684,7 @@ final class WindowState: ObservableObject {
                 if node.isOpenableDirectory {
                     tab.navigate(to: node.url)
                 } else {
-                    NSWorkspace.shared.open(node.url)
+                    FileOpener.open(node.url, in: tab)
                 }
             }
         })

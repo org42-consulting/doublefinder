@@ -164,7 +164,7 @@ struct IconView: View {
                         tab.navigate(to: node.url)
                     }
                 } else {
-                    NSWorkspace.shared.open(node.url)
+                    FileOpener.open(node.url, in: tab)
                 }
             },
             onQuickLook: { quickLook(start: node.url) }
@@ -231,7 +231,7 @@ struct IconView: View {
         if node.isOpenableDirectory {
             tab.navigate(to: node.url)
         } else {
-            NSWorkspace.shared.open(node.url)
+            FileOpener.open(node.url, in: tab)
         }
     }
 

@@ -55,7 +55,7 @@ enum FileContextMenu {
                 let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
                 let isOpenableDirectory = (v?.isDirectory ?? false) && !(v?.isPackage ?? false)
                 if isOpenableDirectory { tab.navigate(to: u); break }
-                NSWorkspace.shared.open(u)
+                FileOpener.open(u, in: tab)
             }
         }
 
@@ -327,7 +327,7 @@ enum FileContextMenu {
                     let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
                     let isOpenableDirectory = (v?.isDirectory ?? false) && !(v?.isPackage ?? false)
                     if isOpenableDirectory { tab.navigate(to: u); break }
-                    NSWorkspace.shared.open(u)
+                    FileOpener.open(u, in: tab)
                 }
             }
             if allRemote, !multiple, !allDirs, let url = urls.first {

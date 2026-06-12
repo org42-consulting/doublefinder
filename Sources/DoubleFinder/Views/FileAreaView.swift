@@ -13,14 +13,24 @@ struct FileAreaView: View {
     @ObservedObject private var cutClipboard: CutClipboard = .shared
     @AppStorage(SettingsKey.highlightRecentChanges) private var highlightRecent: Bool = false
     @AppStorage(SettingsKey.recentChangeMinutes) private var recentMinutes: Int = 10
+    /// Finder-style authored layout for a mounted disk image's root folder.
+    /// Loaded per-URL; non-nil only when the tab sits on a DMG volume root
+    /// whose .DS_Store carries icon positions / background art. Not a view
+    /// mode — it replaces the standard views automatically (like Finder).
+    @State private var diskImageLayout: DiskImageLayout? = nil
 
     var body: some View {
         switch tab.connectionState {
         case .local, .remoteConnected:
             ZStack {
-                content
-                    .id(tab.viewMode)
-                    .transition(.opacity)
+                if let layout = diskImageLayout, !tab.isSearching {
+                    DiskImageFinderView(tab: tab, side: side, layout: layout)
+                        .transition(.opacity)
+                } else {
+                    content
+                        .id(tab.viewMode)
+                        .transition(.opacity)
+                }
                 if showEmptyState {
                     ContentUnavailableView {
                         Label("No results", systemImage: "magnifyingglass")
@@ -52,6 +62,9 @@ struct FileAreaView: View {
             }
             .animation(.easeInOut(duration: 0.15), value: tab.viewMode)
             .animation(.easeInOut(duration: 0.2), value: tab.isLoading)
+            .task(id: tab.url) {
+                diskImageLayout = await DiskImageLayoutService.shared.layout(for: tab.url)
+            }
         case .remoteReconnecting, .remoteDisconnected:
             RemoteDisconnectedPlaceholder(tab: tab)
         }

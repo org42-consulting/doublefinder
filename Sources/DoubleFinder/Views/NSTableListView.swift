@@ -653,7 +653,7 @@ struct NSTableListView: NSViewRepresentable {
                     parent.tab.navigate(to: node.url)
                 }
             } else {
-                NSWorkspace.shared.open(node.url)
+                FileOpener.open(node.url, in: parent.tab)
             }
         }
 

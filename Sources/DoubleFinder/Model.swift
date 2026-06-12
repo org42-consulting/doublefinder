@@ -297,12 +297,6 @@ struct GetInfoPrompt: Identifiable {
     let onTagsChanged: () -> Void
 }
 
-struct NewFolderPrompt: Identifiable {
-    let id = UUID()
-    let parentURL: URL
-    let onCommit: (String) -> Void
-}
-
 struct BatchRenamePrompt: Identifiable {
     let id = UUID()
     let urls: [URL]
@@ -384,7 +378,6 @@ extension Notification.Name {
     static let commandPaletteRequested = Notification.Name("df.commandPaletteRequested")
     static let viewImagesRequested = Notification.Name("df.viewImagesRequested")
     static let openImageViewerWindow = Notification.Name("df.openImageViewerWindow")
-    static let folderSyncRequested = Notification.Name("df.folderSyncRequested")
     static let diskUsageRequested = Notification.Name("df.diskUsageRequested")
     static let openDiskUsageWindow = Notification.Name("df.openDiskUsageWindow")
     static let openArchiveBrowser = Notification.Name("df.openArchiveBrowser")
@@ -1374,14 +1367,12 @@ final class WindowState: ObservableObject {
     @Published var conflict: ConflictPrompt?
     @Published var remotePrompt: RemotePrompt? = nil
     @Published var connectError: ConnectError? = nil
-    @Published var newFolderPrompt: NewFolderPrompt?
     @Published var renamePrompt: RenamePromptModel?
     @Published var goToPrompt: GoToFolderPrompt?
     @Published var getInfoPrompt: GetInfoPrompt?
     @Published var batchRenamePrompt: BatchRenamePrompt?
     @Published var contentSearchPrompt: ContentSearchPrompt?
     @Published var commandPalette: CommandPalettePrompt?
-    @Published var syncPrompt: SyncPrompt?
     @Published var favourites: [SidebarFavourite] = SidebarFavourite.defaults
     @Published var showInspector: Bool = false
     /// When true, only the currently-focused pane is rendered — the other one is
@@ -1894,27 +1885,6 @@ final class WindowState: ObservableObject {
                     name: .openDiskUsageWindow,
                     object: nil,
                     userInfo: ["url": url]
-                )
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .folderSyncRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let lt = self.left.activeTab
-                let rt = self.right.activeTab
-                self.syncPrompt = SyncPrompt(
-                    leftURL: lt.url,
-                    rightURL: rt.url,
-                    leftNodes: lt.nodes,
-                    rightNodes: rt.nodes,
-                    onComplete: { [weak self] in
-                        Task { @MainActor in
-                            guard let self else { return }
-                            await self.left.activeTab.refresh()
-                            await self.right.activeTab.refresh()
-                            self.recomputeCompareStatuses()
-                        }
-                    }
                 )
             }
         })

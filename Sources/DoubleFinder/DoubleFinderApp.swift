@@ -12,7 +12,7 @@ struct DoubleFinderApp: App {
         // moved between builder vars and a prior customization is on disk.
         // Clearing the saved layout once forces a clean rebuild.
         let key = "df.toolbarSchemaVersion"
-        let currentSchema = 7
+        let currentSchema = 8
         if UserDefaults.standard.integer(forKey: key) < currentSchema {
             UserDefaults.standard.removeObject(forKey: "NSToolbar Configuration df-main")
             UserDefaults.standard.set(currentSchema, forKey: key)

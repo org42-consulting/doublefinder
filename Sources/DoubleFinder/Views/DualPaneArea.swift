@@ -68,9 +68,6 @@ struct DualPaneArea: View {
         .sheet(item: $state.conflict) { prompt in
             ConflictSheet(prompt: prompt)
         }
-        .sheet(item: $state.newFolderPrompt) { prompt in
-            NewFolderSheet(prompt: prompt)
-        }
         .sheet(item: $state.renamePrompt) { prompt in
             RenameSheet(prompt: prompt)
         }
@@ -88,9 +85,6 @@ struct DualPaneArea: View {
         }
         .sheet(item: $state.commandPalette) { prompt in
             CommandPaletteSheet(prompt: prompt)
-        }
-        .sheet(item: $state.syncPrompt) { prompt in
-            FolderSyncSheet(prompt: prompt)
         }
         .sheet(item: $state.remotePrompt) { prompt in
             Group {

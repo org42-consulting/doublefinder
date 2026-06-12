@@ -181,7 +181,6 @@ extension HelpTopic {
         .imageViewer,
         .diskUsage,
         .archiveBrowser,
-        .folderSync,
         .trashWindow,
         .shortcutsApp,
         .shortcuts,
@@ -977,22 +976,6 @@ extension HelpTopic {
                 "**Reveal in Finder** — surface the archive file itself.",
             ]),
             HelpSection(heading: "Implementation", body: "Listing and extraction shell out to `/usr/bin/unzip` and `/usr/bin/tar`. The archive itself never has to be copied or partially extracted to be browsed."),
-        ]
-    )
-
-    static let folderSync = HelpTopic(
-        id: "folderSync",
-        title: "Folder Sync",
-        systemImage: "arrow.triangle.2.circlepath",
-        sections: [
-            HelpSection(body: "While **Compare Folders** is on, the toolbar's circular-arrow button (Sync) opens a preview sheet that plans every operation needed to bring the two pane contents in line. Nothing happens until you click Run."),
-            HelpSection(heading: "Directions", bullets: [
-                "**Left → Right** — bring the right pane into agreement with the left.",
-                "**Right → Left** — the opposite.",
-                "**Two-way (newer wins)** — for each filename present on both sides, the most recently modified copy is propagated; names that only exist on one side get copied to the other; nothing is ever deleted in two-way mode.",
-            ]),
-            HelpSection(heading: "Deletes", body: "Off by default. Tick **Delete files that don't exist on the source side** to make Left→Right and Right→Left mirror operations — files unique to the destination get moved to Trash. The preview shows every operation in red before you run it."),
-            HelpSection(heading: "Limits", body: "Matching is by filename only; sub-directories sync as whole subtrees. Sync is local-only for now — remote tabs aren't supported as either side."),
         ]
     )
 

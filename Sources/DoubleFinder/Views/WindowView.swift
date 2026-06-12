@@ -87,6 +87,7 @@ private struct WindowFocusTracker: NSViewRepresentable {
 
 struct WindowView: View {
     @StateObject private var state = WindowState()
+    @StateObject private var shortcutOverlay = ShortcutOverlayCoordinator()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @Environment(\.openWindow) private var openWindow
 
@@ -99,9 +100,19 @@ struct WindowView: View {
             DualPaneArea()
                 .environmentObject(state)
                 .background(NavTitleRelay(tab: state.focusedPane.activeTab))
-                .toolbar(id: "df-main") { toolbarItems }
+                .toolbar { toolbarItems }
                 .overlay { ToastOverlay() }
                 .overlay { FirstRunTour() }
+                .overlay {
+                    if shortcutOverlay.showing {
+                        ShortcutOverlayHUD()
+                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                            .allowsHitTesting(false)
+                    }
+                }
+                .animation(.easeOut(duration: 0.15), value: shortcutOverlay.showing)
+                .onAppear { shortcutOverlay.install() }
+                .onDisappear { shortcutOverlay.cleanup() }
         }
         .navigationSplitViewStyle(.balanced)
         // `.focusedSceneValue` (not `.focusedValue`) so the menu command can read
@@ -149,182 +160,136 @@ struct WindowView: View {
     }
 
     @ToolbarContentBuilder
-    private var toolbarItems: some CustomizableToolbarContent {
-        navigationItems
-        actionItems
-        fileOpsItems
-        trailingItems
-    }
-
-    @ToolbarContentBuilder
-    private var navigationItems: some CustomizableToolbarContent {
+    private var toolbarItems: some ToolbarContent {
         let tab = state.focusedPane.activeTab
 
-        ToolbarItem(id: "back", placement: .navigation) {
-            BackToolbarButton(tab: tab)
-        }
-
-        ToolbarItem(id: "forward", placement: .navigation) {
-            ForwardToolbarButton(tab: tab)
-        }
-
-        ToolbarItem(id: "focus", placement: .navigation) {
-            Button {
-                state.toggleFocus()
-            } label: {
-                Image(systemName: state.focus == .left
-                      ? "rectangle.lefthalf.inset.filled"
-                      : "rectangle.righthalf.inset.filled")
+        // Single .navigation ToolbarItem so the back/forward and action
+        // clusters share one section pill (macOS 26 fuses any leading-side
+        // items into one section anyway). A vertical Divider separates
+        // navigation from file-op actions inside the shared pill.
+        ToolbarItem(placement: .navigation) {
+            HStack(spacing: 8) {
+                HStack(spacing: 2) {
+                    BackToolbarButton(tab: tab)
+                    ForwardToolbarButton(tab: tab)
+                }
+                Divider()
+                    .frame(height: 16)
+                HStack(spacing: 2) {
+                    actionButtons
+                }
             }
-            .help("Active pane: \(state.focus == .left ? "left" : "right") — press ⇥ to swap")
-            .keyboardShortcut(.tab, modifiers: [])
         }
 
-        ToolbarItem(id: "sync", placement: .navigation) {
-            Button {
-                state.syncPanes()
-            } label: {
-                Image(systemName: state.focus == .left
-                      ? "arrow.right.to.line.compact"
-                      : "arrow.left.to.line.compact")
-            }
-            .help("Mirror active pane to other side (⌃⌘=)")
+        ToolbarItemGroup(placement: .principal) {
+            ViewModePicker(tab: tab)
         }
 
-        ToolbarItem(id: "swap", placement: .navigation) {
-            Button {
-                state.swapPanes()
-            } label: {
-                Image(systemName: "arrow.left.arrow.right")
-            }
-            .help("Swap left and right panes (⌥⌘\\)")
-        }
-
-        ToolbarItem(id: "compare", placement: .navigation) {
-            Button {
-                state.compareMode.toggle()
-            } label: {
-                Image(systemName: state.compareMode
-                      ? "rectangle.split.2x1.fill"
-                      : "rectangle.split.2x1")
-                    .foregroundStyle(state.compareMode ? Color.accentColor : Color.primary)
-            }
-            .help(state.compareMode
-                  ? "Stop comparing — red = only on this side, yellow = same name but different contents"
-                  : "Compare panes — highlights rows that are unique to one side or differ in size/date")
-        }
-
-        // Folder Sync (separate from "sync panes" above — this opens the
-        // preview sheet of operations to bring the two folders into agreement
-        // when Compare mode is on).
-        ToolbarItem(id: "folder-sync", placement: .navigation) {
-            Button {
-                NotificationCenter.default.post(name: .folderSyncRequested, object: nil)
-            } label: {
-                Image(systemName: "arrow.triangle.2.circlepath")
-            }
-            .help("Sync the two pane contents (preview before applying)")
-            .disabled(!state.compareMode)
-        }
-        .defaultCustomization(.hidden)
-    }
-
-    @ToolbarContentBuilder
-    private var actionItems: some CustomizableToolbarContent {
-        ToolbarItem(id: "inspector", placement: .navigation) {
-            Button {
-                state.showInspector.toggle()
-            } label: {
-                Image(systemName: state.showInspector ? "sidebar.trailing" : "sidebar.right")
-                    .foregroundStyle(state.showInspector ? Color.accentColor : Color.primary)
-            }
-            .help(state.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+        ToolbarItemGroup(placement: .primaryAction) {
+            TransferQueueButton().environmentObject(state)
+            SearchToolbarItem(tab: tab)
         }
     }
 
-    /// File-op cluster (Copy / Move / Rename / Delete). Lives directly after
-    /// `actionItems` in the toolbar so the four buttons read as their own
-    /// sub-toolbar adjacent to the originals.
-    @ToolbarContentBuilder
-    private var fileOpsItems: some CustomizableToolbarContent {
+    @ViewBuilder
+    private var actionButtons: some View {
         let tab = state.focusedPane.activeTab
         let otherTab = state.otherPane.activeTab
         let hasSelection = !tab.selection.isEmpty
         let arrow = state.focus == .left ? "→" : "←"
         let destName = otherTab.url.lastPathComponent.isEmpty ? "/" : otherTab.url.lastPathComponent
 
-        ToolbarSpacer(.flexible, placement: .navigation)
-
-        ToolbarItem(id: "newfolder", placement: .navigation) {
-            Button {
-                newFolder()
-            } label: {
-                Image(systemName: "folder.badge.plus")
-            }
-            .keyboardShortcut("n", modifiers: [.command, .shift])
-            .help("New Folder (⇧⌘N)")
+        Button {
+            state.toggleFocus()
+        } label: {
+            Image(systemName: state.focus == .left
+                  ? "rectangle.lefthalf.inset.filled"
+                  : "rectangle.righthalf.inset.filled")
         }
+        .help("Active pane: \(state.focus == .left ? "left" : "right") — press ⇥ to swap")
+        .keyboardShortcut(.tab, modifiers: [])
 
-        ToolbarItem(id: "copy", placement: .navigation) {
-            Button {
-                copyFocusedToOther()
-            } label: {
-                Image(systemName: "doc.on.doc")
-            }
-            .disabled(!hasSelection)
-            .keyboardShortcut("c", modifiers: [.command, .option])
-            .help("Copy \(arrow) to \(destName) (⌥⌘C)")
+        Button {
+            state.syncPanes()
+        } label: {
+            Image(systemName: state.focus == .left
+                  ? "arrow.right.to.line.compact"
+                  : "arrow.left.to.line.compact")
         }
+        .help("Mirror active pane to other side (⌃⌘=)")
 
-        ToolbarItem(id: "move", placement: .navigation) {
-            Button {
-                moveFocusedToOther()
-            } label: {
-                Image(systemName: "arrow.right.doc.on.clipboard")
-            }
-            .disabled(!hasSelection)
-            .keyboardShortcut("m", modifiers: [.command, .option])
-            .help("Move \(arrow) to \(destName) (⌥⌘M)")
+        Button {
+            state.swapPanes()
+        } label: {
+            Image(systemName: "arrow.left.arrow.right")
         }
+        .help("Swap left and right panes (⌥⌘\\)")
 
-        ToolbarItem(id: "rename", placement: .navigation) {
-            Button {
-                NotificationCenter.default.post(name: .renameSelectionRequested, object: nil)
-            } label: {
-                Image(systemName: "character.cursor.ibeam")
-            }
-            .disabled(!hasSelection)
-            .help(tab.selection.count > 1 ? "Batch Rename" : "Rename (⌘⏎)")
+        Button {
+            state.compareMode.toggle()
+        } label: {
+            Image(systemName: state.compareMode
+                  ? "rectangle.split.2x1.fill"
+                  : "rectangle.split.2x1")
+                .foregroundStyle(state.compareMode ? Color.accentColor : Color.primary)
         }
+        .help(state.compareMode
+              ? "Stop comparing — red = only on this side, yellow = same name but different contents"
+              : "Compare panes — highlights rows that are unique to one side or differ in size/date")
 
-        ToolbarItem(id: "delete", placement: .navigation) {
-            Button(role: .destructive) {
-                trashFocused()
-            } label: {
-                Image(systemName: "trash")
-            }
-            .disabled(!hasSelection)
-            .keyboardShortcut(.delete, modifiers: [.command])
-            .help("Move to Trash (⌘⌫)")
+        Divider()
+            .frame(height: 16)
+
+        Button {
+            newFolder()
+        } label: {
+            Image(systemName: "folder.badge.plus")
         }
-    }
+        .keyboardShortcut("n", modifiers: [.command, .shift])
+        .help("New Folder (⇧⌘N)")
 
-    @ToolbarContentBuilder
-    private var trailingItems: some CustomizableToolbarContent {
-        let tab = state.focusedPane.activeTab
-
-        ToolbarItem(id: "view-mode", placement: .principal) {
-            ViewModePicker(tab: tab)
+        Button {
+            copyFocusedToOther()
+        } label: {
+            Image(systemName: "doc.on.doc")
         }
+        .disabled(!hasSelection)
+        .keyboardShortcut("c", modifiers: [.command, .option])
+        .help("Copy \(arrow) to \(destName) (⌥⌘C)")
 
-        ToolbarItem(id: "transfer", placement: .primaryAction) {
-            TransferQueueButton()
-                .environmentObject(state)
+        Button {
+            moveFocusedToOther()
+        } label: {
+            Image(systemName: "arrow.right.doc.on.clipboard")
         }
+        .disabled(!hasSelection)
+        .keyboardShortcut("m", modifiers: [.command, .option])
+        .help("Move \(arrow) to \(destName) (⌥⌘M)")
 
-        ToolbarItem(id: "search", placement: .primaryAction) {
-            SearchToolbarItem(tab: tab)
+        Button {
+            NotificationCenter.default.post(name: .renameSelectionRequested, object: nil)
+        } label: {
+            Image(systemName: "character.cursor.ibeam")
         }
+        .disabled(!hasSelection)
+        .help(tab.selection.count > 1 ? "Batch Rename" : "Rename (⌘⏎)")
+
+        Button(role: .destructive) {
+            trashFocused()
+        } label: {
+            Image(systemName: "trash")
+        }
+        .disabled(!hasSelection)
+        .keyboardShortcut(.delete, modifiers: [.command])
+        .help("Move to Trash (⌘⌫)")
+
+        Button {
+            state.showInspector.toggle()
+        } label: {
+            Image(systemName: state.showInspector ? "sidebar.trailing" : "sidebar.right")
+                .foregroundStyle(state.showInspector ? Color.accentColor : Color.primary)
+        }
+        .help(state.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
     }
 
     // MARK: - Actions
@@ -404,13 +369,19 @@ struct WindowView: View {
 
     private func newFolder() {
         let src = state.focusedPane.activeTab
-        state.newFolderPrompt = NewFolderPrompt(parentURL: src.url) { name in
-            Task { @MainActor in
-                do {
-                    _ = try await FileOps.makeFolder(in: src.url, name: name)
-                    await src.refresh()
-                } catch { NSSound.beep() }
-            }
+        Task { @MainActor in
+            do {
+                let url = try await FileOps.makeFolder(in: src.url)
+                await src.refresh()
+                // Same affordance as ⌥⌘N: select the new folder and put the
+                // List view straight into inline rename instead of dropping a
+                // modal sheet. In non-list views the user lands selected and
+                // can ⌘⏎ to rename via the existing modal/batch path.
+                if let id = src.nodesByID[url]?.id {
+                    src.selection = [id]
+                    src.renameRequest = id
+                }
+            } catch { NSSound.beep() }
         }
     }
 

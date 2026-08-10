@@ -10,6 +10,21 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 
 <img width="1347" height="931" alt="Image" src="https://github.com/user-attachments/assets/6d09f270-abb6-4c6e-84ae-3c4e3c5e349c" />
 
+## What's new in 1.7
+
+A reliability release. Several long-standing hangs turned out to share one root cause, and fixing it also fixed a class of silent failures around them.
+
+- **Git status badges no longer vanish in large repositories.** DoubleFinder read `git status` output only after the process had exited — which deadlocks as soon as the output exceeds the 64 KB pipe buffer. A repo with a few thousand untracked files stalled every single refresh for five seconds and then showed no badges at all, because the watchdog had killed git by then. Output is now drained while git runs: the same repo goes from a five-second timeout to 0.07 s, with every badge intact.
+- **Archive browsing, FTP transfers, and content search can no longer hang.** The same pattern appeared in four more places, two of them with no timeout at all — listing a large `.zip` or an FTP directory could wait forever. All of them now share one subprocess helper that drains output concurrently and bounds its wall time.
+- **FTP passwords are no longer readable by other users on the Mac.** They were passed to `curl` as a command-line argument, and arguments are world-readable through `ps`. They now travel on curl's standard input instead.
+- **Remote files with consecutive spaces in their names work.** The SFTP listing parser rebuilt filenames from whitespace-split tokens, so `my  file.txt` became `my file.txt` — a path that doesn't exist on the server, which broke every operation on that row.
+- **A duplicated context-menu entry is gone.** Right-clicking a folder offered "Open in Other Pane" twice, and the two copies were wired up differently.
+- **Faster right-clicks and selection in big folders.** Sixteen remaining linear lookups now go through the URL-keyed index added in 1.5. Three of them sat inside per-item loops, so opening a context menu on a large multi-selection was quadratic in the folder size.
+- **Undo no longer stalls multi-tab workspaces.** ⌘Z used to re-list every tab in both panes, one after another. It now refreshes only the tabs pointed at directories the operation actually touched, concurrently.
+- **VoiceOver support.** Icon-only controls across the toolbar, tab bar, path bar, sidebar, inspector, and transfer queue carried tooltips but no accessibility labels, leaving them unlabelled for VoiceOver. Thirty-seven labels added; tag dots now read as one phrase instead of a row of anonymous shapes.
+- **Operations that used to fail silently now say so.** Put Back, Empty Trash, Make Alias, and Make Symbolic Link discarded their errors, so a failure was indistinguishable from success. They report through the usual toast now.
+- **Edit Locally stops polling after a disconnect.** Disconnecting a server left its file watchers running, queueing an upload that could only fail on every save.
+
 ## What's new in 1.6
 
 - **Snappier arrow-key navigation in big folders.** Selection lookups in List, Icon, and Gallery views are now O(1) via an internal URL-keyed index — holding ↓ in a 20k-entry directory no longer triggers a linear scan per keypress.
@@ -355,11 +370,12 @@ UI code routes operations through `state.focusedPane.activeTab` rather than reac
 
 ### Cross-cutting services
 
-- **`FileTransport` protocol** + `LocalFileTransport` / `SFTPFileTransport` — every read or write of a filesystem (list, mkdir, rename, remove, trash, download, upload) goes through this abstraction, so the same UI works against local disks and SFTP servers without branching at every call site.
+- **`FileTransport` protocol** + `LocalFileTransport` / `SFTPFileTransport` / `WebDAVFileTransport` / `FTPFileTransport` — every read or write of a filesystem (list, mkdir, rename, remove, trash, download, upload) goes through this abstraction, so the same UI works against local disks and every supported remote protocol without branching at each call site.
+- **`ProcessRunner`** — every helper tool (`git`, `curl`, `unzip`, `tar`, `codesign`, `spctl`) is spawned through here. It drains stdout and stderr concurrently with the child and bounds wall time, which is what keeps a chatty subprocess from filling the 64 KB pipe buffer and deadlocking.
 - **`FileOps`** — transport-aware helpers (`copy`, `move`, `trash`, `rename`, `batchRename`, `makeFolder`, `makeFile`, `duplicate`, `makeAlias`, `makeSymbolicLink`, `calculateSize`) that pick the right transport per URL.
 - **`CopyMoveCoordinator`** — orchestrates conflict prompts before enqueueing onto `TransferQueue`; handles all four (src, dst) combinations of local↔remote.
 - **`TransferQueue.shared`** — every long-running operation runs here with an `NSProgress`; the toolbar's transfer button binds to its `ops` list.
-- **`RemoteSessionManager.shared`** (actor) — owns one `SFTPSession` per (user, host, port), refcounted across tabs.
+- **`RemoteSessionManager.shared`** (`@MainActor`) — owns one `SFTPSession` (that one *is* an actor, wrapping the `sftp(1)` subprocess) per (user, host, port), refcounted across tabs.
 - **`RemoteEditWatcher.shared`** — for the Edit Locally workflow: downloads remote files into `~/Library/Caches/DoubleFinder/RemoteEdits/`, watches each one's `mtime`, re-uploads on save.
 - **`RecentLocationsStore.shared`** — last 15 distinct visited URLs, persisted in `UserDefaults`.
 - **`GitStatusService.shared`** (actor) — shells `git status --porcelain`, caches per repo root.
@@ -386,7 +402,7 @@ UI code routes operations through `state.focusedPane.activeTab` rather than reac
 
 ### Search
 
-`TabState.runSearch(_:)` debounces typing by 250 ms, then drives `SearchEngine.stream(for:scopes:kind:)` (an `NSMetadataQuery` wrapper). `searchKind` switches the predicate between `kMDItemDisplayName` (regular search) and `kMDItemUserTags` (sidebar tag clicks). Results pass through the same `filteredForHidden` → `sorted` → `decorateWithGitStatus` pipeline as a normal directory listing.
+`TabState.runSearch(_:)` debounces typing by 250 ms, then drives `SearchEngine.stream(for:scopes:kind:)` (an `NSMetadataQuery` wrapper). `searchKind` switches the predicate between `kMDItemDisplayName` (regular search) and `kMDItemUserTags` (sidebar tag clicks). Results route through `applySearchResults`, which filters hidden files, applies the shared sort, and runs the same `loadDecorations(...)` pass as a normal directory listing.
 
 ### Quick filter
 
@@ -410,81 +426,110 @@ Independent of Spotlight. `TabState.quickFilter` (`@Published`) is applied as a 
 
 ```
 .
-├── Package.swift                 # SwiftPM manifest (executable target)
+├── Package.swift                    # SwiftPM manifest: two targets
+├── Sources/DoubleFinderC/           # C shim: forkpty(3) in one translation unit,
+│   ├── include/df_pty.h             #   because Swift is not fork-safe between
+│   └── df_pty.c                     #   the fork and the exec
 ├── Sources/DoubleFinder/
-│   ├── DoubleFinderApp.swift     # @main entry, menu commands, FocusedValues
-│   ├── Model.swift               # WindowState, PaneState, TabState, FSNode, enums, UndoableOp
-│   ├── CopyMoveCoordinator.swift
-│   ├── FileOps.swift             # transport-aware ops + recursive size
-│   ├── FileOpener.swift          # double-click open; mounts disk images via hdiutil
-│   ├── VolumeStore.swift         # mounted-volume watcher + eject (sidebar Locations)
-│   ├── DSStore.swift             # read-only .DS_Store (Bud1) parser
+│   ├── DoubleFinderApp.swift        # @main entry, menu commands, FocusedValues
+│   ├── Model.swift                  # WindowState, PaneState, TabState, FSNode, UndoableOp
+│   ├── AppIntents.swift             # Shortcuts.app intents
+│   ├── ProcessRunner.swift          # deadlock-free subprocess helper (see Architecture)
+│   ├── CopyMoveCoordinator.swift    # conflict prompts + the local/remote transfer matrix
+│   ├── FileOps.swift                # transport-aware ops + recursive size
+│   ├── FileOpener.swift             # double-click open; mounts disk images via hdiutil
+│   ├── ArchiveBrowser.swift         # zip/tar list, extract, append
+│   ├── DiskUsageScanner.swift       # recursive size tree for the treemap
+│   ├── DSStore.swift                # read-only .DS_Store (Bud1) parser
 │   ├── DiskImageLayoutService.swift # Finder-authored DMG layout extraction + cache
-│   ├── DirectoryWatcher.swift    # FSEventStream wrapper
-│   ├── SearchEngine.swift        # NSMetadataQuery wrapper
-│   ├── GitStatusService.swift
-│   ├── TagStore.swift
-│   ├── ThumbnailService.swift
-│   ├── QuickLookCoordinator.swift
-│   ├── TransferQueue.swift
-│   ├── StatePersistence.swift
-│   ├── RecentLocationsStore.swift # 15 most-recent URLs (UserDefaults)
-│   ├── RemoteEditWatcher.swift    # Edit-Locally workflow
+│   ├── VolumeStore.swift            # mounted-volume watcher + eject (sidebar Locations)
+│   ├── DirectoryWatcher.swift       # FSEventStream wrapper
+│   ├── SearchEngine.swift           # NSMetadataQuery wrapper
+│   ├── GitStatusService.swift       # git status --porcelain, cached per repo root
+│   ├── TagStore.swift               # macOS native tags via xattr
+│   ├── ThumbnailService.swift       # QLThumbnailGenerator + cost-bounded NSCache
+│   ├── FileIconCache.swift          # Launch Services icons, bucketed by file type
+│   ├── QuickLookCoordinator.swift   # QLPreviewPanel, with remote download-on-demand
+│   ├── TransferQueue.swift          # every long-running op, with Progress + toasts
+│   ├── ToastCenter.swift            # transient bottom-of-window banners
+│   ├── CutClipboard.swift           # cut + paste-as-move state
+│   ├── TrashStore.swift             # ~/.Trash enumeration, put-back, delete
+│   ├── StatePersistence.swift       # state.json snapshot on quit
+│   ├── WorkspaceStore.swift         # named window layouts
+│   ├── SmartFolderStore.swift       # saved searches
+│   ├── RecentLocationsStore.swift   # 15 most-recent URLs (UserDefaults)
+│   ├── RemoteEditWatcher.swift      # Edit-Locally download / watch / re-upload
+│   ├── WindowRegistry.swift         # front-most window, for App Intents
+│   ├── SmartDateFormatter.swift     # Finder-style relative dates
+│   ├── Clamped.swift                # Comparable.clamped(to:)
 │   ├── Remote/
-│   │   ├── FileTransport.swift   # protocol
+│   │   ├── FileTransport.swift      # protocol
 │   │   ├── LocalFileTransport.swift
 │   │   ├── SFTPFileTransport.swift
-│   │   ├── SFTPSession.swift     # actor wrapping the sftp(1) subprocess
-│   │   ├── SFTPParser.swift
+│   │   ├── WebDAVFileTransport.swift
+│   │   ├── FTPFileTransport.swift
+│   │   ├── SFTPSession.swift        # actor; command queue; auth state machine
+│   │   ├── SFTPParser.swift         # ls -l and transfer-progress parsing
 │   │   ├── SFTPPromptClassifier.swift
-│   │   ├── PtyChannel.swift
-│   │   ├── RemoteEndpoint.swift
-│   │   ├── RemoteServerStore.swift
+│   │   ├── PtyChannel.swift         # Swift side of the pty bridge
+│   │   ├── RemoteEndpoint.swift     # endpoint struct + URL extensions
+│   │   ├── RemoteServerStore.swift  # bookmarks (servers.json) + Keychain bridge
 │   │   ├── RemoteSessionManager.swift
 │   │   └── Keychain.swift
-│   ├── Resources/DoubleFinder.icns
+│   ├── Resources/                   # DoubleFinder.icns, doublefinder.png
 │   └── Views/
-│       ├── WindowView.swift
+│       ├── WindowView.swift         # toolbar + command hub
+│       ├── DualPaneArea.swift       # split layout; hosts every sheet
+│       ├── PaneView.swift           # + TabBarView, PathBarView, filter bar, footer
+│       ├── FileAreaView.swift       # picks the renderer for the active tab
+│       ├── IconView.swift           # LazyVGrid + marquee selection
+│       ├── NSTableListView.swift    # NSTableView bridge + CompareRowView
+│       ├── ColumnView.swift         # NSBrowser + QLPreviewView
+│       ├── GalleryView.swift        # large preview + thumbnail strip
+│       ├── DiskImageFinderView.swift # Finder-style authored DMG layout
 │       ├── SidebarView.swift
 │       ├── ServersSidebarSection.swift
-│       ├── DualPaneArea.swift
-│       ├── PaneView.swift        # + TabBarView, PathBarView, PaneFilterBar
-│       ├── FileAreaView.swift
-│       ├── DiskImageFinderView.swift # Finder-style authored DMG layout renderer
-│       ├── IconView.swift        # + marquee selection
-│       ├── NSTableListView.swift # + CompareRowView
-│       ├── ColumnView.swift
-│       ├── GalleryView.swift
-│       ├── InspectorView.swift   # + InspectorPaneRouter / InspectorTabRouter
-│       ├── DiffInspectorView.swift
-│       ├── PaneSettingsPopover.swift
+│       ├── InspectorView.swift      # + InspectorPaneRouter / InspectorTabRouter
+│       ├── InspectorSections.swift  # git, volume, media, PDF, xattr, duplicates, …
+│       ├── DiffInspectorView.swift  # LCS diff when both panes hold one text file
+│       ├── FileContextMenu.swift    # NSMenu + SwiftUI builders, one source of truth
 │       ├── SettingsView.swift
-│       ├── FileContextMenu.swift
-│       ├── GitStatusBadge.swift
-│       ├── TagDots.swift
+│       ├── PaneSettingsPopover.swift
+│       ├── HelpWindow.swift         # in-app help topics
+│       ├── FirstRunTour.swift
+│       ├── ShortcutOverlay.swift    # hold-⌘ cheat sheet
+│       ├── ToastOverlay.swift
+│       ├── TransferQueueButton.swift
+│       ├── CommandPaletteSheet.swift
+│       ├── ContentSearchSheet.swift
+│       ├── BatchRenameSheet.swift
 │       ├── ConflictSheet.swift
 │       ├── RenameSheet.swift
-│       ├── BatchRenameSheet.swift
 │       ├── GetInfoSheet.swift
 │       ├── GoToFolderSheet.swift
 │       ├── ConnectSheet.swift
 │       ├── ConnectErrorSheet.swift
 │       ├── ConnectionsManagerWindow.swift
+│       ├── WorkspacesManagerWindow.swift
 │       ├── PasswordSheet.swift
 │       ├── HostKeySheet.swift
 │       ├── HostKeyMismatchSheet.swift
 │       ├── RemoteDisconnectedPlaceholder.swift
-│       └── TransferQueueButton.swift
+│       ├── ImageViewerWindow.swift
+│       ├── DiskUsageWindow.swift    # squarified treemap
+│       ├── ArchiveBrowserWindow.swift
+│       ├── TrashWindow.swift
+│       ├── GitStatusBadge.swift
+│       └── TagDots.swift
 └── scripts/
-    ├── package.sh                # release .app bundler + .dmg builder
-    └── regenerate-icon.swift     # vector-quality iconset generator
+    ├── package.sh                   # release .app bundler + .dmg builder
+    └── regenerate-icon.swift        # vector-quality iconset generator
 ```
 
 ## Contributing
 
 Contributions, issues, and feature requests are welcome. Notable areas still open to improvement:
 
-- Marquee (drag-rectangle) selection in `GalleryView` (IconView already has it).
 - True grid-aware up/down arrow nav in `IconView` (currently uses a screen-width heuristic for the column count).
 - WebDAV authentication beyond Basic-Auth (Digest, Bearer).
 - FTP listing parser for Windows IIS / MS-DOS style output.

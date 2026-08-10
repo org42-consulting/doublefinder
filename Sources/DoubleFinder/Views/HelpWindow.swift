@@ -145,6 +145,7 @@ extension HelpTopic {
     static let all: [HelpTopic] = [
         .overview,
         .whatsNew,
+        .whatsNew16,
         .whatsNew15,
         .gettingStarted,
         .panesAndTabs,
@@ -218,10 +219,34 @@ extension HelpTopic {
 
     // MARK: What's new
 
+    /// Newest release notes always live on `whatsNew` with the filled star;
+    /// prior versions keep a version-suffixed name and the outline star.
     static let whatsNew = HelpTopic(
         id: "whatsNew",
-        title: "What's new in 1.6",
+        title: "What's new in 1.7",
         systemImage: "star.fill",
+        sections: [
+            HelpSection(body: "Version 1.7 is a reliability release. Several long-standing hangs turned out to share a single root cause, and fixing it also cleared out a class of silent failures around them."),
+            HelpSection(heading: "Git status badges no longer vanish in large repositories", body: "DoubleFinder read `git status` output only after the process had exited. That deadlocks as soon as the output passes the 64 KB pipe buffer: git blocks trying to write, never exits, and the five-second watchdog kills it. In a repo with a few thousand untracked files that meant a five-second stall on **every** refresh, followed by no badges at all. Output is now drained while git runs — the same repo goes from a five-second timeout to 0.07 s with every badge intact."),
+            HelpSection(heading: "Archives, FTP, and content search can no longer hang", body: "The same read-after-wait pattern appeared in four more places, two of them with no watchdog at all — listing a large `.zip` or an FTP directory could wait forever. Every helper tool now runs through one subprocess wrapper that drains output concurrently and bounds its wall time."),
+            HelpSection(heading: "FTP passwords are no longer visible to other users", body: "They were handed to `curl` as a command-line argument, and arguments are world-readable through `ps` — any other account on the Mac could read them mid-transfer. They now travel on curl's standard input."),
+            HelpSection(heading: "Remote filenames with consecutive spaces work", body: "The SFTP listing parser rebuilt names from whitespace-split tokens, so `my  file.txt` collapsed to `my file.txt` — a path that doesn't exist on the server, which broke rename, delete, and download for that row."),
+            HelpSection(heading: "Smaller fixes", bullets: [
+                "Right-clicking a folder no longer shows **Open in Other Pane** twice.",
+                "Right-clicks and selection in large folders are faster — sixteen remaining linear lookups now use the URL-keyed index from 1.5, three of which sat inside per-item loops.",
+                "**Undo** refreshes only the tabs pointed at directories the operation touched, instead of re-listing every tab in both panes one after another.",
+                "**Put Back**, **Empty Trash**, **Make Alias**, and **Make Symbolic Link** report failures instead of silently doing nothing.",
+                "Disconnecting a server now stops any **Edit Locally** watchers on it, which used to keep queueing uploads that could only fail.",
+            ]),
+            HelpSection(heading: "VoiceOver", body: "Icon-only controls across the toolbar, tab bar, path bar, sidebar, inspector, and transfer queue had tooltips but no accessibility labels, so VoiceOver announced them as unlabelled buttons. They're labelled now, and a row of tag dots reads as a single phrase rather than several anonymous shapes."),
+            HelpSection(tip: "Nothing in 1.7 changes how the app is used — no shortcuts moved and no settings changed. Window snapshots from 1.6 restore unchanged."),
+        ]
+    )
+
+    static let whatsNew16 = HelpTopic(
+        id: "whatsNew16",
+        title: "What's new in 1.6",
+        systemImage: "star",
         sections: [
             HelpSection(body: "Version 1.6 pairs a performance pass — arrow-key navigation, Column-view scrolling, refresh cadence, and batch file operations all do less work — with a handful of productivity features."),
             HelpSection(heading: "⌘-double-click opens a folder in a new tab", body: "Browser convention, works in List, Icon, Column, and Gallery views. The current tab stays where it is; the new tab gets focus."),
@@ -1258,8 +1283,12 @@ extension HelpTopic {
                 "**`FSEventStream`** via a thin wrapper for directory watching.",
                 "**`CryptoKit`** for streaming hashes.",
                 "**`/usr/bin/sftp`** as a subprocess for the SFTP transport, driven through a pseudo-terminal.",
+                "**`/usr/bin/curl`** for the FTP / FTPS transport.",
                 "**`/usr/bin/grep`** for content search.",
                 "**`/usr/bin/git`** for status decoration.",
+                "**`/usr/bin/unzip`, `tar`, `zip`** for the archive browser and Compress.",
+                "**`/usr/bin/hdiutil`** for mounting disk images.",
+                "**`/usr/bin/codesign`, `/usr/sbin/spctl`** for the Inspector's code-signature section.",
             ]),
             HelpSection(heading: "Source layout", body: "Single SwiftPM executable target `Sources/DoubleFinder`. State lives in `Model.swift` (`WindowState`, `PaneState`, `TabState`). Cross-cutting services are singletons (`TransferQueue.shared`, `GitStatusService.shared`, `RemoteSessionManager.shared`, etc.). Views are under `Sources/DoubleFinder/Views/`."),
             HelpSection(heading: "Architecture notes", body: "`CLAUDE.md` at the repo root is the maintained architecture overview. Read that first if you're contributing."),

@@ -1,5 +1,13 @@
 # SFTP Remote Tab Support — Implementation Plan
 
+> **Status: executed and shipped.** This plan was carried out; SFTP remote tabs
+> are in the product. The checkboxes below were never ticked off as the work
+> progressed, so treat them as decoration rather than as a to-do list — Phase
+> 16's cleanup step did run (no smoke runners remain in `DoubleFinderApp.swift`).
+> The shipped code diverged from the plan in several places; see the status note
+> at the top of the design spec. **Read the source, not this file**, for how
+> anything actually works today. Retained as a record of the reasoning.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add first-class SFTP remote tabs to DoubleFinder — open a remote location in a tab, browse/transfer/mutate it like local, with interactive auth (password, passphrase, host-key) via dedicated SwiftUI sheets.

@@ -1,5 +1,11 @@
 # SFTP Remote Tabs — Resume Notes
 
+> **Status: obsolete — the work described here is done and shipped.** There is
+> nothing to resume. The "State at handoff" section below is a snapshot from
+> 2026-05-15 and its claim that no code has been written is no longer true.
+> The one part still worth reading is the **decision table**, which records
+> *why* the architecture looks the way it does; that reasoning still holds.
+
 Created 2026-05-15 at the end of a brainstorming + planning session. Use this file when picking the work back up.
 
 ## State at handoff

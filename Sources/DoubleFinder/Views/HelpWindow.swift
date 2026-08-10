@@ -232,6 +232,7 @@ extension HelpTopic {
             HelpSection(heading: "FTP passwords are no longer visible to other users", body: "They were handed to `curl` as a command-line argument, and arguments are world-readable through `ps` — any other account on the Mac could read them mid-transfer. They now travel on curl's standard input."),
             HelpSection(heading: "Remote filenames with consecutive spaces work", body: "The SFTP listing parser rebuilt names from whitespace-split tokens, so `my  file.txt` collapsed to `my file.txt` — a path that doesn't exist on the server, which broke rename, delete, and download for that row."),
             HelpSection(heading: "Smaller fixes", bullets: [
+                "**Icon view centres its icons again.** The cell was corner-aligned so the marked-file flag would sit in the top right, which also dragged the icon 6 pt right and 6 pt up — most visible as a selected icon shoved against the right edge of its highlight.",
                 "Right-clicking a folder no longer shows **Open in Other Pane** twice.",
                 "Right-clicks and selection in large folders are faster — sixteen remaining linear lookups now use the URL-keyed index from 1.5, three of which sat inside per-item loops.",
                 "**Undo** refreshes only the tabs pointed at directories the operation touched, instead of re-listing every tab in both panes one after another.",

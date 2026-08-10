@@ -383,7 +383,14 @@ private struct IconCell: View {
 
     var body: some View {
         VStack(alignment: .center, spacing: 6) {
-            ZStack(alignment: .topTrailing) {
+            // The ZStack must stay centre-aligned. Its frame is `iconEdge + 12`
+            // but the image is only `iconEdge`, so a non-centre alignment sends
+            // all 12 pt of slack to one side — `.topTrailing` used to shove the
+            // icon into the corner while the resizable highlight still filled
+            // the frame, which is why the selection box looked centred and the
+            // icon inside it didn't. The marked flag gets its corner from an
+            // overlay, so it no longer dictates the icon's position.
+            ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isSelected ? Color.accentColor.opacity(0.20) : Color.clear)
                 Image(nsImage: icon ?? FileIconCache.icon(for: node.url))
@@ -391,6 +398,9 @@ private struct IconCell: View {
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
                     .frame(width: iconEdge, height: iconEdge)
+            }
+            .frame(width: iconEdge + 12, height: iconEdge + 12)
+            .overlay(alignment: .topTrailing) {
                 if isMarked {
                     Image(systemName: "flag.fill")
                         .font(.system(size: 11, weight: .bold))
@@ -399,7 +409,6 @@ private struct IconCell: View {
                         .padding(2)
                 }
             }
-            .frame(width: iconEdge + 12, height: iconEdge + 12)
             VStack(alignment: .center, spacing: 2) {
                 Text(node.name)
                     .font(.system(size: 11))

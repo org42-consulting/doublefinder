@@ -31,7 +31,7 @@ enum FileContextMenu {
         let allRemote = urls.allSatisfy(\.isRemoteSFTP)
         let isDir = urls.allSatisfy { u in
             if u.isRemoteSFTP {
-                return tab.nodes.first(where: { $0.url == u })?.isDirectory ?? false
+                return tab.nodesByID[u]?.isDirectory ?? false
             }
             return (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
         }
@@ -47,7 +47,7 @@ enum FileContextMenu {
         addItem(menu, "Open") {
             for u in urls {
                 if u.isRemoteSFTP {
-                    if let node = tab.nodes.first(where: { $0.url == u }), node.isDirectory {
+                    if let node = tab.nodesByID[u], node.isDirectory {
                         tab.navigate(to: u); break
                     }
                     continue
@@ -74,8 +74,12 @@ enum FileContextMenu {
         }
 
         if isOpenableDir, !multiple, let url = urls.first {
+            // Routed through the notification rather than touching
+            // `state.otherPane` directly, so this and the ⌘-based paths share one
+            // implementation. (There used to be a second, duplicate "Open in
+            // Other Pane" further down that did it the other way.)
             addItem(menu, "Open in Other Pane") {
-                state.otherPane.activeTab.navigate(to: url)
+                NotificationCenter.default.post(name: .openInOtherPaneRequested, object: nil, userInfo: ["url": url])
             }
             addItem(menu, "Open in New Tab") {
                 state.focusedPane.addTab(url: url)
@@ -91,9 +95,6 @@ enum FileContextMenu {
         }
 
         if isOpenableDir, !multiple, let url = urls.first {
-            addItem(menu, "Open in Other Pane") {
-                NotificationCenter.default.post(name: .openInOtherPaneRequested, object: nil, userInfo: ["url": url])
-            }
             addItem(menu, "Open in Terminal") {
                 openTerminal(at: url)
             }
@@ -122,7 +123,7 @@ enum FileContextMenu {
                 }
             }
             let hasLocalDir = urls.contains { u in
-                !u.isRemoteSFTP && (tab.nodes.first(where: { $0.url == u })?.isDirectory ?? false)
+                !u.isRemoteSFTP && (tab.nodesByID[u]?.isDirectory ?? false)
             }
             if hasLocalDir {
                 addItem(menu, "Calculate Size") {
@@ -304,7 +305,7 @@ enum FileContextMenu {
             let allRemote = urls.allSatisfy(\.isRemoteSFTP)
             let allDirs = urls.allSatisfy { u in
                 if u.isRemoteSFTP {
-                    return tab.nodes.first(where: { $0.url == u })?.isDirectory ?? false
+                    return tab.nodesByID[u]?.isDirectory ?? false
                 }
                 return (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
             }
@@ -319,7 +320,7 @@ enum FileContextMenu {
             Button("Open") {
                 for u in urls {
                     if u.isRemoteSFTP {
-                        if let node = tab.nodes.first(where: { $0.url == u }), node.isDirectory {
+                        if let node = tab.nodesByID[u], node.isDirectory {
                             tab.navigate(to: u); break
                         }
                         continue
@@ -375,7 +376,7 @@ enum FileContextMenu {
                     state.getInfoPrompt = GetInfoPrompt(url: url, onTagsChanged: refresh)
                 }
                 let hasLocalDir = urls.contains { u in
-                    !u.isRemoteSFTP && (tab.nodes.first(where: { $0.url == u })?.isDirectory ?? false)
+                    !u.isRemoteSFTP && (tab.nodesByID[u]?.isDirectory ?? false)
                 }
                 if hasLocalDir {
                     Button("Calculate Size") { calculateSize(for: urls, in: tab) }
@@ -635,20 +636,46 @@ enum FileContextMenu {
     /// Create a macOS alias file next to each source URL. Refreshes after.
     @MainActor
     static func makeAliases(_ urls: [URL], refresh: @escaping () -> Void) {
-        Task { @MainActor in
-            for url in urls where !url.isRemoteSFTP {
-                _ = try? await FileOps.makeAlias(for: url)
-            }
-            refresh()
-        }
+        makeLinks(urls, kind: "alias", refresh: refresh) { try await FileOps.makeAlias(for: $0) }
     }
 
     /// Create a POSIX symbolic link next to each source URL pointing at it.
     @MainActor
     static func makeSymbolicLinks(_ urls: [URL], refresh: @escaping () -> Void) {
+        makeLinks(urls, kind: "symbolic link", refresh: refresh) { try await FileOps.makeSymbolicLink(for: $0) }
+    }
+
+    /// Shared driver for Make Alias / Make Symbolic Link.
+    ///
+    /// Both used to run `_ = try? await …` per URL, so a failure (read-only
+    /// parent, name collision the uniquifier couldn't resolve) produced no file
+    /// and no message — the user just saw nothing happen. Failures are now
+    /// counted and surfaced.
+    @MainActor
+    private static func makeLinks(
+        _ urls: [URL],
+        kind: String,
+        refresh: @escaping () -> Void,
+        make: @escaping (URL) async throws -> URL
+    ) {
         Task { @MainActor in
+            var firstError: String?
+            var failed = 0
             for url in urls where !url.isRemoteSFTP {
-                _ = try? await FileOps.makeSymbolicLink(for: url)
+                do {
+                    _ = try await make(url)
+                } catch {
+                    failed += 1
+                    if firstError == nil { firstError = error.localizedDescription }
+                }
+            }
+            if failed > 0 {
+                let detail = firstError.map { ": \($0)" } ?? ""
+                ToastCenter.shared.post(Toast(
+                    icon: "exclamationmark.triangle.fill",
+                    message: "Could not create \(failed) \(kind)\(failed == 1 ? "" : "s")\(detail)",
+                    dismissAfter: 4
+                ))
             }
             refresh()
         }
@@ -660,7 +687,7 @@ enum FileContextMenu {
     @MainActor
     static func calculateSize(for urls: [URL], in tab: TabState) {
         for url in urls where !url.isRemoteSFTP {
-            let isDir = tab.nodes.first(where: { $0.url == url })?.isDirectory ?? false
+            let isDir = tab.nodesByID[url]?.isDirectory ?? false
             guard isDir else { continue }
             Task { @MainActor in
                 do {

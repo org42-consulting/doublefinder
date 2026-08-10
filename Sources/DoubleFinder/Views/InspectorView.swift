@@ -57,8 +57,8 @@ private struct InspectorTabRouter: View {
         guard leftTab.selection.count == 1, rightTab.selection.count == 1,
               let leftID = leftTab.selection.first,
               let rightID = rightTab.selection.first,
-              let leftNode = leftTab.nodes.first(where: { $0.id == leftID }),
-              let rightNode = rightTab.nodes.first(where: { $0.id == rightID }),
+              let leftNode = leftTab.nodesByID[leftID],
+              let rightNode = rightTab.nodesByID[rightID],
               !leftNode.isDirectory, !rightNode.isDirectory,
               isTextFile(leftNode.url), isTextFile(rightNode.url) else { return nil }
         return (leftNode.url, rightNode.url)
@@ -85,7 +85,7 @@ private struct InspectorContent: View {
 
     private var selectedNode: FSNode? {
         guard let id = tab.selection.first else { return nil }
-        return tab.nodes.first { $0.id == id }
+        return tab.nodesByID[id]
     }
 
     private var selectedNodes: [FSNode] {
@@ -261,6 +261,7 @@ private struct InspectorContent: View {
             }
             .buttonStyle(.plain)
             .help("Hide Inspector")
+            .accessibilityLabel("Hide Inspector")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -382,6 +383,7 @@ private struct InspectorContent: View {
                     }
                     .buttonStyle(.plain)
                     .help(color.displayName)
+                    .accessibilityLabel(color.displayName)
                 }
             }
         }
@@ -626,6 +628,7 @@ private struct InspectorContent: View {
                     }
                     .buttonStyle(.plain)
                     .help("Copy hash")
+                    .accessibilityLabel("Copy hash")
                 }
             }
         }

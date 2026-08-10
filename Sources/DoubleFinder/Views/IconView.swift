@@ -96,7 +96,7 @@ struct IconView: View {
         .focusable()
         .focusEffectDisabled()
         .onKeyPress(.space) {
-            let start = tab.selection.first.flatMap { id in tab.nodes.first { $0.id == id }?.url }
+            let start = tab.selection.first.flatMap { id in tab.nodesByID[id]?.url }
             quickLook(start: start)
             return .handled
         }
@@ -226,8 +226,13 @@ struct IconView: View {
     }
 
     private func openSelection() {
+        // `visibleIndexByID` indexes the same collection as `navNodes`
+        // (`tab.visibleNodes`), so this keeps the filter-aware semantics the
+        // linear scan had, at O(1).
         guard let id = tab.selection.first,
-              let node = navNodes.first(where: { $0.id == id }) else { return }
+              let row = tab.visibleIndexByID[id],
+              row < navNodes.count else { return }
+        let node = navNodes[row]
         if node.isOpenableDirectory {
             tab.navigate(to: node.url)
         } else {

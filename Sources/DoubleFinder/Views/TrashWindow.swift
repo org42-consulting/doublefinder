@@ -77,6 +77,7 @@ struct TrashWindow: View {
                 Image(systemName: "arrow.clockwise")
             }
             .help("Reload")
+            .accessibilityLabel("Reload")
             Button(role: .destructive) {
                 confirmEmptyTrash()
             } label: {

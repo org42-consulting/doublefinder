@@ -109,6 +109,7 @@ struct DiffView: View {
             }
             .buttonStyle(.plain)
             .help("Hide Inspector")
+            .accessibilityLabel("Hide Inspector")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

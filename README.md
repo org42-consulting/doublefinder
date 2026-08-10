@@ -225,7 +225,7 @@ The script:
 You can override `VERSION` and `BUILD_NUMBER` via env vars:
 
 ```bash
-VERSION=1.6 BUILD_NUMBER=42 ./scripts/package.sh
+VERSION=1.7 BUILD_NUMBER=42 ./scripts/package.sh
 ```
 
 To install:
@@ -234,7 +234,7 @@ To install:
 mv build/DoubleFinder.app /Applications/
 ```
 
-Or share `build/DoubleFinder-1.6.dmg` — mounting it gives users the familiar drag-onto-Applications experience.
+Or share `build/DoubleFinder-1.7.dmg` — mounting it gives users the familiar drag-onto-Applications experience.
 
 #### Distributing to other Macs
 

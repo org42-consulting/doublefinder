@@ -14,9 +14,9 @@ struct LocalFileTransport: FileTransport {
             // Tags are intentionally returned empty here. Fetching them inline
             // costs 2 getxattr calls per entry — for a 10k-file directory that's
             // 20k syscalls on the hot listing path. `TabState.refresh` follows
-            // up with a background `loadTagsInBackground(for:)` pass that
-            // patches tags onto already-rendered nodes once the listing is
-            // visible.
+            // up with a background `loadDecorations(for:includeGit:includeTags:)`
+            // pass that patches tags onto already-rendered nodes once the
+            // listing is visible.
             let keys: [URLResourceKey] = [
                 .isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isPackageKey, .nameKey,
                 .isSymbolicLinkKey, .isAliasFileKey

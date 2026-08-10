@@ -113,27 +113,21 @@ actor GitStatusService {
         return parse(output, repoRoot: repoRoot)
     }
 
+    /// Returns git's stdout, or nil when the command failed or timed out.
+    ///
+    /// Goes through `ProcessRunner` because the output can be large: a repo with
+    /// a few thousand untracked files pushes `status --porcelain` well past the
+    /// 64 KB pipe buffer, and reading only after `waitUntilExit()` deadlocks
+    /// until the watchdog fires — a five-second stall on every refresh, with the
+    /// status badges silently lost. `ProcessRunner` drains while git runs.
     private nonisolated func runGit(arguments: [String], cwd: URL) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.currentDirectoryURL = cwd
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        do {
-            try process.run()
-            let killWork = DispatchWorkItem { process.terminate() }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: killWork)
-            process.waitUntilExit()
-            killWork.cancel()
-            guard process.terminationReason == .exit, process.terminationStatus == 0 else { return nil }
-            let data = stdout.fileHandleForReading.readDataToEndOfFile()
-            return String(data: data, encoding: .utf8)
-        } catch {
-            return nil
-        }
+        guard let result = try? ProcessRunner.run(
+            "/usr/bin/git", arguments,
+            currentDirectory: cwd,
+            timeout: 5
+        ) else { return nil }
+        guard result.succeeded else { return nil }
+        return result.stdoutText
     }
 
     private nonisolated func parse(_ output: String, repoRoot: URL) -> [URL: GitFileState] {

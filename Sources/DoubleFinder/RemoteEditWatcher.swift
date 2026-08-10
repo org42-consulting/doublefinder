@@ -91,9 +91,13 @@ final class RemoteEditWatcher: ObservableObject {
         )
     }
 
-    /// Stop watching `localURL`. Doesn't delete the cached copy.
-    func stopWatching(localURL: URL) {
-        watches.removeValue(forKey: localURL)
+    /// Stop watching every file on `endpoint` and tear the poll timer down when
+    /// nothing is left.
+    ///
+    /// Called when a session is dropped: without it the watcher keeps polling
+    /// files whose server is gone and enqueues a failing upload on every save.
+    func stopWatching(endpoint: RemoteEndpoint) {
+        watches = watches.filter { $0.value.endpoint != endpoint }
         if watches.isEmpty {
             pollTimer?.invalidate()
             pollTimer = nil

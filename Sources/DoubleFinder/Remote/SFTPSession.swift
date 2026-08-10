@@ -339,10 +339,19 @@ actor SFTPSession {
         return output
     }
 
+    /// Detect an sftp diagnostic in command output.
+    ///
+    /// Matches only at the start of a line. sftp's own errors always begin at
+    /// column 0 ("Couldn't stat remote file: …", "remote readdir(…): …"), while
+    /// `ls -l` rows begin with a mode string — so an anchored match can't be
+    /// fooled by a *filename* that happens to contain "Permission denied". The
+    /// trailing-substring forms the previous version looked for are already
+    /// covered by the "Couldn't "/"remote " prefixes.
     private func extractErrorLine(_ text: String) -> String? {
+        let prefixes = ["Couldn't ", "Cannot ", "remote ", "No such file", "Permission denied"]
         for line in text.split(separator: "\n") {
-            let s = String(line)
-            if s.hasPrefix("Couldn't ") || s.hasPrefix("Cannot ") || s.hasPrefix("remote ") || s.contains("No such file") || s.contains("Permission denied") {
+            let s = String(line).trimmingCharacters(in: .whitespaces)
+            if prefixes.contains(where: { s.hasPrefix($0) }) {
                 return s
             }
         }

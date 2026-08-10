@@ -12,10 +12,11 @@ struct FSNode: Identifiable, Hashable {
     let isDirectory: Bool
     let size: Int64?
     let modified: Date?
-    /// Mutable so `TabState.loadTagsInBackground(for:)` can patch xattr-derived
-    /// tags into already-listed nodes without re-listing. The initial listing
-    /// returns nodes with `tags: []`, then a follow-up off-actor pass enriches
-    /// them — keeps the directory render fast on cold caches.
+    /// Mutable so `TabState.loadDecorations(for:includeGit:includeTags:)` can
+    /// patch xattr-derived tags into already-listed nodes without re-listing.
+    /// The initial listing returns nodes with `tags: []`, then a follow-up
+    /// off-actor pass enriches them — keeps the directory render fast on cold
+    /// caches.
     var tags: [Tag]
     var gitStatus: GitFileState? = nil
     /// Recursive folder size, populated on-demand by the "Calculate Size" action.
@@ -358,7 +359,6 @@ extension Notification.Name {
     static let addToSidebarRequested = Notification.Name("doublefinder.addToSidebar")
     static let toggleInspectorRequested = Notification.Name("doublefinder.toggleInspector")
     static let connectToServerRequested = Notification.Name("df.connectToServerRequested")
-    static let manageConnectionsRequested = Notification.Name("df.manageConnectionsRequested")
     static let syncPanesRequested = Notification.Name("df.syncPanesRequested")
     static let swapPanesRequested = Notification.Name("df.swapPanesRequested")
     static let selectAllRequested = Notification.Name("df.selectAllRequested")
@@ -795,7 +795,7 @@ final class TabState: ObservableObject, Identifiable {
         let target = url
         // The mapping does per-URL resourceValues / fileExists reads. Run
         // off the main actor so big result batches don't block UI updates.
-        // Tags are loaded by `loadTagsInBackground` after the initial render.
+        // Tags are loaded by `loadDecorations` after the initial render.
         let mapped: [FSNode] = await Task.detached(priority: .userInitiated) {
             let fm = FileManager.default
             return urls.compactMap { u -> FSNode? in
@@ -1584,431 +1584,360 @@ final class WindowState: ObservableObject {
         WindowRegistry.unregister(byIdentity: identity)
     }
 
+    /// Register a main-queue observer for `name` and retain its token.
+    ///
+    /// Every menu command in `registerCommandObservers` needs the same three
+    /// pieces of ceremony — append to `observerTokens`, hop through
+    /// `MainActor.assumeIsolated`, and keep the closure off the main-actor
+    /// checker's radar. Folding them in here keeps the registrations readable as
+    /// a list of "notification → behaviour" pairs.
+    ///
+    /// Bodies capture `self` weakly themselves (`{ [weak self] _ in }`); the
+    /// helper deliberately doesn't do it for them, so a handler that genuinely
+    /// doesn't need `self` isn't forced to unwrap one.
+    private func observe(
+        _ name: Notification.Name,
+        _ body: @escaping @MainActor (Notification) -> Void
+    ) {
+        observerTokens.append(NotificationCenter.default.addObserver(
+            forName: name, object: nil, queue: .main
+        ) { note in
+            MainActor.assumeIsolated { body(note) }
+        })
+    }
+
     private func registerCommandObservers() {
-        let nc = NotificationCenter.default
-        observerTokens.append(nc.addObserver(forName: .toggleHiddenFilesRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.focusedPane.activeTab.showHidden.toggle()
+        observe(.toggleHiddenFilesRequested) { [weak self] _ in
+            guard let self else { return }
+            self.focusedPane.activeTab.showHidden.toggle()
+        }
+        observe(.goToFolderRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            self.goToPrompt = GoToFolderPrompt(initialPath: tab.url.path) { url in
+                self.focusedPane.activeTab.navigate(to: url)
             }
-        })
-        observerTokens.append(nc.addObserver(forName: .goToFolderRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                self.goToPrompt = GoToFolderPrompt(initialPath: tab.url.path) { url in
-                    self.focusedPane.activeTab.navigate(to: url)
+        }
+        observe(.emptyTrashRequested) { _ in WindowState.emptyTrashWithConfirmation() }
+        observe(.saveSmartFolderRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            guard tab.isSearching, !tab.searchText.trimmingCharacters(in: .whitespaces).isEmpty else {
+                NSSound.beep(); return
+            }
+            let alert = NSAlert()
+            alert.messageText = "Save Smart Folder"
+            alert.informativeText = "Give this saved search a name."
+            alert.alertStyle = .informational
+            let field = NSTextField(string: tab.searchText)
+            field.frame = NSRect(x: 0, y: 0, width: 260, height: 22)
+            alert.accessoryView = field
+            alert.addButton(withTitle: "Save")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return }
+            let sf = SmartFolder(
+                name: name,
+                query: tab.searchText,
+                kind: tab.searchKind,
+                scope: tab.searchScope,
+                folderURL: tab.searchScope == .folder ? tab.url : nil
+            )
+            SmartFolderStore.shared.add(sf)
+        }
+        observe(.searchContentRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            guard !tab.url.isRemoteSFTP else { NSSound.beep(); return }
+            self.contentSearchPrompt = ContentSearchPrompt(directory: tab.url) { [weak tab] hit in
+                guard let tab else { return }
+                let parent = hit.deletingLastPathComponent()
+                if parent.standardizedFileURL != tab.url.standardizedFileURL {
+                    tab.navigate(to: parent)
                 }
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .emptyTrashRequested, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { WindowState.emptyTrashWithConfirmation() }
-        })
-        observerTokens.append(nc.addObserver(forName: .saveSmartFolderRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                guard tab.isSearching, !tab.searchText.trimmingCharacters(in: .whitespaces).isEmpty else {
-                    NSSound.beep(); return
-                }
-                let alert = NSAlert()
-                alert.messageText = "Save Smart Folder"
-                alert.informativeText = "Give this saved search a name."
-                alert.alertStyle = .informational
-                let field = NSTextField(string: tab.searchText)
-                field.frame = NSRect(x: 0, y: 0, width: 260, height: 22)
-                alert.accessoryView = field
-                alert.addButton(withTitle: "Save")
-                alert.addButton(withTitle: "Cancel")
-                guard alert.runModal() == .alertFirstButtonReturn else { return }
-                let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !name.isEmpty else { return }
-                let sf = SmartFolder(
-                    name: name,
-                    query: tab.searchText,
-                    kind: tab.searchKind,
-                    scope: tab.searchScope,
-                    folderURL: tab.searchScope == .folder ? tab.url : nil
-                )
-                SmartFolderStore.shared.add(sf)
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .searchContentRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                guard !tab.url.isRemoteSFTP else { NSSound.beep(); return }
-                self.contentSearchPrompt = ContentSearchPrompt(directory: tab.url) { [weak tab] hit in
-                    guard let tab else { return }
-                    let parent = hit.deletingLastPathComponent()
-                    if parent.standardizedFileURL != tab.url.standardizedFileURL {
-                        tab.navigate(to: parent)
-                    }
-                    Task { @MainActor in
-                        await tab.refresh()
-                        // Try the O(1) map first; fall back to a linear scan
-                        // if `hit` isn't already in standardized form.
-                        if let node = tab.nodesByID[hit] ?? tab.nodesByID[hit.standardizedFileURL]
-                            ?? tab.nodes.first(where: { $0.url.standardizedFileURL == hit.standardizedFileURL }) {
-                            tab.selection = [node.id]
-                        }
-                    }
-                }
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .getInfoRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                guard let id = tab.selection.first,
-                      let node = tab.nodesByID[id] else {
-                    NSSound.beep()
-                    return
-                }
-                self.getInfoPrompt = GetInfoPrompt(url: node.url) { [weak tab] in
-                    Task { @MainActor in await tab?.refresh() }
-                }
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .parentFolderRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.focusedPane.activeTab.navigateUp()
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .openSelectionRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                guard let id = tab.selection.first,
-                      let node = tab.nodesByID[id] else { return }
-                if node.isOpenableDirectory {
-                    tab.navigate(to: node.url)
-                } else {
-                    FileOpener.open(node.url, in: tab)
-                }
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .openTerminalRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let url = self.focusedPane.activeTab.url
-                if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
-                    WindowState.openSSHTerminal(endpoint: endpoint, path: url.sftpPath)
-                } else {
-                    let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
-                    let config = NSWorkspace.OpenConfiguration()
-                    NSWorkspace.shared.open([url], withApplicationAt: terminalURL, configuration: config) { _, error in
-                        if error != nil { DispatchQueue.main.async { NSSound.beep() } }
-                    }
-                }
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .openEditorRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                guard !tab.url.isRemoteSFTP else { NSSound.beep(); return }
-                let urls: [URL]
-                if tab.selection.isEmpty {
-                    urls = [tab.url]
-                } else {
-                    urls = tab.selection.compactMap { tab.nodesByID[$0]?.url }
-                }
-                guard !urls.isEmpty else { return }
-                WindowState.openInEditor(urls)
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .addToSidebarRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.addFocusedURLToSidebar()
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .toggleInspectorRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.showInspector.toggle()
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .syncPanesRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.syncPanes() }
-        })
-        observerTokens.append(nc.addObserver(forName: .swapPanesRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.swapPanes() }
-        })
-        observerTokens.append(nc.addObserver(forName: .selectAllRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                tab.selection = Set(tab.nodes.map(\.id))
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .duplicateSelectionRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                let urls = tab.selection.compactMap { id in tab.nodesByID[id]?.url }
-                guard !urls.isEmpty else { NSSound.beep(); return }
-                FileContextMenu.duplicate(urls, refresh: { Task { @MainActor in await tab.refresh() } })
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .revealInFinderRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                if tab.url.isRemoteSFTP {
-                    NSSound.beep()
-                    return
-                }
-                let urls = tab.selection.compactMap { id in tab.nodesByID[id]?.url }
-                if urls.isEmpty {
-                    NSWorkspace.shared.activateFileViewerSelecting([tab.url])
-                } else {
-                    NSWorkspace.shared.activateFileViewerSelecting(urls)
-                }
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .newTabRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let pane = self.focusedPane
-                pane.addTab(url: pane.activeTab.url)
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .closeTabRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let pane = self.focusedPane
-                // Pinned tab: refuse and beep so the user realises they need to unpin first.
-                if pane.activeTab.isPinned { NSSound.beep(); return }
-                // Last tab in the focused pane → close the window (matches Safari/Finder).
-                if pane.tabs.count <= 1 {
-                    NSApp.keyWindow?.performClose(nil)
-                    return
-                }
-                pane.closeTab(pane.activeTabID)
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .backRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.focusedPane.activeTab.back()
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .forwardRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.focusedPane.activeTab.forward()
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .toggleCompareModeRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.compareMode.toggle() }
-        })
-        observerTokens.append(nc.addObserver(forName: .newFileRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
                 Task { @MainActor in
-                    do {
-                        let url = try await FileOps.makeFile(in: tab.url)
-                        await tab.refresh()
-                        // Land on the new file and immediately offer inline rename.
-                        if let id = tab.nodesByID[url]?.id {
-                            tab.selection = [id]
-                            tab.renameRequest = id
-                        }
-                    } catch {
-                        NSSound.beep()
+                    await tab.refresh()
+                    // Try the O(1) map first; fall back to a linear scan
+                    // if `hit` isn't already in standardized form.
+                    if let node = tab.nodesByID[hit] ?? tab.nodesByID[hit.standardizedFileURL]
+                        ?? tab.nodes.first(where: { $0.url.standardizedFileURL == hit.standardizedFileURL }) {
+                        tab.selection = [node.id]
                     }
                 }
             }
-        })
-        observerTokens.append(nc.addObserver(forName: .mirrorSelectionRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.mirrorSelection() }
-        })
-        observerTokens.append(nc.addObserver(forName: .renameSelectionRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.beginRenameOnFocusedSelection() }
-        })
-        observerTokens.append(nc.addObserver(forName: .favoriteSlotRequested, object: nil, queue: .main) { [weak self] note in
-            MainActor.assumeIsolated {
-                guard let self,
-                      let slot = note.userInfo?["slot"] as? Int,
-                      slot >= 0, slot < self.favourites.count else {
+        }
+        observe(.getInfoRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            guard let id = tab.selection.first,
+                  let node = tab.nodesByID[id] else {
+                NSSound.beep()
+                return
+            }
+            self.getInfoPrompt = GetInfoPrompt(url: node.url) { [weak tab] in
+                Task { @MainActor in await tab?.refresh() }
+            }
+        }
+        observe(.parentFolderRequested) { [weak self] _ in
+            self?.focusedPane.activeTab.navigateUp()
+        }
+        observe(.openSelectionRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            guard let id = tab.selection.first,
+                  let node = tab.nodesByID[id] else { return }
+            if node.isOpenableDirectory {
+                tab.navigate(to: node.url)
+            } else {
+                FileOpener.open(node.url, in: tab)
+            }
+        }
+        observe(.openTerminalRequested) { [weak self] _ in
+            guard let self else { return }
+            let url = self.focusedPane.activeTab.url
+            if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
+                WindowState.openSSHTerminal(endpoint: endpoint, path: url.sftpPath)
+            } else {
+                let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+                let config = NSWorkspace.OpenConfiguration()
+                NSWorkspace.shared.open([url], withApplicationAt: terminalURL, configuration: config) { _, error in
+                    if error != nil { DispatchQueue.main.async { NSSound.beep() } }
+                }
+            }
+        }
+        observe(.openEditorRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            guard !tab.url.isRemoteSFTP else { NSSound.beep(); return }
+            let urls: [URL]
+            if tab.selection.isEmpty {
+                urls = [tab.url]
+            } else {
+                urls = tab.selection.compactMap { tab.nodesByID[$0]?.url }
+            }
+            guard !urls.isEmpty else { return }
+            WindowState.openInEditor(urls)
+        }
+        observe(.addToSidebarRequested) { [weak self] _ in
+            self?.addFocusedURLToSidebar()
+        }
+        observe(.toggleInspectorRequested) { [weak self] _ in
+            self?.showInspector.toggle()
+        }
+        observe(.syncPanesRequested) { [weak self] _ in self?.syncPanes() }
+        observe(.swapPanesRequested) { [weak self] _ in self?.swapPanes() }
+        observe(.selectAllRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            tab.selection = Set(tab.nodes.map(\.id))
+        }
+        observe(.duplicateSelectionRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            let urls = tab.selection.compactMap { id in tab.nodesByID[id]?.url }
+            guard !urls.isEmpty else { NSSound.beep(); return }
+            FileContextMenu.duplicate(urls, refresh: { Task { @MainActor in await tab.refresh() } })
+        }
+        observe(.revealInFinderRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            if tab.url.isRemoteSFTP {
+                NSSound.beep()
+                return
+            }
+            let urls = tab.selection.compactMap { id in tab.nodesByID[id]?.url }
+            if urls.isEmpty {
+                NSWorkspace.shared.activateFileViewerSelecting([tab.url])
+            } else {
+                NSWorkspace.shared.activateFileViewerSelecting(urls)
+            }
+        }
+        observe(.newTabRequested) { [weak self] _ in
+            guard let self else { return }
+            let pane = self.focusedPane
+            pane.addTab(url: pane.activeTab.url)
+        }
+        observe(.closeTabRequested) { [weak self] _ in
+            guard let self else { return }
+            let pane = self.focusedPane
+            // Pinned tab: refuse and beep so the user realises they need to unpin first.
+            if pane.activeTab.isPinned { NSSound.beep(); return }
+            // Last tab in the focused pane → close the window (matches Safari/Finder).
+            if pane.tabs.count <= 1 {
+                NSApp.keyWindow?.performClose(nil)
+                return
+            }
+            pane.closeTab(pane.activeTabID)
+        }
+        observe(.backRequested) { [weak self] _ in
+            self?.focusedPane.activeTab.back()
+        }
+        observe(.forwardRequested) { [weak self] _ in
+            self?.focusedPane.activeTab.forward()
+        }
+        observe(.toggleCompareModeRequested) { [weak self] _ in self?.compareMode.toggle() }
+        observe(.newFileRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            Task { @MainActor in
+                do {
+                    let url = try await FileOps.makeFile(in: tab.url)
+                    await tab.refresh()
+                    // Land on the new file and immediately offer inline rename.
+                    if let id = tab.nodesByID[url]?.id {
+                        tab.selection = [id]
+                        tab.renameRequest = id
+                    }
+                } catch {
                     NSSound.beep()
-                    return
-                }
-                self.focusedPane.activeTab.navigate(to: self.favourites[slot].url)
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .activateTabSlotRequested, object: nil, queue: .main) { [weak self] note in
-            MainActor.assumeIsolated {
-                guard let self,
-                      let slot = note.userInfo?["slot"] as? Int,
-                      slot >= 0, slot < self.focusedPane.tabs.count else {
-                    NSSound.beep()
-                    return
-                }
-                self.focusedPane.activeTabID = self.focusedPane.tabs[slot].id
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .invertSelectionRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                let all = Set(tab.visibleNodes.map(\.id))
-                tab.selection = all.subtracting(tab.selection)
-                tab.selectionAnchor = nil
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .openInOtherPaneRequested, object: nil, queue: .main) { [weak self] note in
-            MainActor.assumeIsolated {
-                guard let self, let url = note.userInfo?["url"] as? URL else { return }
-                self.otherPane.activeTab.navigate(to: url)
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .toggleMarkRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                // Toggle the currently-selected URLs. With nothing selected,
-                // beep — the user probably meant to select first.
-                let urls = tab.nodes.filter { tab.selection.contains($0.id) }.map(\.url)
-                guard !urls.isEmpty else { NSSound.beep(); return }
-                // If every targeted URL is already marked, unmark them; otherwise
-                // add the whole set. Matches the "mass toggle" intuition that
-                // ⌘A + ⌃M should switch all items on, not flip each one.
-                if urls.allSatisfy({ tab.marked.contains($0) }) {
-                    for url in urls { tab.marked.remove(url) }
-                } else {
-                    for url in urls { tab.marked.insert(url) }
                 }
             }
-        })
-        observerTokens.append(nc.addObserver(forName: .clearMarksRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.focusedPane.activeTab.marked.removeAll()
+        }
+        observe(.mirrorSelectionRequested) { [weak self] _ in self?.mirrorSelection() }
+        observe(.renameSelectionRequested) { [weak self] _ in self?.beginRenameOnFocusedSelection() }
+        observe(.favoriteSlotRequested) { [weak self] note in
+            guard let self,
+                  let slot = note.userInfo?["slot"] as? Int,
+                  slot >= 0, slot < self.favourites.count else {
+                NSSound.beep()
+                return
             }
-        })
-        observerTokens.append(nc.addObserver(forName: .redoRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                Task { @MainActor in await self.performRedo() }
+            self.focusedPane.activeTab.navigate(to: self.favourites[slot].url)
+        }
+        observe(.activateTabSlotRequested) { [weak self] note in
+            guard let self,
+                  let slot = note.userInfo?["slot"] as? Int,
+                  slot >= 0, slot < self.focusedPane.tabs.count else {
+                NSSound.beep()
+                return
             }
-        })
-        observerTokens.append(nc.addObserver(forName: .commandPaletteRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.commandPalette = CommandPalettePrompt(commands: self.buildPaletteCommands())
+            self.focusedPane.activeTabID = self.focusedPane.tabs[slot].id
+        }
+        observe(.invertSelectionRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            let all = Set(tab.visibleNodes.map(\.id))
+            tab.selection = all.subtracting(tab.selection)
+            tab.selectionAnchor = nil
+        }
+        observe(.openInOtherPaneRequested) { [weak self] note in
+            guard let self, let url = note.userInfo?["url"] as? URL else { return }
+            self.otherPane.activeTab.navigate(to: url)
+        }
+        observe(.toggleMarkRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            // Toggle the currently-selected URLs. With nothing selected,
+            // beep — the user probably meant to select first.
+            let urls = tab.nodes.filter { tab.selection.contains($0.id) }.map(\.url)
+            guard !urls.isEmpty else { NSSound.beep(); return }
+            // If every targeted URL is already marked, unmark them; otherwise
+            // add the whole set. Matches the "mass toggle" intuition that
+            // ⌘A + ⌃M should switch all items on, not flip each one.
+            if urls.allSatisfy({ tab.marked.contains($0) }) {
+                for url in urls { tab.marked.remove(url) }
+            } else {
+                for url in urls { tab.marked.insert(url) }
             }
-        })
-        observerTokens.append(nc.addObserver(forName: .viewImagesRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.openImageViewer()
-            }
-        })
+        }
+        observe(.clearMarksRequested) { [weak self] _ in
+            self?.focusedPane.activeTab.marked.removeAll()
+        }
+        observe(.redoRequested) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in await self.performRedo() }
+        }
+        observe(.commandPaletteRequested) { [weak self] _ in
+            guard let self else { return }
+            self.commandPalette = CommandPalettePrompt(commands: self.buildPaletteCommands())
+        }
+        observe(.viewImagesRequested) { [weak self] _ in
+            guard let self else { return }
+            self.openImageViewer()
+        }
         // App Intents → notification bridge. Each one routes into existing
         // UI affordances so Shortcuts.app users get parity with the keyboard.
         // The `isFrontMost` gate ensures multi-window setups don't apply the
         // same intent to every open window.
-        observerTokens.append(nc.addObserver(forName: .openFolderRequested, object: nil, queue: .main) { [weak self] note in
-            MainActor.assumeIsolated {
-                guard let self, self.isFrontMost, let url = note.userInfo?["url"] as? URL else { return }
-                self.focusedPane.activeTab.navigate(to: url)
+        observe(.openFolderRequested) { [weak self] note in
+            guard let self, self.isFrontMost, let url = note.userInfo?["url"] as? URL else { return }
+            self.focusedPane.activeTab.navigate(to: url)
+        }
+        observe(.copyToOtherPaneIntent) { [weak self] _ in
+            guard let self, self.isFrontMost else { return }
+            let src = self.focusedPane.activeTab
+            let urls = src.nodes.filter { src.selection.contains($0.id) }.map(\.url)
+            guard !urls.isEmpty else { NSSound.beep(); return }
+            CopyMoveCoordinator.copy(urls, to: self.otherPane.activeTab, from: src, via: self)
+        }
+        observe(.moveToOtherPaneIntent) { [weak self] _ in
+            guard let self, self.isFrontMost else { return }
+            let src = self.focusedPane.activeTab
+            let urls = src.nodes.filter { src.selection.contains($0.id) }.map(\.url)
+            guard !urls.isEmpty else { NSSound.beep(); return }
+            CopyMoveCoordinator.move(urls, to: self.otherPane.activeTab, from: src, via: self)
+        }
+        observe(.applySmartFolderIntent) { [weak self] note in
+            guard let self, self.isFrontMost,
+                  let name = note.userInfo?["name"] as? String,
+                  let sf = SmartFolderStore.shared.folders.first(where: { $0.name == name }) else {
+                NSSound.beep(); return
             }
-        })
-        observerTokens.append(nc.addObserver(forName: .copyToOtherPaneIntent, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.isFrontMost else { return }
-                let src = self.focusedPane.activeTab
-                let urls = src.nodes.filter { src.selection.contains($0.id) }.map(\.url)
-                guard !urls.isEmpty else { NSSound.beep(); return }
-                CopyMoveCoordinator.copy(urls, to: self.otherPane.activeTab, from: src, via: self)
+            self.focusedPane.activeTab.applySmartFolder(sf)
+        }
+        observe(.diskUsageRequested) { [weak self] _ in
+            guard let self else { return }
+            let url = self.focusedPane.activeTab.url
+            guard !url.isRemoteSFTP else { NSSound.beep(); return }
+            NotificationCenter.default.post(
+                name: .openDiskUsageWindow,
+                object: nil,
+                userInfo: ["url": url]
+            )
+        }
+        observe(.undoRequested) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in await self.performUndo() }
+        }
+        observe(.toggleSinglePaneRequested) { [weak self] _ in self?.singlePaneMode.toggle() }
+        observe(.cutFilesRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            let urls = tab.selection.compactMap { id in tab.nodesByID[id]?.url }
+            guard !urls.isEmpty else { NSSound.beep(); return }
+            CutClipboard.shared.cut(urls)
+        }
+        observe(.pasteFilesRequested) { [weak self] _ in
+            guard let self else { return }
+            let tab = self.focusedPane.activeTab
+            let (urls, isMove) = CutClipboard.shared.readPaste()
+            guard !urls.isEmpty else { NSSound.beep(); return }
+            if isMove {
+                CopyMoveCoordinator.move(urls, to: tab, from: tab, via: self)
+                CutClipboard.shared.clear()
+            } else {
+                CopyMoveCoordinator.copy(urls, to: tab, from: tab, via: self)
             }
-        })
-        observerTokens.append(nc.addObserver(forName: .moveToOtherPaneIntent, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.isFrontMost else { return }
-                let src = self.focusedPane.activeTab
-                let urls = src.nodes.filter { src.selection.contains($0.id) }.map(\.url)
-                guard !urls.isEmpty else { NSSound.beep(); return }
-                CopyMoveCoordinator.move(urls, to: self.otherPane.activeTab, from: src, via: self)
+        }
+        observe(.saveWorkspaceRequested) { [weak self] _ in
+            guard let self else { return }
+            guard let name = WorkspaceStore.promptForName() else { return }
+            WorkspaceStore.shared.save(name: name, snapshot: self.snapshot())
+        }
+        observe(.loadWorkspaceRequested) { [weak self] note in
+            guard let self,
+                  let name = note.userInfo?["name"] as? String,
+                  let snap = WorkspaceStore.shared.load(name: name) else {
+                NSSound.beep()
+                return
             }
-        })
-        observerTokens.append(nc.addObserver(forName: .applySmartFolderIntent, object: nil, queue: .main) { [weak self] note in
-            MainActor.assumeIsolated {
-                guard let self, self.isFrontMost,
-                      let name = note.userInfo?["name"] as? String,
-                      let sf = SmartFolderStore.shared.folders.first(where: { $0.name == name }) else {
-                    NSSound.beep(); return
-                }
-                self.focusedPane.activeTab.applySmartFolder(sf)
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .diskUsageRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let url = self.focusedPane.activeTab.url
-                guard !url.isRemoteSFTP else { NSSound.beep(); return }
-                NotificationCenter.default.post(
-                    name: .openDiskUsageWindow,
-                    object: nil,
-                    userInfo: ["url": url]
-                )
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .undoRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                Task { @MainActor in await self.performUndo() }
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .toggleSinglePaneRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.singlePaneMode.toggle() }
-        })
-        observerTokens.append(nc.addObserver(forName: .cutFilesRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                let urls = tab.selection.compactMap { id in tab.nodesByID[id]?.url }
-                guard !urls.isEmpty else { NSSound.beep(); return }
-                CutClipboard.shared.cut(urls)
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .pasteFilesRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let tab = self.focusedPane.activeTab
-                let (urls, isMove) = CutClipboard.shared.readPaste()
-                guard !urls.isEmpty else { NSSound.beep(); return }
-                if isMove {
-                    CopyMoveCoordinator.move(urls, to: tab, from: tab, via: self)
-                    CutClipboard.shared.clear()
-                } else {
-                    CopyMoveCoordinator.copy(urls, to: tab, from: tab, via: self)
-                }
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .saveWorkspaceRequested, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                guard let name = WorkspaceStore.promptForName() else { return }
-                WorkspaceStore.shared.save(name: name, snapshot: self.snapshot())
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .loadWorkspaceRequested, object: nil, queue: .main) { [weak self] note in
-            MainActor.assumeIsolated {
-                guard let self,
-                      let name = note.userInfo?["name"] as? String,
-                      let snap = WorkspaceStore.shared.load(name: name) else {
-                    NSSound.beep()
-                    return
-                }
-                self.replaceState(with: snap)
-            }
-        })
-        observerTokens.append(nc.addObserver(forName: .deleteWorkspaceRequested, object: nil, queue: .main) { note in
-            MainActor.assumeIsolated {
-                guard let name = note.userInfo?["name"] as? String else { return }
-                WorkspaceStore.shared.delete(name: name)
-            }
-        })
+            self.replaceState(with: snap)
+        }
+        observe(.deleteWorkspaceRequested) { note in
+            guard let name = note.userInfo?["name"] as? String else { return }
+            WorkspaceStore.shared.delete(name: name)
+        }
     }
 
     func addFocusedURLToSidebar() {
@@ -2280,7 +2209,7 @@ final class WindowState: ObservableObject {
         if redoStack.count > Self.maxUndoStack {
             redoStack.removeFirst(redoStack.count - Self.maxUndoStack)
         }
-        await refreshAllPanes()
+        await refreshTabs(affectedBy: op)
     }
 
     /// Pop the most recent undone op and re-apply it. Pushes back onto
@@ -2293,7 +2222,7 @@ final class WindowState: ObservableObject {
         if undoStack.count > Self.maxUndoStack {
             undoStack.removeFirst(undoStack.count - Self.maxUndoStack)
         }
-        await refreshAllPanes()
+        await refreshTabs(affectedBy: op)
     }
 
     /// Run the inverse of an op (used by undo).
@@ -2335,9 +2264,45 @@ final class WindowState: ObservableObject {
         }
     }
 
-    private func refreshAllPanes() async {
-        for pane in [left, right] {
-            for tab in pane.tabs { await tab.refresh() }
+    /// Directories an undo/redo of `op` could have changed. Used to refresh only
+    /// the tabs that are actually looking at them.
+    private static func affectedDirectories(of op: UndoableOp) -> Set<URL> {
+        var dirs: Set<URL> = []
+        switch op {
+        case .move(let items):
+            for (source, destDir) in items {
+                dirs.insert(source.deletingLastPathComponent().standardizedFileURL)
+                dirs.insert(destDir.standardizedFileURL)
+            }
+        case .rename(let items):
+            for (from, to) in items {
+                dirs.insert(from.deletingLastPathComponent().standardizedFileURL)
+                dirs.insert(to.deletingLastPathComponent().standardizedFileURL)
+            }
+        case .trash(let items):
+            for (original, _) in items {
+                dirs.insert(original.deletingLastPathComponent().standardizedFileURL)
+            }
+        }
+        return dirs
+    }
+
+    /// Refresh the tabs an undo/redo actually touched.
+    ///
+    /// This used to walk every tab in both panes and await each listing in turn,
+    /// so a single ⌘Z in a 30-tab workspace fired 30 serial directory reads. Only
+    /// tabs pointed at an affected directory can have stale contents; the rest
+    /// are left alone, and the survivors refresh concurrently.
+    private func refreshTabs(affectedBy op: UndoableOp) async {
+        let dirs = Self.affectedDirectories(of: op)
+        let tabs = (left.tabs + right.tabs).filter { tab in
+            tab.url.isFileURL && dirs.contains(tab.url.standardizedFileURL)
+        }
+        guard !tabs.isEmpty else { return }
+        await withTaskGroup(of: Void.self) { group in
+            for tab in tabs {
+                group.addTask { @MainActor in await tab.refresh() }
+            }
         }
     }
 

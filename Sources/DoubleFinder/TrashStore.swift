@@ -54,20 +54,47 @@ final class TrashStore: ObservableObject {
         let target = item.originalURL
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop").appendingPathComponent(item.name)
         let parent = target.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         let dest = uniqueURL(named: target.lastPathComponent, in: parent)
-        try? FileManager.default.moveItem(at: item.url, to: dest)
+        // Report failures instead of swallowing them: a silent `try?` here made
+        // a failed Put Back look identical to a successful one — the row simply
+        // stayed in the list with no explanation.
+        do {
+            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+            try FileManager.default.moveItem(at: item.url, to: dest)
+        } catch {
+            ToastCenter.shared.post(Toast(
+                icon: "exclamationmark.triangle.fill",
+                message: "Could not put back “\(item.name)”: \(error.localizedDescription)",
+                dismissAfter: 4
+            ))
+        }
         reload()
     }
 
     func permanentlyDelete(_ item: TrashItem) {
-        try? FileManager.default.removeItem(at: item.url)
+        do {
+            try FileManager.default.removeItem(at: item.url)
+        } catch {
+            ToastCenter.shared.post(Toast(
+                icon: "exclamationmark.triangle.fill",
+                message: "Could not delete “\(item.name)”: \(error.localizedDescription)",
+                dismissAfter: 4
+            ))
+        }
         reload()
     }
 
     func emptyTrash() {
+        var failed = 0
         for item in items {
-            try? FileManager.default.removeItem(at: item.url)
+            do { try FileManager.default.removeItem(at: item.url) } catch { failed += 1 }
+        }
+        if failed > 0 {
+            ToastCenter.shared.post(Toast(
+                icon: "exclamationmark.triangle.fill",
+                message: "\(failed) item\(failed == 1 ? "" : "s") could not be deleted",
+                dismissAfter: 4
+            ))
         }
         reload()
     }

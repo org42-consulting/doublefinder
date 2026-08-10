@@ -136,12 +136,6 @@ private struct SlideshowTimer: NSViewRepresentable {
     }
 }
 
-private extension Comparable {
-    func clamped(to range: ClosedRange<Self>) -> Self {
-        min(max(self, range.lowerBound), range.upperBound)
-    }
-}
-
 /// Returns true for URLs whose extension UTType conforms to `.image`.
 func isImageURL(_ url: URL) -> Bool {
     guard let type = UTType(filenameExtension: url.pathExtension) else { return false }

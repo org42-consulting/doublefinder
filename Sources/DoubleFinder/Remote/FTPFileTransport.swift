@@ -8,9 +8,38 @@ struct FTPFileTransport: FileTransport {
     let endpoint: RemoteEndpoint
     let canTrash = false
 
-    private func credentialsArg() -> [String] {
+    /// Arguments that tell curl to read its configuration — including the
+    /// credentials — from standard input.
+    ///
+    /// Credentials must not travel as process arguments: `argv` is world-readable
+    /// through `ps`, so any other user on the machine could harvest the FTP
+    /// password while a transfer is running. curl's `-K -` reads the same options
+    /// from stdin, which is private to the process.
+    private var configArgs: [String] { ["-K", "-"] }
+
+    /// The curl config body carrying `user = "name:password"`.
+    private func credentialsConfig() -> Data {
         let pw = Keychain.getPassword(service: Keychain.serviceSFTP, account: endpoint.canonicalAccount) ?? ""
-        return ["-u", "\(endpoint.user):\(pw)"]
+        return Data("user = \(Self.curlConfigQuote("\(endpoint.user):\(pw)"))\n".utf8)
+    }
+
+    /// Quote a value for curl's config-file syntax: wrap in double quotes and
+    /// backslash-escape the sequences curl interprets inside them. Without this,
+    /// a password containing `"` or `\` would terminate or corrupt the option.
+    private static func curlConfigQuote(_ s: String) -> String {
+        var out = ""
+        out.reserveCapacity(s.count + 2)
+        for ch in s {
+            switch ch {
+            case "\\": out += "\\\\"
+            case "\"": out += "\\\""
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            default:   out.append(ch)
+            }
+        }
+        return "\"\(out)\""
     }
 
     private func baseURL(scheme: String) -> URL {
@@ -41,7 +70,7 @@ struct FTPFileTransport: FileTransport {
             throw FileTransportError.notSupported("Bad URL")
         }
         // Default listing returns Unix-style "ls -la" output for most servers.
-        var args = credentialsArg()
+        var args = configArgs
         args.append(curlURL.absoluteString)
         let output = try await capture("/usr/bin/curl", args)
         return parseUnixListing(output, baseURL: url)
@@ -49,7 +78,7 @@ struct FTPFileTransport: FileTransport {
 
     func exists(_ url: URL) async -> Bool {
         guard let curlURL = curlURL(for: url) else { return false }
-        var args = credentialsArg()
+        var args = configArgs
         args.append("--head")
         args.append(curlURL.absoluteString)
         return (try? await capture("/usr/bin/curl", args)) != nil
@@ -74,7 +103,7 @@ struct FTPFileTransport: FileTransport {
         try validateFTPPath(dest.path)
         guard let baseURL = curlURL(for: from) else { throw FileTransportError.notSupported("Bad URL") }
         let parent = baseURL.deletingLastPathComponent()
-        var args = credentialsArg()
+        var args = configArgs
         args.append("-Q")
         args.append("RNFR \(from.path)")
         args.append("-Q")
@@ -91,7 +120,7 @@ struct FTPFileTransport: FileTransport {
     func download(_ remote: URL, to localTmp: URL, progress: Progress) async throws {
         guard let curlURL = curlURL(for: remote) else { throw FileTransportError.notSupported("Bad URL") }
         try? FileManager.default.removeItem(at: localTmp)
-        var args = credentialsArg()
+        var args = configArgs
         args.append("-o")
         args.append(localTmp.path)
         args.append(curlURL.absoluteString)
@@ -100,7 +129,7 @@ struct FTPFileTransport: FileTransport {
 
     func upload(_ local: URL, to remote: URL, progress: Progress) async throws {
         guard let curlURL = curlURL(for: remote) else { throw FileTransportError.notSupported("Bad URL") }
-        var args = credentialsArg()
+        var args = configArgs
         args.append("-T")
         args.append(local.path)
         args.append(curlURL.absoluteString)
@@ -124,36 +153,25 @@ struct FTPFileTransport: FileTransport {
         try validateFTPPath(path)
         guard let curlURL = curlURL(for: url) else { throw FileTransportError.notSupported("Bad URL") }
         let parent = curlURL.deletingLastPathComponent()
-        var args = credentialsArg()
+        var args = configArgs
         args.append("-Q")
         args.append("\(command) \(path)")
         args.append(parent.absoluteString)
         _ = try await capture("/usr/bin/curl", args)
     }
 
+    /// Run curl with the credentials fed in on stdin.
+    ///
+    /// `ProcessRunner` drains both pipes while curl runs and bounds the wall
+    /// time. The previous implementation read stdout from `terminationHandler`,
+    /// so a listing larger than the 64 KB pipe buffer blocked curl on write and
+    /// hung the awaiting continuation forever.
     private func capture(_ launchPath: String, _ args: [String]) async throws -> String {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String, Error>) in
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: launchPath)
-            proc.arguments = args
-            let out = Pipe()
-            proc.standardOutput = out
-            proc.standardError = Pipe()
-            proc.terminationHandler = { p in
-                let data = (try? out.fileHandleForReading.readToEnd()) ?? Data()
-                let text = String(data: data, encoding: .utf8) ?? ""
-                if p.terminationStatus == 0 {
-                    cont.resume(returning: text)
-                } else {
-                    cont.resume(throwing: NSError(
-                        domain: "DoubleFinder.FTP",
-                        code: Int(p.terminationStatus),
-                        userInfo: [NSLocalizedDescriptionKey: "FTP command failed with exit \(p.terminationStatus)"]
-                    ))
-                }
-            }
-            do { try proc.run() } catch { cont.resume(throwing: error) }
-        }
+        try await ProcessRunner.runChecked(
+            launchPath, args,
+            stdin: credentialsConfig(),
+            timeout: 120
+        )
     }
 
     /// Parse Unix-style `ls -la` listings (the default curl emits for FTP).

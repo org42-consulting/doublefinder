@@ -53,13 +53,6 @@ final class RemoteServerStore: ObservableObject {
         save()
     }
 
-    func reorder(_ ids: [UUID]) {
-        var byID: [UUID: RemoteBookmark] = [:]
-        for b in bookmarks { byID[b.id] = b }
-        bookmarks = ids.compactMap { byID[$0] }
-        save()
-    }
-
     func touchLastConnected(_ id: UUID) {
         if let idx = bookmarks.firstIndex(where: { $0.id == id }) {
             bookmarks[idx].lastConnected = Date()

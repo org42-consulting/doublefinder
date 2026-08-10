@@ -185,6 +185,7 @@ private struct PaneFilterBar: View {
                         }
                         .buttonStyle(.plain)
                         .help("Clear filter")
+                        .accessibilityLabel("Clear filter")
                     }
                 }
                 .padding(.horizontal, 12)
@@ -330,7 +331,7 @@ private struct PaneInfoBar: View {
     private var singleSelection: FSNode? {
         guard tab.selection.count == 1,
               let id = tab.selection.first,
-              let node = tab.nodes.first(where: { $0.id == id }) else { return nil }
+              let node = tab.nodesByID[id] else { return nil }
         return node
     }
 
@@ -440,6 +441,14 @@ private struct PaneFooter: View {
            now.timeIntervalSince(entry.fetchedAt) < volumeAvailableTTL {
             return entry.value
         }
+        // Drop expired entries before inserting. Without this the dictionary
+        // gained one permanent entry per folder ever visited and never shrank.
+        // Expired rows can't be served anyway, so pruning here keeps the cache
+        // proportional to "folders visited in the last 30s" rather than to the
+        // whole session's browsing history.
+        volumeAvailableCache = volumeAvailableCache.filter {
+            now.timeIntervalSince($0.value.fetchedAt) < volumeAvailableTTL
+        }
         let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityKey])
         let bytes = values?.volumeAvailableCapacity.map { Int64($0) }
         volumeAvailableCache[url] = (value: bytes, fetchedAt: now)
@@ -525,6 +534,7 @@ struct TabBarView: View {
         .frame(width: 26, height: 26)
         .glassEffect(in: Circle())
         .help("All tabs in this pane")
+        .accessibilityLabel("All tabs in this pane")
     }
 
     /// Mixed sequence of group headers and tab chips for the tab bar. Walks
@@ -579,6 +589,7 @@ struct TabBarView: View {
         .buttonStyle(.plain)
         .glassEffect(in: Circle())
         .help("New tab in this pane")
+        .accessibilityLabel("New tab in this pane")
     }
 
     private var settingsButton: some View {
@@ -594,6 +605,7 @@ struct TabBarView: View {
         .buttonStyle(.plain)
         .glassEffect(in: Circle())
         .help("Sort & view options")
+        .accessibilityLabel("Sort and view options")
         .popover(isPresented: $settingsShown, arrowEdge: .top) {
             PaneSettingsPopover(tab: pane.activeTab)
         }
@@ -669,6 +681,8 @@ private struct TabChip: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .help("Close tab")
+                .accessibilityLabel("Close tab “\(title)”")
             }
         }
         .padding(.horizontal, 10)
@@ -910,6 +924,7 @@ struct PathBarView: View {
             }
             .buttonStyle(.plain)
             .help(editing ? "Cancel (Esc)" : "Edit path")
+            .accessibilityLabel(editing ? "Cancel path editing" : "Edit path")
         }
         .padding(.horizontal, 12)
         .onChange(of: url) { _, _ in
@@ -946,6 +961,7 @@ struct PathBarView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Recent locations")
+        .accessibilityLabel("Recent locations")
     }
 
     private func displayName(for url: URL) -> String {

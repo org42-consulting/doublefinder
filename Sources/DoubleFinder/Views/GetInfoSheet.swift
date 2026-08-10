@@ -36,11 +36,20 @@ struct GetInfoSheet: View {
         .frame(width: 480)
         .task(id: prompt.url) {
             thumbnail = await ThumbnailService.shared.thumbnail(for: prompt.url, size: CGSize(width: 192, height: 192))
-            attrs = (try? prompt.url.resourceValues(forKeys: [
-                .isDirectoryKey, .fileSizeKey, .totalFileSizeKey,
-                .contentModificationDateKey, .creationDateKey, .typeIdentifierKey
-            ]).allValues) ?? [:]
-            tags = TagStore.tags(for: prompt.url)
+            // `resourceValues` and `TagStore.tags` are kernel round-trips, and
+            // on a network mount they can block for several ms. Run them off the
+            // main actor and publish in one hop, matching what InspectorContent
+            // does in `loadPreamble`.
+            let url = prompt.url
+            let loaded = await Task.detached(priority: .userInitiated) {
+                let attrs = (try? url.resourceValues(forKeys: [
+                    .isDirectoryKey, .fileSizeKey, .totalFileSizeKey,
+                    .contentModificationDateKey, .creationDateKey, .typeIdentifierKey
+                ]).allValues) ?? [:]
+                return (attrs: attrs, tags: TagStore.tags(for: url))
+            }.value
+            attrs = loaded.attrs
+            tags = loaded.tags
         }
     }
 
@@ -124,6 +133,7 @@ struct GetInfoSheet: View {
         }
         .buttonStyle(.plain)
         .help(color.displayName)
+        .accessibilityLabel(color.displayName)
     }
 
     // MARK: derived strings

@@ -36,6 +36,7 @@ struct TransferQueueButton: View {
         }
         .disabled(queue.ops.isEmpty)
         .help(queue.ops.isEmpty ? "No active transfers" : "\(queue.ops.count) active transfer\(queue.ops.count == 1 ? "" : "s")")
+        .accessibilityLabel("Transfers")
         .popover(isPresented: $showing, arrowEdge: .bottom) {
             TransferPopover()
                 .environmentObject(queue)
@@ -113,6 +114,8 @@ private struct TransferRow: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Cancel this transfer")
+                .accessibilityLabel("Cancel \(op.summary)")
             }
             ProgressView(value: fraction)
                 .progressViewStyle(.linear)

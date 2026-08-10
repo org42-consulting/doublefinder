@@ -148,7 +148,12 @@ struct ContentSearchSheet: View {
 
         let pipe = Pipe()
         proc.standardOutput = pipe
-        proc.standardError = Pipe()
+        // stdout is streamed via readabilityHandler below, so it can't fill.
+        // stderr must go to /dev/null rather than an undrained Pipe: grepping a
+        // tree with many unreadable directories emits a "Permission denied" line
+        // per directory, and once that fills the 64 KB pipe buffer grep blocks on
+        // write and the search stalls. We don't surface grep's stderr anyway.
+        proc.standardError = FileHandle.nullDevice
 
         let rootPath = prompt.directory.standardizedFileURL.path
         let handle = pipe.fileHandleForReading

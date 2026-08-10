@@ -62,6 +62,10 @@ Temporary Items
 *.tmp
 *.bak
 
+# AI cruft
+.claude/
+.claude
+
 # Repo-root icon preview written by scripts/regenerate-icon.swift. The
 # authoritative copy lives at Sources/DoubleFinder/Resources/doublefinder.png.
 /doublefinder.png

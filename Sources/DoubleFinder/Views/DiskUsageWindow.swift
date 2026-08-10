@@ -55,6 +55,7 @@ struct DiskUsageWindow: View {
                 if let url = current?.url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             } label: { Image(systemName: "magnifyingglass") }
             .help("Reveal in Finder")
+            .accessibilityLabel("Reveal in Finder")
         }
         .padding(10)
     }
@@ -204,9 +205,7 @@ private struct TreemapCanvas: View {
             let h = CGFloat(rowSum / Double(remaining.width))
             var x = remaining.minX
             for item in row {
-                let w = CGFloat(item.weight / Double(remaining.width) * Double(remaining.width) / rowSum) * remaining.width
                 let cellW = CGFloat(item.weight / rowSum) * remaining.width
-                _ = w
                 out.append((item.node, CGRect(x: x, y: remaining.minY, width: cellW, height: h)))
                 x += cellW
             }

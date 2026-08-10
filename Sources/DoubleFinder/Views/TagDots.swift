@@ -16,6 +16,11 @@ struct TagDots: View {
                         .frame(width: size, height: size)
                 }
             }
+            // Colour alone conveys the tag, so collapse the dots into one
+            // spoken phrase instead of leaving VoiceOver to read N unlabelled
+            // shapes.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Tags: \(tags.prefix(4).map(\.name).joined(separator: ", "))")
         }
     }
 }

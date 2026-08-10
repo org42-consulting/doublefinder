@@ -351,6 +351,7 @@ struct MediaRow: View {
                     }
                     .buttonStyle(.plain)
                     .help("Open in Maps")
+                    .accessibilityLabel("Open in Maps")
                     Spacer(minLength: 0)
                 }
             }
@@ -616,6 +617,7 @@ struct DuplicatesBody: View {
                         }
                         .buttonStyle(.plain)
                         .help("Reveal in Finder")
+                        .accessibilityLabel("Reveal in Finder")
                     }
                 }
                 Button("Rescan") { didScan = false; matches = []; scan() }
@@ -769,16 +771,12 @@ struct SigningInfo {
     static func load(for url: URL) -> SigningInfo? {
         guard isSignableTarget(url) else { return nil }
         // `codesign -dv --verbose=2` writes everything to stderr.
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        proc.arguments = ["-dv", "--verbose=2", url.path]
-        let out = Pipe(); let err = Pipe()
-        proc.standardOutput = out
-        proc.standardError = err
-        guard (try? proc.run()) != nil else { return nil }
-        proc.waitUntilExit()
-        let raw = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        if proc.terminationStatus != 0 { return SigningInfo(signed: false, identifier: nil, teamID: nil, authority: nil, notarized: false) }
+        guard let result = try? ProcessRunner.run(
+            "/usr/bin/codesign", ["-dv", "--verbose=2", url.path],
+            timeout: 15
+        ) else { return nil }
+        let raw = result.stderrText
+        if !result.succeeded { return SigningInfo(signed: false, identifier: nil, teamID: nil, authority: nil, notarized: false) }
 
         var identifier: String? = nil
         var teamID: String? = nil
@@ -794,14 +792,11 @@ struct SigningInfo {
         // gatekeeper accepts the bundle. Cheap for .app bundles; skip otherwise.
         var notarized = false
         if url.pathExtension.lowercased() == "app" {
-            let spctl = Process()
-            spctl.executableURL = URL(fileURLWithPath: "/usr/sbin/spctl")
-            spctl.arguments = ["--assess", "--type", "exec", "-v", url.path]
-            spctl.standardOutput = Pipe(); spctl.standardError = Pipe()
-            if (try? spctl.run()) != nil {
-                spctl.waitUntilExit()
-                notarized = spctl.terminationStatus == 0
-            }
+            let assessed = try? ProcessRunner.run(
+                "/usr/sbin/spctl", ["--assess", "--type", "exec", "-v", url.path],
+                timeout: 20
+            )
+            notarized = assessed?.succeeded ?? false
         }
 
         return SigningInfo(signed: true, identifier: identifier, teamID: teamID, authority: authority, notarized: notarized)
@@ -889,6 +884,7 @@ struct XattrSectionBody: View {
                             }
                             .buttonStyle(.plain)
                             .help(revealed[entry.name] == nil ? "Show value" : "Hide value")
+                            .accessibilityLabel(revealed[entry.name] == nil ? "Show value" : "Hide value")
                         }
                         if let value = revealed[entry.name] {
                             Text(value)

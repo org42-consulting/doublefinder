@@ -88,8 +88,12 @@ enum SFTPParser {
         let mon = parts[5]
         let day = parts[6]
         let yearOrTime = parts[7]
-        let nameTokens = parts.dropFirst(8)
-        let rest = nameTokens.joined(separator: " ")
+        // Take the name from the ORIGINAL line rather than re-joining tokens.
+        // Splitting with `omittingEmptySubsequences: true` collapses runs of
+        // spaces, so `joined(separator: " ")` turned "my  file.txt" into
+        // "my file.txt" — a name that doesn't exist on the server, breaking
+        // every subsequent operation on that row.
+        guard let rest = remainderAfterTokens(8, in: line) else { return nil }
 
         // Split " -> " for symlinks
         var name = rest
@@ -112,6 +116,28 @@ enum SFTPParser {
             name: name,
             linkTarget: linkTarget
         )
+    }
+
+    /// Returns everything after the first `count` whitespace-separated tokens,
+    /// preserving spacing *within* the remainder.
+    ///
+    /// `ls -l` right-aligns the size column and pads single-digit days
+    /// ("Jan  1"), so the separator between fields can be several spaces — we
+    /// skip all of them before the name starts. Spaces inside the name itself
+    /// are then kept verbatim, which is the whole point of reading from the
+    /// original line.
+    private static func remainderAfterTokens(_ count: Int, in line: String) -> String? {
+        var idx = line.startIndex
+        var consumed = 0
+        while consumed < count {
+            while idx < line.endIndex, line[idx] == " " { idx = line.index(after: idx) }
+            guard idx < line.endIndex else { return nil }
+            while idx < line.endIndex, line[idx] != " " { idx = line.index(after: idx) }
+            consumed += 1
+        }
+        while idx < line.endIndex, line[idx] == " " { idx = line.index(after: idx) }
+        guard idx < line.endIndex else { return nil }
+        return String(line[idx...])
     }
 
     private static func parseLSDate(mon: String, day: String, yearOrTime: String, referenceDate: Date) -> Date? {

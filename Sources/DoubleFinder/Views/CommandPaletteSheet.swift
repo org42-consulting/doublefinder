@@ -123,9 +123,3 @@ struct CommandPaletteSheet: View {
         DispatchQueue.main.async { cmd.run() }
     }
 }
-
-private extension Comparable {
-    func clamped(to range: ClosedRange<Self>) -> Self {
-        min(max(self, range.lowerBound), range.upperBound)
-    }
-}

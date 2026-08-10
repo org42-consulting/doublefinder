@@ -207,6 +207,7 @@ struct WindowView: View {
                   : "rectangle.righthalf.inset.filled")
         }
         .help("Active pane: \(state.focus == .left ? "left" : "right") — press ⇥ to swap")
+        .accessibilityLabel("Switch active pane")
         .keyboardShortcut(.tab, modifiers: [])
 
         Button {
@@ -217,6 +218,7 @@ struct WindowView: View {
                   : "arrow.left.to.line.compact")
         }
         .help("Mirror active pane to other side (⌃⌘=)")
+        .accessibilityLabel("Mirror active pane to other side")
 
         Button {
             state.swapPanes()
@@ -224,6 +226,7 @@ struct WindowView: View {
             Image(systemName: "arrow.left.arrow.right")
         }
         .help("Swap left and right panes (⌥⌘\\)")
+        .accessibilityLabel("Swap left and right panes")
 
         Button {
             state.compareMode.toggle()
@@ -236,6 +239,7 @@ struct WindowView: View {
         .help(state.compareMode
               ? "Stop comparing — red = only on this side, yellow = same name but different contents"
               : "Compare panes — highlights rows that are unique to one side or differ in size/date")
+              .accessibilityLabel("Compare panes")
 
         Divider()
             .frame(height: 16)
@@ -247,6 +251,7 @@ struct WindowView: View {
         }
         .keyboardShortcut("n", modifiers: [.command, .shift])
         .help("New Folder (⇧⌘N)")
+        .accessibilityLabel("New folder")
 
         Button {
             copyFocusedToOther()
@@ -256,6 +261,7 @@ struct WindowView: View {
         .disabled(!hasSelection)
         .keyboardShortcut("c", modifiers: [.command, .option])
         .help("Copy \(arrow) to \(destName) (⌥⌘C)")
+        .accessibilityLabel("Copy to other pane")
 
         Button {
             moveFocusedToOther()
@@ -265,6 +271,7 @@ struct WindowView: View {
         .disabled(!hasSelection)
         .keyboardShortcut("m", modifiers: [.command, .option])
         .help("Move \(arrow) to \(destName) (⌥⌘M)")
+        .accessibilityLabel("Move to other pane")
 
         Button {
             NotificationCenter.default.post(name: .renameSelectionRequested, object: nil)
@@ -273,6 +280,7 @@ struct WindowView: View {
         }
         .disabled(!hasSelection)
         .help(tab.selection.count > 1 ? "Batch Rename" : "Rename (⌘⏎)")
+        .accessibilityLabel("Rename")
 
         Button(role: .destructive) {
             trashFocused()
@@ -282,6 +290,7 @@ struct WindowView: View {
         .disabled(!hasSelection)
         .keyboardShortcut(.delete, modifiers: [.command])
         .help("Move to Trash (⌘⌫)")
+        .accessibilityLabel("Move to Trash")
 
         Button {
             state.showInspector.toggle()
@@ -290,6 +299,7 @@ struct WindowView: View {
                 .foregroundStyle(state.showInspector ? Color.accentColor : Color.primary)
         }
         .help(state.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+        .accessibilityLabel("Toggle Inspector")
     }
 
     // MARK: - Actions
@@ -301,7 +311,7 @@ struct WindowView: View {
         if !tab.marked.isEmpty {
             return Array(tab.marked)
         }
-        return tab.selection.compactMap { id in tab.nodes.first { $0.id == id }?.url }
+        return tab.selection.compactMap { id in tab.nodesByID[id]?.url }
     }
 
     private func copyFocusedToOther() {
@@ -320,52 +330,10 @@ struct WindowView: View {
         CopyMoveCoordinator.move(urls, to: dst, from: src, via: state)
     }
 
-    private func renameFocused() {
-        let tab = state.focusedPane.activeTab
-        guard !tab.selection.isEmpty else { return }
-
-        if tab.selection.count > 1 {
-            let urls = selectedURLs(in: tab)
-            state.batchRenamePrompt = BatchRenamePrompt(urls: urls) { pairs in
-                applyBatchRename(pairs, in: tab)
-            }
-            return
-        }
-
-        guard let id = tab.selection.first,
-              let node = tab.nodes.first(where: { $0.id == id }) else { return }
-
-        if tab.viewMode == .list {
-            tab.renameRequest = id
-        } else {
-            state.renamePrompt = RenamePromptModel(url: node.url) { newName in
-                Task { @MainActor in
-                    do {
-                        let new = try await FileOps.rename(node.url, to: newName)
-                        state.pushUndo(.rename(items: [(node.url, new)]))
-                        await tab.refresh()
-                    } catch {
-                        NSSound.beep()
-                    }
-                }
-            }
-        }
-    }
-
-    private func applyBatchRename(_ pairs: [(URL, String)], in tab: TabState) {
-        let actionable = pairs.filter { $0.1 != $0.0.lastPathComponent && !$0.1.isEmpty }
-        let stateRef = state
-        TransferQueue.shared.enqueue(
-            kind: "Rename",
-            summary: "Rename \(actionable.count) item\(actionable.count == 1 ? "" : "s")",
-            unitCount: Int64(actionable.count),
-            work: { progress in
-                let results = try await FileOps.batchRename(actionable, progress: progress)
-                await MainActor.run { stateRef.pushUndo(.rename(items: results)) }
-            },
-            completion: { Task { @MainActor in await tab.refresh() } }
-        )
-    }
+    // Rename is driven by `WindowState.beginRenameOnFocusedSelection()`, reached
+    // via the `.renameSelectionRequested` notification that both the toolbar
+    // button and Edit ▸ Rename (⌘⏎) post. Keeping a second copy of that logic
+    // here would let the two entry points drift.
 
     private func newFolder() {
         let src = state.focusedPane.activeTab
@@ -443,6 +411,7 @@ private struct ViewModePicker: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(help)
     }
 }
 
@@ -480,6 +449,7 @@ private struct SearchToolbarItem: View {
             .fixedSize()
             .disabled(tab.url.isRemoteSFTP)
             .help(tab.url.isRemoteSFTP ? "Search is not available for remote folders" : "Search scope: \(tab.searchScope.displayName)")
+            .accessibilityLabel("Search scope")
 
             ZStack(alignment: .trailing) {
                 TextField("Search", text: Binding(
@@ -510,6 +480,7 @@ private struct SearchToolbarItem: View {
                     .buttonStyle(.plain)
                     .padding(.trailing, 6)
                     .help("Clear search")
+                    .accessibilityLabel("Clear search")
                 }
             }
         }
@@ -534,6 +505,7 @@ private struct BackToolbarButton: View {
         }
         .disabled(!tab.canBack)
         .help("Back")
+        .accessibilityLabel("Back")
     }
 }
 
@@ -545,5 +517,6 @@ private struct ForwardToolbarButton: View {
         }
         .disabled(!tab.canForward)
         .help("Forward")
+        .accessibilityLabel("Forward")
     }
 }

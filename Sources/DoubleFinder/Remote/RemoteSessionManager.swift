@@ -45,6 +45,9 @@ final class RemoteSessionManager: ObservableObject {
         let key = Key(endpoint)
         guard let slot = slots[key] else { return }
         slots[key] = nil
+        // Any Edit-Locally watchers on this endpoint would otherwise keep
+        // polling and enqueue an upload that can only fail.
+        RemoteEditWatcher.shared.stopWatching(endpoint: endpoint)
         Task { await slot.session.close() }
     }
 

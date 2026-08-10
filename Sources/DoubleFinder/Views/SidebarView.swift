@@ -270,6 +270,7 @@ struct SidebarView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Eject “\(volume.name)”")
+                    .accessibilityLabel("Eject \(volume.name)")
                 }
             }
         }

@@ -52,7 +52,7 @@ struct GalleryView: View {
                 .background(.regularMaterial)
         }
         .onKeyPress(.space) {
-            if let id = tab.selection.first, let node = tab.nodes.first(where: { $0.id == id }) {
+            if let id = tab.selection.first, let node = tab.nodesByID[id] {
                 let allURLs = tab.nodes.map(\.url)
                 if allURLs.contains(where: \.isRemoteSFTP) {
                     Task { @MainActor in await QuickLookCoordinator.shared.showAsync(allURLs, startAt: node.url) }
@@ -69,8 +69,11 @@ struct GalleryView: View {
 
     @ViewBuilder
     private var mainPreview: some View {
+        // Indexed through `visibleIndexByID` rather than `nodesByID` so the
+        // preview stays limited to what the quick filter is actually showing.
         if let id = tab.selection.first,
-           let node = tab.visibleNodes.first(where: { $0.id == id }) {
+           let row = tab.visibleIndexByID[id],
+           case let node = tab.visibleNodes[row] {
             GalleryPreview(url: node.url)
                 .padding(16)
                 .overlay(alignment: .bottom) {

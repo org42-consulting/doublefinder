@@ -146,36 +146,17 @@ enum ArchiveBrowser {
 
     // MARK: - Process helpers
 
+    // Both helpers route through `ProcessRunner`, which drains stdout and stderr
+    // while the tool runs. The previous implementation read the pipe from inside
+    // `terminationHandler`: listing a large archive could fill the 64 KB buffer,
+    // block `unzip`/`tar` on write, and leave the continuation never resumed —
+    // an unbounded hang with no watchdog.
+
     private static func run(_ launchPath: String, _ args: [String]) async throws {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: launchPath)
-            proc.arguments = args
-            proc.standardError = Pipe()
-            proc.standardOutput = Pipe()
-            proc.terminationHandler = { p in
-                if p.terminationStatus == 0 { cont.resume() }
-                else { cont.resume(throwing: NSError(domain: "DoubleFinder.Archive", code: Int(p.terminationStatus), userInfo: [NSLocalizedDescriptionKey: "\(launchPath) failed with exit code \(p.terminationStatus)"])) }
-            }
-            do { try proc.run() } catch { cont.resume(throwing: error) }
-        }
+        try await ProcessRunner.runChecked(launchPath, args, timeout: 120)
     }
 
     private static func capture(_ launchPath: String, _ args: [String]) async throws -> String {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String, Error>) in
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: launchPath)
-            proc.arguments = args
-            let out = Pipe()
-            proc.standardOutput = out
-            proc.standardError = Pipe()
-            proc.terminationHandler = { p in
-                let data = (try? out.fileHandleForReading.readToEnd()) ?? Data()
-                let text = String(data: data, encoding: .utf8) ?? ""
-                if p.terminationStatus == 0 { cont.resume(returning: text) }
-                else { cont.resume(throwing: NSError(domain: "DoubleFinder.Archive", code: Int(p.terminationStatus), userInfo: [NSLocalizedDescriptionKey: "\(launchPath) failed with exit code \(p.terminationStatus)"])) }
-            }
-            do { try proc.run() } catch { cont.resume(throwing: error) }
-        }
+        try await ProcessRunner.runChecked(launchPath, args, timeout: 120)
     }
 }

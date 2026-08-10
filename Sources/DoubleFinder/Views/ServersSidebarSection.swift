@@ -24,6 +24,7 @@ struct ServersSidebarSection: View {
                         }
                         .buttonStyle(.borderless)
                         .help("Disconnect from \(bookmark.endpoint.defaultDisplayName)")
+                        .accessibilityLabel("Disconnect from \(bookmark.endpoint.defaultDisplayName)")
                     }
                 }
                 .contentShape(Rectangle())

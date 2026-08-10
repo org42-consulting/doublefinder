@@ -74,99 +74,72 @@ struct FileAreaView: View {
     private var content: some View {
         switch tab.viewMode {
         case .list:
-            NSTableListView(
-                tab: tab,
-                side: side,
-                onActivate: { state.focus = side },
-                onQuickLook: { urls in
-                    let allURLs = tab.nodes.map(\.url)
-                    if allURLs.contains(where: \.isRemoteSFTP) {
-                        Task { @MainActor in await QuickLookCoordinator.shared.showAsync(allURLs, startAt: urls.first) }
-                    } else {
-                        QuickLookCoordinator.shared.show(allURLs, startAt: urls.first)
-                    }
-                },
-                onMenuNeeded: { menu, urls, dir in
-                    if urls.isEmpty {
-                        FileContextMenu.populateBackground(menu, directory: dir, tab: tab, state: state)
-                    } else {
-                        FileContextMenu.populate(
-                            menu,
-                            urls: urls,
-                            directory: dir,
-                            tab: tab,
-                            state: state,
-                            onQuickLook: { qlUrls in
-                                if qlUrls.contains(where: \.isRemoteSFTP) {
-                                    Task { @MainActor in await QuickLookCoordinator.shared.showAsync(qlUrls, startAt: qlUrls.first) }
-                                } else {
-                                    QuickLookCoordinator.shared.show(qlUrls, startAt: qlUrls.first)
-                                }
-                            }
-                        )
-                    }
-                },
-                onDropToFolder: { folder, urls in
-                    CopyMoveCoordinator.copy(urls, toDirectory: folder, from: tab, via: state)
-                },
-                onDropToTab: { urls in
-                    CopyMoveCoordinator.copy(urls, to: tab, from: tab, via: state)
-                },
-                compareStatuses: state.compareMode ? state.compareStatuses : [:],
-                cutURLs: CutClipboard.shared.pendingMove,
-                highlightRecent: highlightRecent,
-                recentWindowSeconds: TimeInterval(recentMinutes * 60)
-            )
+            listView(withCompareTinting: true)
         case .icon:
             IconView(tab: tab, side: side)
         case .column:
             ColumnView(tab: tab, side: side, onActivate: { state.focus = side })
         case .gallery:
+            // Gallery needs local thumbnails, so remote tabs fall back to the
+            // list renderer.
             if tab.url.isRemoteSFTP {
-                NSTableListView(
-                    tab: tab,
-                    side: side,
-                    onActivate: { state.focus = side },
-                    onQuickLook: { urls in
-                        let allURLs = tab.nodes.map(\.url)
-                        if allURLs.contains(where: \.isRemoteSFTP) {
-                            Task { @MainActor in await QuickLookCoordinator.shared.showAsync(allURLs, startAt: urls.first) }
-                        } else {
-                            QuickLookCoordinator.shared.show(allURLs, startAt: urls.first)
-                        }
-                    },
-                    onMenuNeeded: { menu, urls, dir in
-                        if urls.isEmpty {
-                            FileContextMenu.populateBackground(menu, directory: dir, tab: tab, state: state)
-                        } else {
-                            FileContextMenu.populate(
-                                menu,
-                                urls: urls,
-                                directory: dir,
-                                tab: tab,
-                                state: state,
-                                onQuickLook: { qlUrls in
-                                    if qlUrls.contains(where: \.isRemoteSFTP) {
-                                        Task { @MainActor in await QuickLookCoordinator.shared.showAsync(qlUrls, startAt: qlUrls.first) }
-                                    } else {
-                                        QuickLookCoordinator.shared.show(qlUrls, startAt: qlUrls.first)
-                                    }
-                                }
-                            )
-                        }
-                    },
-                    onDropToFolder: { folder, urls in
-                        CopyMoveCoordinator.copy(urls, toDirectory: folder, from: tab, via: state)
-                    },
-                    onDropToTab: { urls in
-                        CopyMoveCoordinator.copy(urls, to: tab, from: tab, via: state)
-                    },
-                    highlightRecent: highlightRecent,
-                    recentWindowSeconds: TimeInterval(recentMinutes * 60)
-                )
+                listView(withCompareTinting: false)
             } else {
                 GalleryView(tab: tab, side: side)
             }
+        }
+    }
+
+    /// The AppKit list renderer, shared by `.list` and the remote `.gallery`
+    /// fallback. Both arms used to carry their own verbatim copy of this
+    /// configuration, so any change to the menu or drop wiring had to be made
+    /// twice — and the copies had already drifted (only `.list` passed
+    /// `compareStatuses` and `cutURLs`).
+    ///
+    /// - Parameter withCompareTinting: whether to feed Compare Folders state in.
+    ///   Off for the remote fallback: compare status is computed from local
+    ///   listings and there is nothing meaningful to tint against.
+    private func listView(withCompareTinting: Bool) -> some View {
+        NSTableListView(
+            tab: tab,
+            side: side,
+            onActivate: { state.focus = side },
+            onQuickLook: { urls in
+                quickLook(tab.nodes.map(\.url), startAt: urls.first)
+            },
+            onMenuNeeded: { menu, urls, dir in
+                if urls.isEmpty {
+                    FileContextMenu.populateBackground(menu, directory: dir, tab: tab, state: state)
+                } else {
+                    FileContextMenu.populate(
+                        menu,
+                        urls: urls,
+                        directory: dir,
+                        tab: tab,
+                        state: state,
+                        onQuickLook: { qlUrls in quickLook(qlUrls, startAt: qlUrls.first) }
+                    )
+                }
+            },
+            onDropToFolder: { folder, urls in
+                CopyMoveCoordinator.copy(urls, toDirectory: folder, from: tab, via: state)
+            },
+            onDropToTab: { urls in
+                CopyMoveCoordinator.copy(urls, to: tab, from: tab, via: state)
+            },
+            compareStatuses: withCompareTinting && state.compareMode ? state.compareStatuses : [:],
+            cutURLs: CutClipboard.shared.pendingMove,
+            highlightRecent: highlightRecent,
+            recentWindowSeconds: TimeInterval(recentMinutes * 60)
+        )
+    }
+
+    /// Quick Look `urls`, materialising remote files to a local cache first.
+    private func quickLook(_ urls: [URL], startAt start: URL?) {
+        if urls.contains(where: \.isRemoteSFTP) {
+            Task { @MainActor in await QuickLookCoordinator.shared.showAsync(urls, startAt: start) }
+        } else {
+            QuickLookCoordinator.shared.show(urls, startAt: start)
         }
     }
 

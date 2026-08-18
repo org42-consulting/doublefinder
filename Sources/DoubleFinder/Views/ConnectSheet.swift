@@ -18,31 +18,22 @@ struct ConnectSheet: View {
     @State private var displayName = ""
     @State private var connecting = false
 
-    private var defaultPort: Int {
-        switch scheme {
-        case "webdav": return 80
-        case "webdavs": return 443
-        case "ftp": return 21
-        case "ftps": return 990
-        default: return 22
-        }
-    }
+    private var defaultPort: Int { RemoteEndpoint.defaultPort(for: scheme) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Connect to Server").font(.headline)
             Form {
                 Picker("Protocol", selection: $scheme) {
-                    Text("SFTP").tag("sftp")
-                    Text("WebDAV (http)").tag("webdav")
-                    Text("WebDAV (https)").tag("webdavs")
-                    Text("FTP").tag("ftp")
-                    Text("FTPS").tag("ftps")
+                    ForEach(RemoteEndpoint.supportedSchemes, id: \.scheme) { opt in
+                        Text(opt.label).tag(opt.scheme)
+                    }
                 }
                 .onChange(of: scheme) { _, _ in
                     // Snap the port field to the new default if the user hasn't
                     // typed a custom one yet.
-                    if let n = Int(port), [22, 80, 443, 21, 990].contains(n) {
+                    let defaults = RemoteEndpoint.supportedSchemes.map(\.defaultPort)
+                    if let n = Int(port), defaults.contains(n) {
                         port = String(defaultPort)
                     }
                 }
@@ -119,13 +110,7 @@ struct ConnectSheet: View {
             var path = startingPath
             if path.isEmpty || path == "~" { path = "/" }
             if !path.hasPrefix("/") { path = "/" + path }
-            var comps = URLComponents()
-            comps.scheme = scheme
-            comps.user = user
-            comps.host = host
-            if portInt != defaultPort { comps.port = portInt }
-            comps.path = path
-            guard let url = comps.url else { onDismiss(); return }
+            guard let url = URL.remote(endpoint: endpoint, path: path) else { onDismiss(); return }
             if saveAsBookmark {
                 let bookmark = RemoteBookmark(endpoint: endpoint, startingPath: startingPath, lastConnected: Date())
                 RemoteServerStore.shared.addBookmark(bookmark)

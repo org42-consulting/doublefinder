@@ -76,10 +76,23 @@ enum FileOps {
 
     /// Return the right `FileTransport` for a given URL. SFTP transports are `@MainActor`,
     /// so this must be called on the main actor.
+    ///
+    /// This is the single dispatch point for the whole app — `TabState.transport`
+    /// delegates here. It used to recognise only `sftp://`, while `TabState` had
+    /// its own copy that knew all four schemes; the result was that every
+    /// operation routed through `FileOps` (rename, new folder, duplicate, trash,
+    /// conflict detection) silently fell back to `LocalFileTransport` on a
+    /// WebDAV or FTP tab and failed against a non-file URL.
     @MainActor
     static func transport(for url: URL) -> any FileTransport {
         if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
             return SFTPFileTransport(endpoint: endpoint)
+        }
+        if url.isRemoteWebDAV, let endpoint = url.remoteEndpoint {
+            return WebDAVFileTransport(endpoint: endpoint)
+        }
+        if url.scheme == "ftp" || url.scheme == "ftps", let endpoint = url.remoteEndpoint {
+            return FTPFileTransport(endpoint: endpoint)
         }
         return LocalFileTransport()
     }
@@ -112,18 +125,8 @@ enum FileOps {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != url.lastPathComponent else { return url }
         let t = await MainActor.run { Self.transport(for: url) }
-        let dest: URL
-        if url.isRemoteSFTP {
-            guard let endpoint = url.sftpEndpoint else {
-                throw FileTransportError.notSupported("Invalid sftp URL")
-            }
-            let parent = url.sftpParent ?? URL.sftp(endpoint: endpoint, path: "/")
-            guard let d = parent.sftpAppending(path: trimmed) else {
-                throw FileTransportError.notSupported("Cannot build remote destination URL")
-            }
-            dest = d
-        } else {
-            dest = url.deletingLastPathComponent().appendingPathComponent(trimmed)
+        guard let dest = url.parentDirectory?.childURL(named: trimmed) else {
+            throw FileTransportError.notSupported("Cannot build a destination URL for “\(url.lastPathComponent)”.")
         }
         try await t.rename(url, to: dest)
         return dest
@@ -165,9 +168,11 @@ enum FileOps {
             i += 1
             dest = try appended(parent, candidate(i))
         }
-        if parent.isRemoteSFTP {
-            // SFTP doesn't have a primitive "create empty file" command in the openssh
-            // client we drive; upload a zero-byte temp file instead.
+        if parent.isRemote {
+            // None of the remote transports has a primitive "create empty file"
+            // command (the openssh client we drive doesn't, and WebDAV / FTP
+            // only offer a body-carrying PUT / STOR); upload a zero-byte temp
+            // file instead.
             let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             FileManager.default.createFile(atPath: temp.path, contents: Data())
             defer { try? FileManager.default.removeItem(at: temp) }
@@ -199,24 +204,22 @@ enum FileOps {
     }
 
     private static func appended(_ parent: URL, _ component: String) throws -> URL {
-        if parent.isRemoteSFTP {
-            guard let u = parent.sftpAppending(path: component) else {
-                throw FileTransportError.notSupported("Cannot build remote path")
-            }
-            return u
+        guard let u = parent.childURL(named: component) else {
+            throw FileTransportError.notSupported("Cannot build a path inside “\(parent.lastPathComponent)”.")
         }
-        return parent.appendingPathComponent(component)
+        return u
     }
 
     // MARK: - Duplicate (transport-aware)
 
     /// Create a `name copy.ext` next to each source URL. For remote URLs this round-trips
-    /// the bytes through a local tempfile because SFTP has no server-side copy command.
+    /// the bytes through a local tempfile — none of the remote transports we drive exposes
+    /// a server-side copy (SFTP has no `cp`; WebDAV's `COPY` verb isn't implemented yet).
     static func duplicate(_ urls: [URL], progress: Progress? = nil) async throws {
         progress?.totalUnitCount = Int64(urls.count)
         for url in urls {
             if progress?.isCancelled == true { return }
-            if url.isRemoteSFTP {
+            if url.isRemote {
                 try await duplicateRemote(url)
             } else {
                 try await copy([url], to: url.deletingLastPathComponent(), resolution: .keepBoth)
@@ -227,20 +230,23 @@ enum FileOps {
 
     @MainActor
     private static func duplicateRemote(_ url: URL) async throws {
-        guard let endpoint = url.sftpEndpoint else {
-            throw FileTransportError.notSupported("Invalid sftp URL")
+        guard url.remoteEndpoint != nil else {
+            throw FileTransportError.notSupported("Invalid remote URL")
         }
-        let transport = SFTPFileTransport(endpoint: endpoint)
-        let parent = url.sftpParent ?? URL.sftp(endpoint: endpoint, path: "/")
-        let basename = (url.sftpPath as NSString).lastPathComponent
+        let transport = Self.transport(for: url)
+        let basename = (url.remotePath as NSString).lastPathComponent
         let stem = (basename as NSString).deletingPathExtension
         let ext = (basename as NSString).pathExtension
+        func sibling(_ name: String) throws -> URL {
+            guard let u = url.parentDirectory?.childURL(named: name) else {
+                throw FileTransportError.notSupported("Cannot build a destination URL for “\(basename)”.")
+            }
+            return u
+        }
         var i = 2
-        var name = ext.isEmpty ? "\(stem) copy" : "\(stem) copy.\(ext)"
-        var candidate = parent.sftpAppending(path: name) ?? url
+        var candidate = try sibling(ext.isEmpty ? "\(stem) copy" : "\(stem) copy.\(ext)")
         while await transport.exists(candidate) {
-            name = ext.isEmpty ? "\(stem) copy \(i)" : "\(stem) copy \(i).\(ext)"
-            candidate = parent.sftpAppending(path: name) ?? url
+            candidate = try sibling(ext.isEmpty ? "\(stem) copy \(i)" : "\(stem) copy \(i).\(ext)")
             i += 1
         }
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -257,7 +263,7 @@ enum FileOps {
     /// written via `URL.writeBookmarkData(_:to:)`. Returns the alias URL.
     @discardableResult
     static func makeAlias(for source: URL) async throws -> URL {
-        guard !source.isRemoteSFTP else {
+        guard !source.isRemote else {
             throw FileTransportError.notSupported("Aliases can only be made for local files.")
         }
         let parent = source.deletingLastPathComponent()
@@ -276,7 +282,7 @@ enum FileOps {
     /// symlink URL.
     @discardableResult
     static func makeSymbolicLink(for source: URL) async throws -> URL {
-        guard !source.isRemoteSFTP else {
+        guard !source.isRemote else {
             throw FileTransportError.notSupported("Symbolic links can only be made for local files.")
         }
         let parent = source.deletingLastPathComponent()
@@ -305,10 +311,10 @@ enum FileOps {
 
     /// Walk the directory at `url` and sum the allocated size of every regular file
     /// underneath. Skips symbolic links so we don't double-count their targets.
-    /// Throws `notSupported` for remote URLs — SFTP doesn't have a cheap recursive
-    /// size primitive, so we punt on remote folders for now.
+    /// Throws `notSupported` for remote URLs — none of the remote protocols has a
+    /// cheap recursive size primitive, so we punt on remote folders for now.
     static func calculateSize(_ url: URL) async throws -> Int64 {
-        guard !url.isRemoteSFTP else {
+        guard !url.isRemote else {
             throw FileTransportError.notSupported("Folder size isn't available for remote folders.")
         }
         return await Task.detached(priority: .userInitiated) {
@@ -335,14 +341,16 @@ enum FileOps {
     // MARK: - Conflict detection (used by CopyMoveCoordinator)
 
     /// Returns source URLs whose `lastPathComponent` already exists at `destDir`.
-    /// Async because a remote `destDir` requires an SFTP `ls -d` to check existence.
+    /// Async because a remote `destDir` requires a round-trip to the server to
+    /// check existence (`ls -d` over SFTP, `PROPFIND` over WebDAV, a HEAD-ish
+    /// probe over FTP).
     static func conflicts(for sources: [URL], in destDir: URL) async -> [URL] {
-        if destDir.isRemoteSFTP {
-            guard let endpoint = destDir.sftpEndpoint else { return [] }
-            let transport = await MainActor.run { SFTPFileTransport(endpoint: endpoint) }
+        if destDir.isRemote {
+            guard destDir.remoteEndpoint != nil else { return [] }
+            let transport = await MainActor.run { Self.transport(for: destDir) }
             var collisions: [URL] = []
             for src in sources {
-                guard let target = destDir.sftpAppending(path: src.lastPathComponent) else { continue }
+                guard let target = destDir.childURL(named: src.lastPathComponent) else { continue }
                 if await transport.exists(target) { collisions.append(src) }
             }
             return collisions

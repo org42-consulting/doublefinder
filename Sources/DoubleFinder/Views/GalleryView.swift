@@ -54,7 +54,7 @@ struct GalleryView: View {
         .onKeyPress(.space) {
             if let id = tab.selection.first, let node = tab.nodesByID[id] {
                 let allURLs = tab.nodes.map(\.url)
-                if allURLs.contains(where: \.isRemoteSFTP) {
+                if allURLs.contains(where: \.isRemote) {
                     Task { @MainActor in await QuickLookCoordinator.shared.showAsync(allURLs, startAt: node.url) }
                 } else {
                     QuickLookCoordinator.shared.show(allURLs, startAt: node.url)
@@ -104,7 +104,7 @@ struct GalleryView: View {
                         tab: tab,
                         state: state,
                         onQuickLook: { urls in
-                            if urls.contains(where: \.isRemoteSFTP) {
+                            if urls.contains(where: \.isRemote) {
                                 Task { @MainActor in await QuickLookCoordinator.shared.showAsync(urls, startAt: urls.first) }
                             } else {
                                 QuickLookCoordinator.shared.show(urls, startAt: urls.first)
@@ -167,7 +167,7 @@ struct GalleryView: View {
                             tab: tab,
                             state: state,
                             onQuickLook: { urls in
-                                if urls.contains(where: \.isRemoteSFTP) {
+                                if urls.contains(where: \.isRemote) {
                                     Task { @MainActor in await QuickLookCoordinator.shared.showAsync(urls, startAt: urls.first) }
                                 } else {
                                     QuickLookCoordinator.shared.show(urls, startAt: urls.first)

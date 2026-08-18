@@ -80,14 +80,6 @@ private struct BookmarkEditor: View {
     @State private var passwordStatus: PasswordStatus = .unknown
     private enum PasswordStatus { case unknown, saved, missing, justSaved, justCleared }
 
-    private static let protocolOptions: [(scheme: String, label: String, defaultPort: Int)] = [
-        ("sftp", "SFTP", 22),
-        ("webdav", "WebDAV (http)", 80),
-        ("webdavs", "WebDAV (https)", 443),
-        ("ftp", "FTP", 21),
-        ("ftps", "FTPS", 990),
-    ]
-
     var body: some View {
         Form {
             Section("Identity") {
@@ -108,7 +100,7 @@ private struct BookmarkEditor: View {
                         onChange(bookmark)
                     }
                 )) {
-                    ForEach(Self.protocolOptions, id: \.scheme) { opt in
+                    ForEach(RemoteEndpoint.supportedSchemes, id: \.scheme) { opt in
                         Text(opt.label).tag(opt.scheme)
                     }
                 }
@@ -217,7 +209,7 @@ private struct BookmarkEditor: View {
     }
 
     private func defaultPort(for scheme: String) -> Int {
-        Self.protocolOptions.first { $0.scheme == scheme }?.defaultPort ?? 22
+        RemoteEndpoint.defaultPort(for: scheme)
     }
 
     private func pickIdentity() {

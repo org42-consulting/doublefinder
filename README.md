@@ -105,7 +105,7 @@ A reliability release. Several long-standing hangs turned out to share one root 
 - **Undo / Redo** (⌘Z / ⇧⌘Z) for Move, Rename, Trash — including macOS Put-Back for trashed files.
 - **Empty Trash** (⇧⌘⌫) with confirmation, plus a full **Trash manager window** (Edit ▸ Manage Trash…) listing every item with its original path and a per-row Put Back.
 - **Share…** in the context menu — opens the system share sheet (`NSSharingServicePicker`) for the current local selection.
-- **Native drag-and-drop**: drag between panes, into folders in any view, out to Finder or other apps. Multi-file drags render as a stacked-icon preview with a "+N" count badge.
+- **Native drag-and-drop**: drag between panes, into folders in any view, out to Finder or other apps. Multi-file drags render as a stacked-icon preview with a "+N" count badge. Drops always copy — use ⌥⌘M or Cut + Paste (⌥⌘X / ⌥⌘V) to move.
 - **Transfer queue** in the toolbar — per-operation progress bars, cancel button, automatic retry hook; long copies / moves never block the UI.
 
 ### Disk images
@@ -140,7 +140,7 @@ A reliability release. Several long-standing hangs turned out to share one root 
 
 ### Inspector
 
-- Toggleable right-hand inspector (⌥⌘I) showing thumbnail, kind, size, dates, path, and tag chips for the focused selection; survives app restart.
+- Toggleable right-hand inspector (⌥⌘I) showing thumbnail, kind, size, dates, path, and a row of clickable tag-colour toggles for the focused selection; survives app restart.
 - **Quick Actions** strip — Reveal in Finder, Copy Path, Copy Name, Open in Terminal (or `ssh -t` for remote).
 - **Editable POSIX permissions** — user / group / other read-write-execute matrix with live `chmod`.
 - **File hash** — on-demand MD5 and SHA-256 (streaming, CryptoKit) for the focused file.
@@ -157,11 +157,11 @@ A reliability release. Several long-standing hangs turned out to share one root 
 
 - **Connect to Server…** (⌘K) with a protocol picker: **SFTP**, **WebDAV** (HTTP), **WebDAV (HTTPS)**, **FTP**, **FTPS**. Host, user, port (auto-defaults per protocol), optional identity file (SFTP), optional Keychain-saved password; bookmarks land in the sidebar's **Servers** section.
 - **Edit existing bookmarks** — right-click a server in the sidebar ▸ Edit… opens the Connections window pre-selected on that bookmark. Change protocol / host / user / port / identity / starting path, save or clear the Keychain password, see when you last connected, or delete the bookmark (which also wipes the Keychain entry).
-- All file operations (rename, new folder, duplicate, trash, drag-and-drop) route through the right transport so they work on remote tabs.
+- All file operations (rename, new folder, new file, duplicate, delete, copy/move, drag-and-drop) route through the right transport, so they behave identically on SFTP, WebDAV, and FTP tabs. Deleting on any remote tab is permanent — none of these protocols has a Trash — so it always confirms first. **Edit Locally**, **Open in Terminal** (`ssh -t`), session eject, and cancelling a transfer mid-file are SFTP-only.
 - **SFTP** runs through the system `sftp(1)` binary in a PTY wrapper; **WebDAV** uses URLSession with PROPFIND / MKCOL / MOVE / PUT / GET / DELETE; **FTP** shells `/usr/bin/curl` for raw FTP commands and listing.
 - **Eject icon** on connected servers (SFTP only): disconnects the session and moves any tab on that endpoint back to the configured starting directory.
 - **Open SSH Terminal** — for a remote tab, "Open in Terminal" launches `ssh -t user@host` with `cd` to the current remote path.
-- **Edit Locally** — right-click a remote file; DoubleFinder downloads it to a per-endpoint local cache, opens it with your default editor, and re-uploads on every save until you quit.
+- **Edit Locally** (SFTP only) — right-click a remote file; DoubleFinder downloads it to a per-endpoint local cache, opens it with your default editor, and re-uploads on every save until you quit.
 - **Copy / Move** transparently handles every combination of local↔local, local↔remote, remote→remote (same-endpoint server-side rename when possible, tunnel-through-local-temp otherwise).
 - **Path bar** accepts `sftp://`, `webdav://`, `webdavs://`, `ftp://`, `ftps://` URLs; remote breadcrumbs render the host at the root.
 

@@ -93,7 +93,7 @@ private struct InspectorContent: View {
     }
 
     private var crossPaneCounterpart: URL? {
-        guard let node = selectedNode, !node.url.isRemoteSFTP else { return nil }
+        guard let node = selectedNode, !node.url.isRemote else { return nil }
         let name = node.name
         guard let other = otherTab.nodes.first(where: { $0.name == name }) else { return nil }
         if other.url.standardizedFileURL == node.url.standardizedFileURL { return nil }
@@ -123,7 +123,7 @@ private struct InspectorContent: View {
                     .padding(14)
                 }
             } else if let node = selectedNode {
-                if node.url.isRemoteSFTP {
+                if node.url.isRemote {
                     ScrollView {
                         RemoteFileInspectorRows(node: node)
                     }
@@ -426,13 +426,13 @@ private struct InspectorContent: View {
         ]).allValues) ?? [:]
         let tags = TagStore.tags(for: url)
         var permissions: Int? = nil
-        if !url.isRemoteSFTP,
+        if !url.isRemote,
            let fmAttrs = try? FileManager.default.attributesOfItem(atPath: url.path),
            let n = fmAttrs[.posixPermissions] as? NSNumber {
             permissions = n.intValue
         }
-        let volume = url.isRemoteSFTP ? nil : VolumeInfo.load(for: url)
-        let symlink = url.isRemoteSFTP ? nil : SymlinkInfo.load(for: url)
+        let volume = url.isRemote ? nil : VolumeInfo.load(for: url)
+        let symlink = url.isRemote ? nil : SymlinkInfo.load(for: url)
         return InspectorPreamble(attrs: attrs, tags: tags, permissions: permissions, volume: volume, symlink: symlink)
     }
 
@@ -471,7 +471,7 @@ private struct InspectorContent: View {
         volume = preamble.volume
         symlink = preamble.symlink
 
-        guard !node.url.isRemoteSFTP else { return }
+        guard !node.url.isRemote else { return }
         // GitStatusService is an actor: the await already hops off-main
         // automatically. Kept here so the call ordering matches the
         // original code's expectations for downstream view updates.
@@ -538,7 +538,7 @@ private struct InspectorContent: View {
     /// through `FileManager.setAttributes` on toggle.
     @ViewBuilder
     private func permissionsRow(for node: FSNode) -> some View {
-        if permissions != nil, !node.url.isRemoteSFTP {
+        if permissions != nil, !node.url.isRemote {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 14) {
                     Text(" ").frame(width: 56, alignment: .trailing)
@@ -684,7 +684,7 @@ private struct RemoteFileInspectorRows: View {
             if let modified = node.modified {
                 row("Modified", modified.formatted())
             }
-            row("Location", node.url.sftpPath)
+            row("Location", node.url.remotePath)
         }
         .padding()
     }

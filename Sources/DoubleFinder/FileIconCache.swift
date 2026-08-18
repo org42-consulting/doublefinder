@@ -63,8 +63,16 @@ enum FileIconCache {
     /// makes no sense — every `.app` would share the first one looked up.
     /// `iconExact(for:)` skips the cache entirely.
     static func iconExact(for url: URL, size: NSSize? = nil) -> NSImage {
-        let image = NSWorkspace.shared.icon(forFile: url.path)
-        if let size { image.size = size }
+        let raw = NSWorkspace.shared.icon(forFile: url.path)
+        guard let size else { return raw }
+        // Copy before touching `.size`, for the same reason `icon(for:size:)`
+        // does: `NSWorkspace.icon(forFile:)` hands back a Launch Services-cached
+        // instance shared with every other caller, and resizing it in place
+        // races their rendering. This path skipped the copy, so an `.app` icon
+        // requested at 16×16 by a list row could shrink the same instance a
+        // 128×128 icon-view cell was mid-draw with.
+        let image = (raw.copy() as? NSImage) ?? raw
+        image.size = size
         return image
     }
 

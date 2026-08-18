@@ -71,36 +71,36 @@ enum FileOpener {
     /// Runs `hdiutil attach` and returns the first mount point (nil when the
     /// image attached but exposed no browsable filesystem). Attaching an
     /// already-mounted image is fine — hdiutil reports the existing mount.
+    ///
+    /// Goes through `ProcessRunner` so the drain-before-wait ordering and the
+    /// wall-clock bound come from one place. The hand-rolled version got the
+    /// ordering right but had no watchdog: an image on a stalled network mount,
+    /// or one that verifies for minutes, hung the attach with no way out. Images
+    /// carrying a license agreement prompt on stdin, which `ProcessRunner` wires
+    /// to /dev/null, so those fail fast instead of blocking.
     nonisolated private static func attach(path: String) -> Result<URL?, MountError> {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
         // -noautoopen: don't let Finder pop its own window for auto-open
         // images; the pane navigates there itself.
-        proc.arguments = ["attach", path, "-plist", "-noautoopen"]
-        let stdout = Pipe()
-        let stderr = Pipe()
-        proc.standardOutput = stdout
-        proc.standardError = stderr
-        // Images with a license agreement prompt on stdin; fail cleanly
-        // instead of hanging on a closed pipe.
-        proc.standardInput = FileHandle.nullDevice
+        let result: ProcessResult
         do {
-            try proc.run()
+            result = try ProcessRunner.run(
+                "/usr/bin/hdiutil",
+                ["attach", path, "-plist", "-noautoopen"],
+                timeout: 180
+            )
         } catch {
             return .failure(MountError(message: error.localizedDescription))
         }
-        // Drain pipes before waiting so a chatty hdiutil can't deadlock.
-        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
 
-        guard proc.terminationStatus == 0 else {
-            let raw = String(decoding: errData, as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return .failure(MountError(message: raw.isEmpty ? "hdiutil exited with status \(proc.terminationStatus)" : raw))
+        if result.timedOut {
+            return .failure(MountError(message: "hdiutil did not finish within 180s and was stopped."))
+        }
+        guard result.status == 0 else {
+            let raw = result.stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .failure(MountError(message: raw.isEmpty ? "hdiutil exited with status \(result.status)" : raw))
         }
 
-        guard let plist = (try? PropertyListSerialization.propertyList(from: outData, format: nil)) as? [String: Any],
+        guard let plist = (try? PropertyListSerialization.propertyList(from: result.standardOutput, format: nil)) as? [String: Any],
               let entities = plist["system-entities"] as? [[String: Any]]
         else { return .success(nil) }
         let mountPoint = entities.compactMap { $0["mount-point"] as? String }.first

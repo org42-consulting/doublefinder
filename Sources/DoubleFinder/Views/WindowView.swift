@@ -357,7 +357,11 @@ struct WindowView: View {
         let src = state.focusedPane.activeTab
         let urls = selectedURLs(in: src)
         guard !urls.isEmpty else { return }
-        let allRemote = urls.allSatisfy(\.isRemoteSFTP)
+        // Any remote scheme, not just SFTP: no remote transport has a Trash, so
+        // `FileOps.trash` deletes outright. Checking only for SFTP meant deleting
+        // from a WebDAV or FTP tab skipped the confirmation and still reported
+        // "Move to Trash".
+        let allRemote = urls.allSatisfy(\.isRemote)
         if allRemote, !TrashConfirm.askDeletePermanently(urls) { return }
         let label = allRemote ? "Delete" : "Trash"
         let summary = allRemote
@@ -447,8 +451,8 @@ private struct SearchToolbarItem: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .disabled(tab.url.isRemoteSFTP)
-            .help(tab.url.isRemoteSFTP ? "Search is not available for remote folders" : "Search scope: \(tab.searchScope.displayName)")
+            .disabled(tab.url.isRemote)
+            .help(tab.url.isRemote ? "Search is not available for remote folders" : "Search scope: \(tab.searchScope.displayName)")
             .accessibilityLabel("Search scope")
 
             ZStack(alignment: .trailing) {
@@ -467,7 +471,7 @@ private struct SearchToolbarItem: View {
                         return .handled
                     }
                     .frame(width: 220)
-                    .disabled(tab.url.isRemoteSFTP)
+                    .disabled(tab.url.isRemote)
 
                 if !tab.searchText.isEmpty {
                     Button {

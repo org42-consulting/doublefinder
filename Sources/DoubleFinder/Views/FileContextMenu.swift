@@ -28,9 +28,15 @@ enum FileContextMenu {
 
         let multiple = urls.count > 1
         let firstName = urls.first?.lastPathComponent ?? ""
-        let allRemote = urls.allSatisfy(\.isRemoteSFTP)
+        // `allRemote` gates everything that needs a real local file — Open With,
+        // Reveal in Finder, Compress, aliases, tags, Share — plus the
+        // permanent-delete confirmation. `allSFTP` is deliberately narrower:
+        // Edit Locally and `ssh -t` exist only for SFTP. These were one flag
+        // keyed on SFTP, so WebDAV / FTP selections got the local-only items.
+        let allRemote = urls.allSatisfy(\.isRemote)
+        let allSFTP = urls.allSatisfy(\.isRemoteSFTP)
         let isDir = urls.allSatisfy { u in
-            if u.isRemoteSFTP {
+            if u.isRemote {
                 return tab.nodesByID[u]?.isDirectory ?? false
             }
             return (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
@@ -38,7 +44,7 @@ enum FileContextMenu {
         // Single-selection package (.app, .bundle, …) — drives the "Show
         // Package Contents" item and excludes the descend-into-folder items.
         let singlePackageURL: URL? = {
-            guard !multiple, let url = urls.first, !url.isRemoteSFTP else { return nil }
+            guard !multiple, let url = urls.first, !url.isRemote else { return nil }
             let v = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
             return (v?.isDirectory == true && v?.isPackage == true) ? url : nil
         }()
@@ -46,7 +52,7 @@ enum FileContextMenu {
 
         addItem(menu, "Open") {
             for u in urls {
-                if u.isRemoteSFTP {
+                if u.isRemote {
                     if let node = tab.nodesByID[u], node.isDirectory {
                         tab.navigate(to: u); break
                     }
@@ -65,9 +71,11 @@ enum FileContextMenu {
             menu.addItem(owItem)
         }
 
-        // Edit Locally: only for single remote file selections. Downloads to a local
+        // Edit Locally: only for single SFTP file selections. Downloads to a local
         // cache, opens with the default editor, and re-uploads on every save.
-        if allRemote, !multiple, !isDir, let url = urls.first {
+        // `RemoteEditWatcher` drives an SFTP session directly, so WebDAV / FTP
+        // selections must not offer it.
+        if allSFTP, !multiple, !isDir, let url = urls.first {
             addItem(menu, "Edit Locally") {
                 RemoteEditWatcher.shared.startEditing(url)
             }
@@ -94,7 +102,10 @@ enum FileContextMenu {
             }
         }
 
-        if isOpenableDir, !multiple, let url = urls.first {
+        // Terminal needs either a local directory or an SFTP host to `ssh` into;
+        // WebDAV and FTP have no shell, so the item is omitted rather than
+        // offered and then beeping.
+        if isOpenableDir, !multiple, let url = urls.first, canOpenTerminal(at: url) {
             addItem(menu, "Open in Terminal") {
                 openTerminal(at: url)
             }
@@ -123,7 +134,7 @@ enum FileContextMenu {
                 }
             }
             let hasLocalDir = urls.contains { u in
-                !u.isRemoteSFTP && (tab.nodesByID[u]?.isDirectory ?? false)
+                !u.isRemote && (tab.nodesByID[u]?.isDirectory ?? false)
             }
             if hasLocalDir {
                 addItem(menu, "Calculate Size") {
@@ -181,7 +192,7 @@ enum FileContextMenu {
             }
         }
         addItem(menu, multiple ? "Copy \(urls.count) Paths" : "Copy Path") {
-            let paths = urls.map { $0.isRemoteSFTP ? $0.sftpPath : $0.path }.joined(separator: "\n")
+            let paths = urls.map { $0.isRemote ? $0.remotePath : $0.path }.joined(separator: "\n")
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(paths, forType: .string)
         }
@@ -229,7 +240,7 @@ enum FileContextMenu {
     /// Populate `menu` for a right-click on the background (no item under the cursor).
     static func populateBackground(_ menu: NSMenu, directory: URL, tab: TabState, state: WindowState) {
         menu.removeAllItems()
-        let isRemote = directory.isRemoteSFTP
+        let isRemote = directory.isRemote
 
         addItem(menu, "New Folder", key: "n") {
             Task { @MainActor in
@@ -250,8 +261,10 @@ enum FileContextMenu {
                 }
             }
         }
-        addItem(menu, "Open in Terminal", key: "t") {
-            openTerminal(at: directory)
+        if canOpenTerminal(at: directory) {
+            addItem(menu, "Open in Terminal", key: "t") {
+                openTerminal(at: directory)
+            }
         }
 
         menu.addItem(.separator())
@@ -302,15 +315,17 @@ enum FileContextMenu {
         if !urls.isEmpty {
             let multiple = urls.count > 1
             let firstName = urls.first?.lastPathComponent ?? ""
-            let allRemote = urls.allSatisfy(\.isRemoteSFTP)
+            // See `populate` above for why these are two separate flags.
+            let allRemote = urls.allSatisfy(\.isRemote)
+            let allSFTP = urls.allSatisfy(\.isRemoteSFTP)
             let allDirs = urls.allSatisfy { u in
-                if u.isRemoteSFTP {
+                if u.isRemote {
                     return tab.nodesByID[u]?.isDirectory ?? false
                 }
                 return (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
             }
             let singlePackageURL: URL? = {
-                guard !multiple, let url = urls.first, !url.isRemoteSFTP else { return nil }
+                guard !multiple, let url = urls.first, !url.isRemote else { return nil }
                 let v = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
                 return (v?.isDirectory == true && v?.isPackage == true) ? url : nil
             }()
@@ -319,7 +334,7 @@ enum FileContextMenu {
 
             Button("Open") {
                 for u in urls {
-                    if u.isRemoteSFTP {
+                    if u.isRemote {
                         if let node = tab.nodesByID[u], node.isDirectory {
                             tab.navigate(to: u); break
                         }
@@ -331,7 +346,7 @@ enum FileContextMenu {
                     FileOpener.open(u, in: tab)
                 }
             }
-            if allRemote, !multiple, !allDirs, let url = urls.first {
+            if allSFTP, !multiple, !allDirs, let url = urls.first {
                 Button("Edit Locally") {
                     RemoteEditWatcher.shared.startEditing(url)
                 }
@@ -353,7 +368,9 @@ enum FileContextMenu {
             if allOpenableDirs, !multiple, let url = urls.first {
                 Button("Open in Other Pane") { state.otherPane.activeTab.navigate(to: url) }
                 Button("Open in New Tab") { state.focusedPane.addTab(url: url) }
-                Button("Open in Terminal") { openTerminal(at: url) }
+                if canOpenTerminal(at: url) {
+                    Button("Open in Terminal") { openTerminal(at: url) }
+                }
             }
             if let pkg = singlePackageURL {
                 Button("Show Package Contents") { tab.navigate(to: pkg) }
@@ -376,7 +393,7 @@ enum FileContextMenu {
                     state.getInfoPrompt = GetInfoPrompt(url: url, onTagsChanged: refresh)
                 }
                 let hasLocalDir = urls.contains { u in
-                    !u.isRemoteSFTP && (tab.nodesByID[u]?.isDirectory ?? false)
+                    !u.isRemote && (tab.nodesByID[u]?.isDirectory ?? false)
                 }
                 if hasLocalDir {
                     Button("Calculate Size") { calculateSize(for: urls, in: tab) }
@@ -432,7 +449,7 @@ enum FileContextMenu {
                 }
             }
             Button(multiple ? "Copy \(urls.count) Paths" : "Copy Path") {
-                let paths = urls.map { $0.isRemoteSFTP ? $0.sftpPath : $0.path }.joined(separator: "\n")
+                let paths = urls.map { $0.isRemote ? $0.remotePath : $0.path }.joined(separator: "\n")
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(paths, forType: .string)
             }
@@ -493,7 +510,7 @@ enum FileContextMenu {
     @MainActor
     @ViewBuilder
     static func backgroundItems(directory: URL, tab: TabState, state: WindowState) -> some View {
-        let isRemote = directory.isRemoteSFTP
+        let isRemote = directory.isRemote
 
         Button("New Folder") {
             Task { @MainActor in
@@ -514,7 +531,9 @@ enum FileContextMenu {
                 }
             }
         }
-        Button("Open in Terminal") { openTerminal(at: directory) }
+        if canOpenTerminal(at: directory) {
+            Button("Open in Terminal") { openTerminal(at: directory) }
+        }
 
         Divider()
 
@@ -597,19 +616,16 @@ enum FileContextMenu {
             summary: "Compress to \(output.lastPathComponent)",
             unitCount: 1,
             work: { progress in
-                try await Task.detached {
-                    let task = Process()
-                    task.currentDirectoryURL = parent
-                    task.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
-                    task.arguments = ["-qr", output.lastPathComponent] + urls.map { $0.lastPathComponent }
-                    try task.run()
-                    task.waitUntilExit()
-                    guard task.terminationStatus == 0 else {
-                        throw CocoaError(.fileWriteUnknown, userInfo: [
-                            NSLocalizedDescriptionKey: "zip exited with status \(task.terminationStatus)"
-                        ])
-                    }
-                }.value
+                // Through ProcessRunner like every other helper tool: `zip -q` is
+                // quiet on success but still writes to stderr on a permission or
+                // disk-full error, and the previous inline Process left both
+                // streams inherited and had no wall-clock bound at all.
+                try await ProcessRunner.runChecked(
+                    "/usr/bin/zip",
+                    ["-qr", output.lastPathComponent] + urls.map { $0.lastPathComponent },
+                    currentDirectory: parent,
+                    timeout: 600
+                )
                 await MainActor.run { progress.completedUnitCount = 1 }
             },
             completion: { refresh() }
@@ -661,7 +677,7 @@ enum FileContextMenu {
         Task { @MainActor in
             var firstError: String?
             var failed = 0
-            for url in urls where !url.isRemoteSFTP {
+            for url in urls where !url.isRemote {
                 do {
                     _ = try await make(url)
                 } catch {
@@ -686,7 +702,7 @@ enum FileContextMenu {
     /// the selection are ignored. Remote URLs are also skipped — see FileOps.
     @MainActor
     static func calculateSize(for urls: [URL], in tab: TabState) {
-        for url in urls where !url.isRemoteSFTP {
+        for url in urls where !url.isRemote {
             let isDir = tab.nodesByID[url]?.isDirectory ?? false
             guard isDir else { continue }
             Task { @MainActor in
@@ -718,12 +734,21 @@ enum FileContextMenu {
         picker.show(relativeTo: anchor, of: contentView, preferredEdge: .minY)
     }
 
+    /// True when "Open in Terminal" can do something meaningful for `url`: a local
+    /// directory, or an SFTP location we can `ssh` into. WebDAV and FTP expose no
+    /// shell, so callers hide the item instead of showing one that only beeps.
+    static func canOpenTerminal(at url: URL) -> Bool {
+        !url.isRemote || url.isRemoteSFTP
+    }
+
     /// Open Terminal.app at the given URL. Local URLs use NSWorkspace; remote URLs
     /// (sftp://) launch `ssh -t user@host` via WindowState.openSSHTerminal so the
     /// user lands in the right remote directory.
     static func openTerminal(at url: URL) {
         if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
             WindowState.openSSHTerminal(endpoint: endpoint, path: url.sftpPath)
+        } else if url.isRemote {
+            NSSound.beep()
         } else {
             let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
             NSWorkspace.shared.open([url], withApplicationAt: terminalURL, configuration: .init()) { _, _ in }

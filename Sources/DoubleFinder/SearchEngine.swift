@@ -13,7 +13,7 @@ final class SearchEngine {
     private var workQueue: OperationQueue?
 
     func stream(for text: String, scopes: [Any], kind: SearchKind = .byName) -> AsyncStream<[URL]> {
-        if scopes.contains(where: { ($0 as? URL)?.isRemoteSFTP == true }) {
+        if scopes.contains(where: { ($0 as? URL)?.isRemote == true }) {
             return AsyncStream { continuation in continuation.finish() }
         }
         cancel()

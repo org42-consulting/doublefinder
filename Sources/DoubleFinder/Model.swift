@@ -676,10 +676,17 @@ final class TabState: ObservableObject, Identifiable {
     /// passes false for non-active tabs so they stay idle until activated.
     convenience init(from persisted: StatePersistence.Snapshot.Pane.Tab,
                      refreshImmediately: Bool = true) {
-        // Remote URLs are stored as absolute strings (sftp://...); local tabs as plain paths.
-        if let full = URL(string: persisted.path), full.isRemoteSFTP {
+        // Remote URLs are stored as absolute strings (sftp://…, webdav://…, ftp://…);
+        // local tabs as plain paths. Restricting this to `isRemoteSFTP` meant a
+        // WebDAV or FTP tab was written out as a bare path and came back as a
+        // *local* URL pointing at a directory that doesn't exist.
+        if let full = URL(string: persisted.path), full.isRemote {
             self.init(url: full, refreshImmediately: refreshImmediately)
-            self.connectionState = .remoteDisconnected(reason: "Reconnect to restore this session.")
+            // Only SFTP holds a session that needs re-establishing; WebDAV and FTP
+            // authenticate per request, so they restore straight into a live tab.
+            if full.isRemoteSFTP {
+                self.connectionState = .remoteDisconnected(reason: "Reconnect to restore this session.")
+            }
         } else {
             let local = URL(fileURLWithPath: persisted.path)
             let fallback = FileManager.default.fileExists(atPath: local.path)
@@ -698,7 +705,7 @@ final class TabState: ObservableObject, Identifiable {
     func snapshot() -> StatePersistence.Snapshot.Pane.Tab {
         // Remote tabs: store the full URL string so it survives round-trips through persistence.
         // Local tabs: store the path (existing format, backwards-compatible).
-        let stored = url.isRemoteSFTP ? url.absoluteString : url.path
+        let stored = url.isRemote ? url.absoluteString : url.path
         return .init(
             path: stored,
             viewMode: viewMode.rawValue,
@@ -711,7 +718,10 @@ final class TabState: ObservableObject, Identifiable {
     }
 
     private func restartWatching() {
-        guard !url.isRemoteSFTP else {
+        // FSEvents is a local-filesystem API. Handing it a remote URL makes it
+        // watch that URL's `path` component as though it were a local path — so
+        // a WebDAV tab at `webdav://host/docs` was watching `/docs`.
+        guard !url.isRemote else {
             watcher.stop()
             return
         }
@@ -830,7 +840,11 @@ final class TabState: ObservableObject, Identifiable {
     /// passes from three to two on big directories.
     private func loadDecorations(for target: URL, includeGit: Bool, includeTags: Bool) async {
         guard includeGit || includeTags else { return }
-        guard !target.isRemoteSFTP else { return }
+        // `git` and xattr tags are local-only. Gating this on `isRemoteSFTP` let
+        // WebDAV / FTP listings through, which then ran `git status` in a
+        // nonexistent working directory and a `getxattr` per row against the
+        // URL's path interpreted as a local path.
+        guard !target.isRemote else { return }
         let urls = nodes.map(\.url)
         guard !urls.isEmpty else { return }
 
@@ -901,22 +915,18 @@ final class TabState: ObservableObject, Identifiable {
         }.value
     }
 
+    /// Delegates to `FileOps.transport(for:)` — one dispatch point for the whole
+    /// app. This used to be a second, independent copy of the scheme switch, and
+    /// the two drifted: this one knew all four schemes while `FileOps`' knew only
+    /// SFTP, so browsing a WebDAV tab worked but every file operation on it fell
+    /// through to the local transport.
     var transport: any FileTransport {
-        if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
-            return SFTPFileTransport(endpoint: endpoint)
-        }
-        if url.isRemoteWebDAV, let endpoint = url.remoteEndpoint {
-            return WebDAVFileTransport(endpoint: endpoint)
-        }
-        if (url.scheme == "ftp" || url.scheme == "ftps"), let endpoint = url.remoteEndpoint {
-            return FTPFileTransport(endpoint: endpoint)
-        }
-        return LocalFileTransport()
+        FileOps.transport(for: url)
     }
 
     var displayTitle: String {
-        if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
-            let basename = (url.sftpPath as NSString).lastPathComponent
+        if url.isRemote, let endpoint = url.remoteEndpoint {
+            let basename = (url.remotePath as NSString).lastPathComponent
             let leaf = basename.isEmpty ? "/" : basename
             return "\(endpoint.host): \(leaf)"
         }
@@ -1145,7 +1155,7 @@ final class TabState: ObservableObject, Identifiable {
                 }
                 pendingSelectionURL = nil
             }
-            if !target.isRemoteSFTP {
+            if !target.isRemote {
                 await loadDecorations(for: target, includeGit: true, includeTags: true)
             }
         } catch {
@@ -1649,7 +1659,7 @@ final class WindowState: ObservableObject {
         observe(.searchContentRequested) { [weak self] _ in
             guard let self else { return }
             let tab = self.focusedPane.activeTab
-            guard !tab.url.isRemoteSFTP else { NSSound.beep(); return }
+            guard !tab.url.isRemote else { NSSound.beep(); return }
             self.contentSearchPrompt = ContentSearchPrompt(directory: tab.url) { [weak tab] hit in
                 guard let tab else { return }
                 let parent = hit.deletingLastPathComponent()
@@ -1698,6 +1708,10 @@ final class WindowState: ObservableObject {
             let url = self.focusedPane.activeTab.url
             if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
                 WindowState.openSSHTerminal(endpoint: endpoint, path: url.sftpPath)
+            } else if url.isRemote {
+                // WebDAV / FTP expose no shell to drop into, and handing the
+                // remote URL to Terminal.app would just fail obscurely.
+                NSSound.beep()
             } else {
                 let terminalURL = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
                 let config = NSWorkspace.OpenConfiguration()
@@ -1709,7 +1723,7 @@ final class WindowState: ObservableObject {
         observe(.openEditorRequested) { [weak self] _ in
             guard let self else { return }
             let tab = self.focusedPane.activeTab
-            guard !tab.url.isRemoteSFTP else { NSSound.beep(); return }
+            guard !tab.url.isRemote else { NSSound.beep(); return }
             let urls: [URL]
             if tab.selection.isEmpty {
                 urls = [tab.url]
@@ -1730,7 +1744,11 @@ final class WindowState: ObservableObject {
         observe(.selectAllRequested) { [weak self] _ in
             guard let self else { return }
             let tab = self.focusedPane.activeTab
-            tab.selection = Set(tab.nodes.map(\.id))
+            // `visibleNodes`, not `nodes`: with a quick filter active, Select All
+            // must mean "everything I can see". Selecting filtered-out rows also
+            // made ⌘A inconsistent with Invert Selection, which has always
+            // operated over the visible listing.
+            tab.selection = Set(tab.visibleNodes.map(\.id))
         }
         observe(.duplicateSelectionRequested) { [weak self] _ in
             guard let self else { return }
@@ -1742,7 +1760,7 @@ final class WindowState: ObservableObject {
         observe(.revealInFinderRequested) { [weak self] _ in
             guard let self else { return }
             let tab = self.focusedPane.activeTab
-            if tab.url.isRemoteSFTP {
+            if tab.url.isRemote {
                 NSSound.beep()
                 return
             }
@@ -1889,7 +1907,7 @@ final class WindowState: ObservableObject {
         observe(.diskUsageRequested) { [weak self] _ in
             guard let self else { return }
             let url = self.focusedPane.activeTab.url
-            guard !url.isRemoteSFTP else { NSSound.beep(); return }
+            guard !url.isRemote else { NSSound.beep(); return }
             NotificationCenter.default.post(
                 name: .openDiskUsageWindow,
                 object: nil,
@@ -2230,8 +2248,9 @@ final class WindowState: ObservableObject {
         switch op {
         case .move(let items):
             for (src, destDir) in items.reversed() {
-                let moved = destDir.appendingPathComponent(src.lastPathComponent)
-                _ = try? await FileOps.move([moved], to: src.deletingLastPathComponent())
+                guard let moved = destDir.childURL(named: src.lastPathComponent),
+                      let originalParent = src.parentDirectory else { continue }
+                _ = try? await CopyMoveCoordinator.moveOne(moved, toDirectory: originalParent)
             }
         case .rename(let items):
             for (from, to) in items.reversed() {
@@ -2252,7 +2271,7 @@ final class WindowState: ObservableObject {
         switch op {
         case .move(let items):
             for (src, destDir) in items {
-                _ = try? await FileOps.move([src], to: destDir)
+                _ = try? await CopyMoveCoordinator.moveOne(src, toDirectory: destDir)
             }
         case .rename(let items):
             for (from, to) in items {
@@ -2268,20 +2287,27 @@ final class WindowState: ObservableObject {
     /// the tabs that are actually looking at them.
     private static func affectedDirectories(of op: UndoableOp) -> Set<URL> {
         var dirs: Set<URL> = []
+        // `parentDirectory` rather than `deletingLastPathComponent()` so remote
+        // URLs yield a well-formed parent instead of one with a stray trailing
+        // slash that would never match a tab's URL.
+        func insertParent(of url: URL) {
+            guard let parent = url.parentDirectory else { return }
+            dirs.insert(parent.standardizedFileURL)
+        }
         switch op {
         case .move(let items):
             for (source, destDir) in items {
-                dirs.insert(source.deletingLastPathComponent().standardizedFileURL)
+                insertParent(of: source)
                 dirs.insert(destDir.standardizedFileURL)
             }
         case .rename(let items):
             for (from, to) in items {
-                dirs.insert(from.deletingLastPathComponent().standardizedFileURL)
-                dirs.insert(to.deletingLastPathComponent().standardizedFileURL)
+                insertParent(of: from)
+                insertParent(of: to)
             }
         case .trash(let items):
             for (original, _) in items {
-                dirs.insert(original.deletingLastPathComponent().standardizedFileURL)
+                insertParent(of: original)
             }
         }
         return dirs
@@ -2295,8 +2321,11 @@ final class WindowState: ObservableObject {
     /// are left alone, and the survivors refresh concurrently.
     private func refreshTabs(affectedBy op: UndoableOp) async {
         let dirs = Self.affectedDirectories(of: op)
+        // No `isFileURL` filter: remote tabs are just as stale after an undo, and
+        // excluding them meant a ⌘Z on a WebDAV / SFTP tab left the listing showing
+        // the pre-undo state until the next manual refresh.
         let tabs = (left.tabs + right.tabs).filter { tab in
-            tab.url.isFileURL && dirs.contains(tab.url.standardizedFileURL)
+            dirs.contains(tab.url.standardizedFileURL)
         }
         guard !tabs.isEmpty else { return }
         await withTaskGroup(of: Void.self) { group in

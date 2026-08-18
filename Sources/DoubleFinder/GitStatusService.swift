@@ -12,7 +12,7 @@ actor GitStatusService {
     /// Returns `[absolute child URL : state]` for entries inside `directory`,
     /// aggregating descendant changes onto the directory entries themselves.
     func statuses(in directory: URL) async -> [URL: GitFileState] {
-        guard !directory.isRemoteSFTP else { return [:] }
+        guard !directory.isRemote else { return [:] }
         let repoMap = await repoStatuses(for: directory)
         guard !repoMap.isEmpty else { return [:] }
         let stdDir = directory.standardizedFileURL.path
@@ -39,7 +39,7 @@ actor GitStatusService {
     /// the current branch, and the most recent commit that touched the path.
     /// Returns nil when the URL is remote or not inside a git repo.
     func detail(for url: URL) async -> GitInspectorDetail? {
-        guard !url.isRemoteSFTP, let repoRoot = findRepoRoot(url) else { return nil }
+        guard !url.isRemote, let repoRoot = findRepoRoot(url) else { return nil }
         let branch = runGit(arguments: ["rev-parse", "--abbrev-ref", "HEAD"], cwd: repoRoot)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let logRaw = runGit(
@@ -76,6 +76,7 @@ actor GitStatusService {
     }
 
     func invalidate(forDirectory directory: URL) async {
+        guard !directory.isRemote else { return }
         if let repo = findRepoRoot(directory) {
             let repoURL = repo.standardizedFileURL
             cache.removeValue(forKey: repoURL)

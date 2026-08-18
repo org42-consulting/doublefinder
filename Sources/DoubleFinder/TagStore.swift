@@ -41,7 +41,10 @@ enum TagStore {
     private static let attrName = "com.apple.metadata:_kMDItemUserTags"
 
     static func tags(for url: URL) -> [Tag] {
-        guard !url.isRemoteSFTP else { return [] }
+        // Any remote scheme, not just sftp: `getxattr` takes a path, so a
+        // `webdav://host/docs/a.txt` URL would have its `/docs/a.txt` component
+        // read off the local disk.
+        guard !url.isRemote else { return [] }
         let path = (url.path as NSString).fileSystemRepresentation
         let size = getxattr(path, attrName, nil, 0, 0, 0)
         guard size > 0 else { return [] }

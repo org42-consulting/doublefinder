@@ -424,7 +424,7 @@ private struct PaneFooter: View {
     private static let volumeAvailableTTL: TimeInterval = 30
 
     private func volumeAvailable(for url: URL) -> String {
-        if url.isRemoteSFTP { return "" }
+        if url.isRemote { return "" }
         let bytes = Self.cachedVolumeAvailable(for: url)
         if let bytes {
             return "\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) available"
@@ -875,15 +875,17 @@ struct PathBarView: View {
 
     private var crumbs: [(name: String, url: URL)] {
         var parts: [(String, URL)] = []
-        if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
-            // Build remote crumbs by walking the sftp path; root is labelled with the host.
+        if url.isRemote, let endpoint = url.remoteEndpoint {
+            // Build remote crumbs by walking the remote path; root is labelled with the host.
             var current = url
-            while let parent = current.sftpParent {
-                let name = (current.sftpPath as NSString).lastPathComponent
+            while let parent = current.remoteParent {
+                let name = (current.remotePath as NSString).lastPathComponent
                 parts.insert((name.isEmpty ? "/" : name, current), at: 0)
                 current = parent
             }
-            parts.insert((endpoint.host, URL.sftp(endpoint: endpoint, path: "/")), at: 0)
+            if let root = URL.remote(endpoint: endpoint, path: "/") {
+                parts.insert((endpoint.host, root), at: 0)
+            }
             return parts
         }
         var current = url.standardizedFileURL
@@ -965,9 +967,8 @@ struct PathBarView: View {
     }
 
     private func displayName(for url: URL) -> String {
-        if url.isRemoteSFTP, let endpoint = url.sftpEndpoint {
-            let leaf = url.sftpPath.isEmpty ? "/" : url.sftpPath
-            return "\(endpoint.host): \(leaf)"
+        if url.isRemote, let endpoint = url.remoteEndpoint {
+            return "\(endpoint.host): \(url.remotePath)"
         }
         return (url.path as NSString).abbreviatingWithTildeInPath
     }
@@ -1001,7 +1002,7 @@ struct PathBarView: View {
 
     private func updateSuggestions() {
         // Remote URLs don't have local suggestions; suppress the popover.
-        if draft.hasPrefix("sftp://") {
+        if let typed = URL(string: draft), typed.isRemote {
             suggestions = []
             suggestionsShown = false
             return
@@ -1078,7 +1079,7 @@ struct PathBarView: View {
     }
 
     private func startEditing() {
-        if url.isRemoteSFTP {
+        if url.isRemote {
             draft = url.absoluteString
         } else {
             draft = (url.path as NSString).abbreviatingWithTildeInPath
@@ -1093,10 +1094,14 @@ struct PathBarView: View {
 
     private func commit() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Remote URL: trust the user and let the tab handle connection/refresh failures.
-        if let sftpURL = URL(string: trimmed), sftpURL.isRemoteSFTP {
+        // Remote URL: trust the user and let the tab handle connection/refresh
+        // failures. Every scheme the Connect sheet offers is accepted here —
+        // gating on `isRemoteSFTP` meant a typed `webdav://` or `ftp://` URL fell
+        // through to the local-path branch and just beeped, despite the path bar
+        // being documented as accepting them.
+        if let remoteURL = URL(string: trimmed), remoteURL.isRemote {
             editing = false
-            onNavigate(sftpURL)
+            onNavigate(remoteURL)
             return
         }
         let expanded = (trimmed as NSString).expandingTildeInPath

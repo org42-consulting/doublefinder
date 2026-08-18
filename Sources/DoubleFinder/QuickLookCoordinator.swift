@@ -30,7 +30,7 @@ final class QuickLookCoordinator: NSObject {
         var resolved: [URL] = []
         var resolvedStart: URL? = nil
         for u in urls {
-            if u.isRemoteSFTP, let local = await materialiseRemote(u) {
+            if u.isRemote, let local = await materialiseRemote(u) {
                 resolved.append(local)
                 if u == url { resolvedStart = local }
             } else {
@@ -41,16 +41,26 @@ final class QuickLookCoordinator: NSObject {
         show(resolved, startAt: resolvedStart)
     }
 
+    /// Download a remote file into a per-endpoint cache so Quick Look has a real
+    /// local file to preview. Works for every remote transport — previewing a
+    /// WebDAV or FTP file used to hand `QLPreviewPanel` the remote URL directly,
+    /// which rendered an empty panel.
     @MainActor
     private func materialiseRemote(_ url: URL) async -> URL? {
-        guard let endpoint = url.sftpEndpoint else { return url }
+        guard let endpoint = url.remoteEndpoint else { return url }
 
         let cacheRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("DoubleFinder/sftp")
+            .appendingPathComponent("DoubleFinder/remote")
+            .appendingPathComponent(endpoint.scheme)
             .appendingPathComponent(endpoint.canonicalAccount.replacingOccurrences(of: "/", with: "_"))
         try? FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
 
-        let local = cacheRoot.appendingPathComponent(url.sftpPath.trimmingCharacters(in: .init(charactersIn: "/")))
+        let relative = url.remotePath.trimmingCharacters(in: .init(charactersIn: "/"))
+        let local = cacheRoot.appendingPathComponent(relative)
+        // A remote path containing ".." would otherwise escape the cache root.
+        let rootStd = cacheRoot.standardized.path
+        let localStd = local.standardized.path
+        guard localStd == rootStd || localStd.hasPrefix(rootStd + "/") else { return nil }
         try? FileManager.default.createDirectory(at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
 
         if FileManager.default.fileExists(atPath: local.path),
@@ -59,7 +69,7 @@ final class QuickLookCoordinator: NSObject {
             return local
         }
 
-        let transport = SFTPFileTransport(endpoint: endpoint)
+        let transport = FileOps.transport(for: url)
         let progress = Progress(totalUnitCount: -1)
         do {
             try await transport.download(url, to: local, progress: progress)

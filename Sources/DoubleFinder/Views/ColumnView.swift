@@ -313,7 +313,7 @@ struct ColumnView: NSViewRepresentable {
                 FileContextMenu.populate(
                     menu, urls: urls, directory: parent, tab: tab, state: state,
                     onQuickLook: { urls in
-                        if urls.contains(where: \.isRemoteSFTP) {
+                        if urls.contains(where: \.isRemote) {
                             Task { @MainActor in await QuickLookCoordinator.shared.showAsync(urls, startAt: urls.first) }
                         } else {
                             QuickLookCoordinator.shared.show(urls, startAt: urls.first)

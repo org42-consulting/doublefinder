@@ -205,7 +205,7 @@ private struct DiffRowView: View {
 /// switch to the diff view for a left/right selection pair.
 @MainActor
 func isTextFile(_ url: URL) -> Bool {
-    if url.isRemoteSFTP { return false }
+    if url.isRemote { return false }
     guard let typeID = (try? url.resourceValues(forKeys: [.typeIdentifierKey]))?.typeIdentifier,
           let type = UTType(typeID) else { return false }
     return type.conforms(to: .text)

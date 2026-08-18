@@ -21,6 +21,27 @@ struct RemoteEndpoint: Codable, Hashable, Sendable {
         self.scheme = scheme
     }
 
+    /// Every remote scheme DoubleFinder speaks, with the port it defaults to.
+    /// Single source of truth for the Connect sheet's picker, the bookmark
+    /// editor, and URL round-tripping — those each used to carry their own copy
+    /// of this table.
+    static let supportedSchemes: [(scheme: String, label: String, defaultPort: Int)] = [
+        ("sftp",    "SFTP",            22),
+        ("webdav",  "WebDAV (http)",   80),
+        ("webdavs", "WebDAV (https)", 443),
+        ("ftp",     "FTP",             21),
+        ("ftps",    "FTPS",           990),
+    ]
+
+    static func defaultPort(for scheme: String) -> Int {
+        supportedSchemes.first { $0.scheme == scheme }?.defaultPort ?? 22
+    }
+
+    static func isSupportedScheme(_ scheme: String?) -> Bool {
+        guard let scheme else { return false }
+        return supportedSchemes.contains { $0.scheme == scheme }
+    }
+
     // MARK: - Input validation
 
     /// Reject hosts that start with `-` (OpenSSH option injection like `-oProxyCommand=`),
@@ -70,21 +91,26 @@ extension URL {
     var isRemoteWebDAV: Bool { scheme == "webdav" || scheme == "webdavs" }
 
     /// True for any remote scheme DoubleFinder supports.
-    var isRemote: Bool { isRemoteSFTP || isRemoteWebDAV || scheme == "ftp" || scheme == "ftps" }
+    ///
+    /// Prefer this over `isRemoteSFTP` for anything that asks "is this URL on
+    /// another machine" — local-filesystem services (FSEvents, `git`, xattr
+    /// tags, QuickLook thumbnails, Spotlight) must not be handed a remote URL,
+    /// because they would silently operate on its `path` component as if it
+    /// were a local path. Reserve `isRemoteSFTP` for genuinely SFTP-specific
+    /// mechanisms: the `sftp(1)` session, `ssh -t`, Edit Locally.
+    var isRemote: Bool { RemoteEndpoint.isSupportedScheme(scheme) }
 
     /// Returns the endpoint encoded in this URL for any supported remote
     /// scheme, or nil for local file URLs.
     var remoteEndpoint: RemoteEndpoint? {
-        guard let s = scheme, let host, let user else { return nil }
+        guard let s = scheme, RemoteEndpoint.isSupportedScheme(s), let host, let user else { return nil }
         guard RemoteEndpoint.isValidHost(host), RemoteEndpoint.isValidUser(user) else { return nil }
-        switch s {
-        case "sftp": return RemoteEndpoint(host: host, user: user, port: port ?? 22, scheme: s)
-        case "webdav": return RemoteEndpoint(host: host, user: user, port: port ?? 80, scheme: s)
-        case "webdavs": return RemoteEndpoint(host: host, user: user, port: port ?? 443, scheme: s)
-        case "ftp": return RemoteEndpoint(host: host, user: user, port: port ?? 21, scheme: s)
-        case "ftps": return RemoteEndpoint(host: host, user: user, port: port ?? 990, scheme: s)
-        default: return nil
-        }
+        return RemoteEndpoint(
+            host: host,
+            user: user,
+            port: port ?? RemoteEndpoint.defaultPort(for: s),
+            scheme: s
+        )
     }
 
     /// Returns the endpoint encoded in this URL, or nil if not an sftp:// URL.
@@ -95,46 +121,87 @@ extension URL {
         return RemoteEndpoint(host: host, user: user, port: port ?? 22)
     }
 
-    /// Path component on the remote side. Always absolute (starts with "/").
-    /// Empty string is returned as "/".
-    var sftpPath: String {
-        guard scheme == "sftp" else { return path }
+    /// Path on the server for any remote scheme. Always absolute (starts with
+    /// "/"); an empty path is reported as "/". Falls back to `path` for local
+    /// URLs so callers can use it unconditionally.
+    var remotePath: String {
         let p = path
         return p.isEmpty ? "/" : p
     }
 
-    /// Construct an sftp:// URL from an endpoint and an absolute remote path.
-    static func sftp(endpoint: RemoteEndpoint, path: String) -> URL {
+    /// Path component on the remote side. Always absolute (starts with "/").
+    /// Empty string is returned as "/".
+    var sftpPath: String { remotePath }
+
+    /// Construct a remote URL from an endpoint and an absolute path on the
+    /// server. The port is omitted when it matches the scheme's default so the
+    /// URL round-trips back to the same endpoint.
+    static func remote(endpoint: RemoteEndpoint, path: String) -> URL? {
         var comps = URLComponents()
-        comps.scheme = "sftp"
+        comps.scheme = endpoint.scheme
         comps.user = endpoint.user
         comps.host = endpoint.host
-        if endpoint.port != 22 {
+        if endpoint.port != RemoteEndpoint.defaultPort(for: endpoint.scheme) {
             comps.port = endpoint.port
         }
         // URLComponents percent-encodes the path correctly when set as `path`.
         comps.path = path.hasPrefix("/") ? path : "/" + path
-        return comps.url!
+        return comps.url
     }
 
-    /// Returns a new URL with the same endpoint but a different path.
-    func sftpAppending(path component: String) -> URL? {
-        guard let endpoint = sftpEndpoint else { return nil }
-        var newPath = sftpPath
+    /// Construct an sftp:// URL from an endpoint and an absolute remote path.
+    static func sftp(endpoint: RemoteEndpoint, path: String) -> URL {
+        var sftpEndpoint = endpoint
+        sftpEndpoint.scheme = "sftp"
+        // Force-unwrap is safe here: callers hold an endpoint parsed from a URL
+        // (host/user already validated), and `remote` only fails to build a URL
+        // when those are malformed.
+        return remote(endpoint: sftpEndpoint, path: path)!
+    }
+
+    /// Returns a new URL with the same remote endpoint but `component` appended
+    /// to the path. Nil for local URLs.
+    func remoteAppending(path component: String) -> URL? {
+        guard let endpoint = remoteEndpoint else { return nil }
+        var newPath = remotePath
         if !newPath.hasSuffix("/") { newPath += "/" }
         newPath += component
-        return .sftp(endpoint: endpoint, path: newPath)
+        return .remote(endpoint: endpoint, path: newPath)
     }
 
-    /// Parent directory of an sftp:// URL. Returns nil at the root.
-    var sftpParent: URL? {
-        guard let endpoint = sftpEndpoint else { return nil }
-        let p = sftpPath
+    /// Parent directory of a remote URL. Returns nil at the root or for local URLs.
+    var remoteParent: URL? {
+        guard let endpoint = remoteEndpoint else { return nil }
+        let p = remotePath
         if p == "/" || p.isEmpty { return nil }
         var parts = p.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
         guard !parts.isEmpty else { return nil }
         parts.removeLast()
         let parent = parts.isEmpty ? "/" : "/" + parts.joined(separator: "/")
-        return .sftp(endpoint: endpoint, path: parent)
+        return .remote(endpoint: endpoint, path: parent)
+    }
+
+    /// Returns a new URL with the same endpoint but a different path.
+    func sftpAppending(path component: String) -> URL? { remoteAppending(path: component) }
+
+    /// Parent directory of an sftp:// URL. Returns nil at the root.
+    var sftpParent: URL? { remoteParent }
+
+    // MARK: - Scheme-agnostic path arithmetic
+    //
+    // Local and remote URLs need the same two operations everywhere in
+    // `FileOps` / `CopyMoveCoordinator` / undo, but `appendingPathComponent`
+    // and `deletingLastPathComponent` produce trailing-slash artefacts on
+    // non-file URLs. These two route each kind to the right implementation so
+    // call sites don't have to branch.
+
+    /// Enclosing directory, for local *and* remote URLs. Nil at a remote root.
+    var parentDirectory: URL? {
+        isRemote ? remoteParent : deletingLastPathComponent()
+    }
+
+    /// Child URL named `name`, for local *and* remote URLs.
+    func childURL(named name: String) -> URL? {
+        isRemote ? remoteAppending(path: name) : appendingPathComponent(name)
     }
 }

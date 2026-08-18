@@ -553,13 +553,12 @@ extension HelpTopic {
         systemImage: "exclamationmark.triangle",
         sections: [
             HelpSection(body: "When Copy or Move would overwrite an existing file at the destination, DoubleFinder pauses and asks what to do."),
-            HelpSection(heading: "Per-batch prompt", body: "The conflict sheet covers the whole batch — it shows the conflicting file's name, source, and destination, plus the count of remaining conflicts."),
+            HelpSection(heading: "One prompt per batch", body: "The conflict sheet appears once for the whole operation, not once per file. It names the destination folder, lists every colliding file, and the choice you make applies to all of them — there's no per-file follow-up to click through."),
             HelpSection(heading: "Resolution options", bullets: [
-                "**Keep Both** — the new file is renamed with a numeric suffix (`name 2.txt`).",
+                "**Keep Both** — each colliding file is copied under a numbered name (`name copy.txt`, `name copy 2.txt`).",
                 "**Replace** — overwrites the destination.",
-                "**Skip** — leaves the destination untouched and continues with the next item.",
-                "**Apply to all** — toggle to run the same choice across every remaining conflict in this batch.",
-                "**Cancel** — aborts the entire operation.",
+                "**Skip** — leaves the colliding destinations untouched and transfers the rest of the batch.",
+                "**Cancel** — aborts the entire operation, including the files that wouldn't have collided.",
             ]),
             HelpSection(heading: "Behind the scenes", body: "`FileOps.conflicts(for:in:)` checks before the copy starts. `CopyMoveCoordinator` sets `WindowState.conflict` to a value with an `onResolve` callback; once the user picks an answer the operation is re-enqueued on `TransferQueue` with the chosen resolution."),
         ]
@@ -593,7 +592,7 @@ extension HelpTopic {
                 "**Pane → Pane** — drag from one pane's file area into the other.",
                 "**Onto a folder row** — drop directly into the folder (any view mode supports it).",
                 "**Onto a tab pill** — drops into that tab's current directory.",
-                "**Hold ⌘ to move**, plain drag is a copy (standard Finder convention).",
+                "**Drops always copy.** There is no modifier that turns a drop into a move — use **⌥⌘M** (Move to Other Pane) or **⌥⌘X** / **⌥⌘V** (Cut, then Paste) when you want the source gone.",
             ]),
             HelpSection(heading: "Drag preview", body: "List-view drags render as a stacked-icon preview with a blue **\"+N\"** count badge when more than one row is dragged, so you can see how many items are moving even after the source rows scroll off."),
             HelpSection(heading: "To other apps", body: "Drag items out of DoubleFinder into Finder, Mail attachments, Messages, Terminal, code editors — the dragged URLs use the standard `NSFilePromiseProvider` so any app that expects file drops works."),
@@ -613,7 +612,7 @@ extension HelpTopic {
                 "**Column view** also shows a *persistent* `QLPreviewView` in the rightmost column for the focused row.",
                 "**Gallery view** has Quick Look baked into the large preview area.",
             ]),
-            HelpSection(heading: "Remote files", body: "Quick Look for SFTP files downloads them to a temp cache on demand, then previews from the local copy. The first preview can be slow for large files; subsequent previews hit the cache."),
+            HelpSection(heading: "Remote files", body: "Quick Look on a remote file — SFTP, WebDAV, or FTP — downloads it to a per-server cache on demand, then previews the local copy. The first preview can be slow for large files; subsequent previews hit the cache (`~/Library/Caches/DoubleFinder/remote/<protocol>/<user@host>/…`, safe to delete)."),
         ]
     )
 
@@ -746,10 +745,20 @@ extension HelpTopic {
             ]),
             HelpSection(heading: "Working with remote tabs", bullets: [
                 "Every file operation routes through the right transport for the URL's scheme — no special-casing in your workflow.",
-                "**Copy / Move** handles every combination: local↔local, local↔remote, remote→remote (server-side rename when possible).",
-                "**Open in Terminal** on an SFTP tab launches `ssh -t user@host` with `cd` to the current remote path — see the **SSH** topic.",
+                "**Copy / Move / Rename / New Folder / New File / Duplicate / Delete** all work on every protocol.",
+                "**Copy / Move** handles every combination: local↔local, local↔remote, remote→remote (a same-server move is a server-side rename; anything else tunnels through a local temp file).",
+                "**Delete** on any remote tab is permanent — no protocol we speak has a Trash — so it always confirms first.",
+                "The **eject icon** in the sidebar disconnects an SFTP session and returns any tab on that endpoint to your configured starting directory. WebDAV and FTP authenticate per request rather than holding a session, so they have nothing to eject (and they restore straight into a live tab after a relaunch, instead of showing the reconnect placeholder).",
+            ]),
+            HelpSection(heading: "SFTP-only features", bullets: [
+                "**Open in Terminal** — launches `ssh -t user@host` with `cd` to the current remote path (see the **SSH** topic). WebDAV and FTP expose no shell, so the menu item is hidden on those tabs.",
                 "**Edit Locally** — see its own topic for the full workflow.",
-                "The **eject icon** in the sidebar disconnects an SFTP session and returns any tab on that endpoint to your configured starting directory. WebDAV and FTP don't have a persistent session, so no eject.",
+                "**Cancelling mid-transfer** — interrupting a running transfer means sending `^C` into the `sftp(1)` session. A WebDAV or FTP transfer already in flight runs to completion; the cancel takes effect at the next file in the batch.",
+            ]),
+            HelpSection(heading: "What no remote protocol supports", bullets: [
+                "**Spotlight search**, **git status badges**, **file tags**, **thumbnails / Gallery view**, and **live folder watching** are local-filesystem features. Remote tabs fall back to List view and refresh when you act on them.",
+                "**Calculate Size** on a remote folder — none of the protocols has a cheap recursive size.",
+                "**Make Alias** / **Make Symbolic Link**, **Compress**, **Share…**, **Disk Usage**, and **Search File Contents…** need real local files.",
             ]),
             HelpSection(heading: "Saved connections", body: "Bookmarked servers appear in the Servers section of the sidebar with a connection-state dot — green when connected, grey when not. **Manage Connections…** (⇧⌘K) opens a dedicated window, and right-clicking a sidebar entry has an **Edit…** shortcut that pre-selects the bookmark."),
             HelpSection(heading: "Editing a connection", bullets: [
@@ -762,6 +771,7 @@ extension HelpTopic {
             ]),
             HelpSection(heading: "Caveats by protocol", bullets: [
                 "**WebDAV** authenticates via Basic-Auth only — Digest and Bearer aren't yet supported.",
+                "**WebDAV** duplicates round-trip the bytes through your Mac rather than using the protocol's server-side `COPY` verb, so duplicating a large file on a WebDAV server costs a download plus an upload.",
                 "**FTP** listing parser assumes Unix-style `ls -la` output. Windows IIS servers in MS-DOS mode list mode aren't parsed correctly yet.",
                 "**FTPS** uses implicit TLS on port 990; explicit FTPS (AUTH TLS on port 21) isn't supported yet.",
             ]),
@@ -774,11 +784,11 @@ extension HelpTopic {
         title: "Edit Locally",
         systemImage: "square.and.pencil",
         sections: [
-            HelpSection(body: "Right-click a file in a remote tab and choose **Edit Locally** to open it in your default editor. DoubleFinder downloads, watches for saves, and re-uploads automatically."),
+            HelpSection(body: "Right-click a file in an **SFTP** tab and choose **Edit Locally** to open it in your default editor. DoubleFinder downloads, watches for saves, and re-uploads automatically. The item doesn't appear on WebDAV or FTP tabs — the watcher drives an SFTP session directly."),
             HelpSection(heading: "The workflow", bullets: [
                 "**Download** — the remote file is fetched into `~/Library/Caches/DoubleFinder/RemoteEdits/<endpoint>/<remote-path>`.",
                 "**Open** — the local copy launches with `NSWorkspace.open(_:)`, which routes through the user's default app for the file type.",
-                "**Watch** — DoubleFinder polls the local copy's `mtime` every 2 seconds.",
+                "**Watch** — DoubleFinder polls the local copy's `mtime` once a second.",
                 "**Upload** — every detected change re-uploads to the original remote path.",
                 "**Until quit** — the watcher runs until you quit DoubleFinder; reopening the file restarts it.",
             ]),
@@ -860,7 +870,7 @@ extension HelpTopic {
         sections: [
             HelpSection(body: "The Inspector can compute MD5 and SHA-256 hashes for the focused file on demand."),
             HelpSection(heading: "How it works", bullets: [
-                "Hashing is **streaming** — files are processed in 64 KB chunks via `CryptoKit.Insecure.MD5` and `CryptoKit.SHA256`.",
+                "Hashing is **streaming** — files are processed in 1 MB chunks via `CryptoKit.Insecure.MD5` and `CryptoKit.SHA256`, so a multi-gigabyte file never lands in memory.",
                 "**On-demand only** — the hash is computed when you click the button, never automatically.",
                 "**Background** — runs in a detached task, hops back to main when done.",
                 "**No caching** — selecting away and back recomputes the hash. (Future improvement.)",
@@ -919,7 +929,7 @@ extension HelpTopic {
             HelpSection(heading: "Applying tags", bullets: [
                 "**Right-click ▸ Tags ▸ Red / Orange / Yellow / Green / Blue / Purple / Grey** — adds the color tag.",
                 "**Right-click ▸ Tags ▸ Clear Tags** — strips every tag.",
-                "**Inspector** — click a chip to remove a tag; type into the field to add a new one (custom names, not just colors).",
+                "**Inspector ▸ Tags** — a row of colour dots for the selected file; click one to add that tag, click it again (it carries a checkmark while applied) to remove it. Same seven colours as the context menu; DoubleFinder doesn't offer custom tag *names* of its own, but it preserves any it finds on a file and Finder can still add them.",
             ]),
             HelpSection(heading: "Filtering by tag", bullets: [
                 "Click a color row in the Tags section of the sidebar to pivot to a Spotlight search across Home for files with that tag.",
@@ -1233,7 +1243,7 @@ extension HelpTopic {
             HelpSection(heading: "Workspaces", body: "`~/Library/Application Support/DoubleFinder/workspaces/<name>.json` — one file per named workspace."),
             HelpSection(heading: "Smart Folders", body: "`UserDefaults` key `df.smartFolders` — JSON-encoded array of saved searches."),
             HelpSection(heading: "Recent locations", body: "`UserDefaults` key `df.recentLocations` — 15 most-recent local URLs."),
-            HelpSection(heading: "Server bookmarks", body: "`~/Library/Application Support/DoubleFinder/servers.json` — host, user, port, identity file, display name. Passwords live in Keychain under the `com.org42.doublefinder.sftp` service identifier."),
+            HelpSection(heading: "Server bookmarks", body: "`~/Library/Application Support/DoubleFinder/servers.json` — host, user, port, identity file, display name, written owner-only (`0600`). Passwords live in Keychain under the `net.org42.DoubleFinder.SFTP` service identifier, keyed by `user@host` (or `user@host:port` on a non-standard port). That one service covers every protocol, not just SFTP."),
             HelpSection(heading: "Edit-locally cache", body: "`~/Library/Caches/DoubleFinder/RemoteEdits/<endpoint>/<path>` — local copies of files opened via Edit Locally. Safe to delete; rebuilt on next use."),
             HelpSection(heading: "Settings", body: "`UserDefaults` (`com.doublefinder.app`) — see the **Preferences** topic."),
         ]
@@ -1256,8 +1266,10 @@ extension HelpTopic {
                 "From a terminal, run `ssh -vvv user@host` to see exactly where it stalls. The same authentication flow is what DoubleFinder uses internally.",
                 "Stale host-key entries in `~/.ssh/known_hosts` after a server reinstall require manual cleanup — DoubleFinder shows a Host Key Mismatch sheet when this happens.",
             ]),
-            HelpSection(heading: "A remote tab shows the local home folder after restart", bullets: [
-                "This is the expected fallback when the saved endpoint can't be reconnected. Use the path bar to reconnect, or click the saved bookmark in the sidebar.",
+            HelpSection(heading: "A remote tab isn't where I left it after a restart", bullets: [
+                "**SFTP** tabs restore as a disconnected placeholder with a **Connect** button — deliberately, so relaunching doesn't fire an authentication prompt for every remote tab at once.",
+                "**WebDAV / FTP** tabs restore straight into a live listing, because those protocols authenticate per request and have no session to re-establish.",
+                "Landing on your *home folder* instead means the saved location couldn't be turned back into a URL at all. Use the path bar or the sidebar bookmark to get back, and check that **Restore windows and tabs on startup** is on.",
             ]),
             HelpSection(heading: "Git status badges look wrong", bullets: [
                 "DoubleFinder uses `git status --porcelain`. If the same command in a terminal disagrees, the cache may be stale — `cd` into the working tree and rerun.",

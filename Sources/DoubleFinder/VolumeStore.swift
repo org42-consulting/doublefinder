@@ -140,19 +140,16 @@ final class VolumeStore: ObservableObject {
     }
 
     /// Maps mount points to their backing image files via `hdiutil info`.
+    ///
+    /// Runs through `ProcessRunner` for the shared drain-and-watchdog behaviour:
+    /// this fires on every mount / unmount / rename notification, and with many
+    /// images attached the `-plist` output is easily large enough to matter.
     nonisolated private static func scanBackingImages() -> [String: URL] {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-        proc.arguments = ["info", "-plist"]
-        let stdout = Pipe()
-        proc.standardOutput = stdout
-        proc.standardError = FileHandle.nullDevice
-        proc.standardInput = FileHandle.nullDevice
-        do { try proc.run() } catch { return [:] }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
-        guard proc.terminationStatus == 0,
-              let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
+        guard let result = try? ProcessRunner.run(
+            "/usr/bin/hdiutil", ["info", "-plist"],
+            timeout: 20
+        ), result.succeeded else { return [:] }
+        guard let plist = (try? PropertyListSerialization.propertyList(from: result.standardOutput, format: nil)) as? [String: Any],
               let images = plist["images"] as? [[String: Any]]
         else { return [:] }
         var map: [String: URL] = [:]

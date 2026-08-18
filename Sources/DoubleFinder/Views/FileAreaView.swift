@@ -82,7 +82,7 @@ struct FileAreaView: View {
         case .gallery:
             // Gallery needs local thumbnails, so remote tabs fall back to the
             // list renderer.
-            if tab.url.isRemoteSFTP {
+            if tab.url.isRemote {
                 listView(withCompareTinting: false)
             } else {
                 GalleryView(tab: tab, side: side)
@@ -136,7 +136,7 @@ struct FileAreaView: View {
 
     /// Quick Look `urls`, materialising remote files to a local cache first.
     private func quickLook(_ urls: [URL], startAt start: URL?) {
-        if urls.contains(where: \.isRemoteSFTP) {
+        if urls.contains(where: \.isRemote) {
             Task { @MainActor in await QuickLookCoordinator.shared.showAsync(urls, startAt: start) }
         } else {
             QuickLookCoordinator.shared.show(urls, startAt: start)

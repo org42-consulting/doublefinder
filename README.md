@@ -256,7 +256,9 @@ The script:
 5. Code-signs the bundle: with a `Developer ID Application` identity when one is in the keychain (or set `SIGN_IDENTITY`), otherwise ad-hoc.
 6. Bundles the `.app` with an `/Applications` symlink and writes `build/DoubleFinder-$VERSION.dmg` via `hdiutil create -format UDZO`, then signs, notarizes, and staples the DMG when `NOTARY_PROFILE` (a `notarytool` keychain profile) is set.
 
-You can override `VERSION` and `BUILD_NUMBER` via env vars:
+`VERSION` defaults to the current release and becomes `CFBundleShortVersionString` — the version users see. `BUILD_NUMBER` becomes `CFBundleVersion`, which is what macOS actually compares to decide which of two copies of the app is newer, so it has to increase with every build of a given version. It defaults to the repository's commit count (`git rev-list --count HEAD`): monotonic as history grows, and the same for anyone who builds a given tag, so building from source yields the same build number as the published release. Building from a source tarball with no `.git` falls back to `1`; a shallow clone is rejected, because its commit count would be meaningless.
+
+Override either via env vars:
 
 ```bash
 VERSION=1.8 BUILD_NUMBER=42 ./scripts/package.sh

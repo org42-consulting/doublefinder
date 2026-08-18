@@ -7,7 +7,25 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="DoubleFinder"
 BUNDLE_ID="com.doublefinder.app"
 VERSION="${VERSION:-1.8}"
-BUILD_NUMBER="${BUILD_NUMBER:-1}"
+# CFBundleVersion — not CFBundleShortVersionString — is what macOS compares to
+# decide which of two copies of the app is newer, and it has to increase
+# monotonically for a given short version. Defaulting it to a constant meant every
+# release shipped the same build number, so LaunchServices could prefer an older
+# copy and any future updater would see no upgrade at all.
+#
+# The commit count is monotonic as history grows, and identical for everyone who
+# builds a given tag — so a user following the build-from-source instructions gets
+# the same build number as the published release. A timestamp would break that.
+if [ -z "${BUILD_NUMBER:-}" ]; then
+    git_shallow="$(git -C "$ROOT" rev-parse --is-shallow-repository 2>/dev/null || echo unknown)"
+    if [ "$git_shallow" = "true" ]; then
+        echo "✗ Shallow clone — the commit count is not a usable build number." >&2
+        echo "  Run 'git fetch --unshallow', or pass BUILD_NUMBER explicitly." >&2
+        exit 1
+    fi
+    # No .git at all (building from a source tarball) falls back to 1.
+    BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
+fi
 MIN_OS="26.0"
 
 BUILD_DIR="$ROOT/build"

@@ -145,6 +145,7 @@ extension HelpTopic {
     static let all: [HelpTopic] = [
         .overview,
         .whatsNew,
+        .whatsNew17,
         .whatsNew16,
         .whatsNew15,
         .gettingStarted,
@@ -223,8 +224,32 @@ extension HelpTopic {
     /// prior versions keep a version-suffixed name and the outline star.
     static let whatsNew = HelpTopic(
         id: "whatsNew",
-        title: "What's new in 1.7",
+        title: "What's new in 1.8",
         systemImage: "star.fill",
+        sections: [
+            HelpSection(body: "Version 1.8 makes WebDAV and FTP tabs genuinely first-class. They have always been offered alongside SFTP, but in practice only browsing worked: a single mistaken check — asking \u{201C}is this SFTP?\u{201D} where the question was \u{201C}is this remote at all?\u{201D} — quietly sent everything else down the local-filesystem path. This release also removes the last C from the codebase."),
+            HelpSection(heading: "Every file operation works on WebDAV and FTP", body: "Rename, New Folder, New File, Duplicate, Delete, Copy / Move in every direction, and drag-and-drop now route through the transport matching the tab's protocol. Each of them previously fell through to the local file layer, which was handed a URL that isn't a local path — so the operation either errored or looked like it did nothing at all."),
+            HelpSection(heading: "Deleting on WebDAV or FTP asks first", body: "None of the remote protocols has a Trash, so a remote delete is permanent. Only SFTP was showing the confirmation; WebDAV and FTP deleted immediately, while the menu still read \u{201C}Move to Trash\u{201D}."),
+            HelpSection(heading: "Remote tabs restore properly", body: "WebDAV and FTP tabs were written into the window snapshot as bare paths rather than URLs, so a `webdav://host/docs` tab came back pointing at a nonexistent local `/docs`. They now restore straight into a live listing. SFTP still restores as a placeholder with a Connect button — that part is deliberate, and the **Remote** topic explains why."),
+            HelpSection(heading: "Smaller fixes", bullets: [
+                "**The path bar accepts every scheme it advertises.** Typed `webdav://` and `ftp://` URLs used to beep; only `sftp://` was recognised.",
+                "**Quick Look works on WebDAV and FTP files.** Space opened an empty panel instead of first downloading the file to a per-server cache.",
+                "**Undo works on remote tabs.** ⌘Z after a move touching a remote tab did nothing at all — the reverse move ran through the local file layer, failed, and had its error discarded. Undo also never refreshed remote listings, so even one that worked left a stale view on screen.",
+                "**No more phantom local paths.** A remote tab was aiming an FSEvents watcher, a `git status`, and a per-row file-tag lookup at its URL's path component as though it were a real local path.",
+                "**Mounting a disk image can't hang forever.** `hdiutil` was the last helper tool spawned without a watchdog; it and `zip` now share the bounded subprocess helper everything else uses.",
+                "**⌘A respects the quick filter.** With a filter active it was selecting rows you couldn't see, and disagreeing with Invert Selection, which has always worked over the visible listing.",
+                "**App icons stop resizing each other.** Icon lookups for `.app` bundles mutated a system-shared image in place, so a small list row could shrink an icon that a large icon-view cell was still drawing.",
+            ]),
+            HelpSection(heading: "One language, one target", body: "The `forkpty` C shim is gone. The pseudo-terminal that drives `sftp(1)` is now allocated with `posix_openpt` and the child launched with `posix_spawn`, entirely in Swift, so DoubleFinder is a single all-Swift SwiftPM target. Nothing changes in use — except that a missing or unusable `/usr/bin/sftp` now reports the real reason instead of surfacing as \u{201C}sftp exited with code 127\u{201D}."),
+            HelpSection(heading: "Documentation corrections", body: "Six behaviours described in this help or the README turned out never to have existed, or to have drifted from the code: the Keychain service name, the Edit Locally poll interval, the hash chunk size, an \u{201C}Apply to all\u{201D} button on the conflict sheet, ⌘-drag to move, and a free-text tag field in the Inspector. Each is corrected where it was written."),
+            HelpSection(tip: "Nothing in 1.8 moves a keyboard shortcut or changes a setting. Window snapshots from 1.7 restore unchanged, including SFTP tabs. A WebDAV or FTP tab saved by 1.7 will land on your home folder once — the old snapshot never recorded its protocol — and then persist correctly from then on."),
+        ]
+    )
+
+    static let whatsNew17 = HelpTopic(
+        id: "whatsNew17",
+        title: "What's new in 1.7",
+        systemImage: "star",
         sections: [
             HelpSection(body: "Version 1.7 is a reliability release. Several long-standing hangs turned out to share a single root cause, and fixing it also cleared out a class of silent failures around them."),
             HelpSection(heading: "Git status badges no longer vanish in large repositories", body: "DoubleFinder read `git status` output only after the process had exited. That deadlocks as soon as the output passes the 64 KB pipe buffer: git blocks trying to write, never exits, and the five-second watchdog kills it. In a repo with a few thousand untracked files that meant a five-second stall on **every** refresh, followed by no badges at all. Output is now drained while git runs — the same repo goes from a five-second timeout to 0.07 s with every badge intact."),

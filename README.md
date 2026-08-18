@@ -10,6 +10,24 @@ DoubleFinder gives you two independent file views side-by-side — each with its
 
 <img width="1347" height="931" alt="Image" src="https://github.com/user-attachments/assets/6d09f270-abb6-4c6e-84ae-3c4e3c5e349c" />
 
+## What's new in 1.8
+
+WebDAV and FTP have been listed as first-class remote tabs since they landed, but in practice only browsing ever worked. A single mistaken check — asking "is this SFTP?" where the question was "is this remote at all?" — quietly sent everything else down the local-filesystem path. This release makes those tabs genuinely first-class, and removes the last C from the codebase.
+
+- **Every file operation now works on WebDAV and FTP tabs.** Rename, New Folder, New File, Duplicate, Delete, Copy / Move in every direction, and drag-and-drop all route through the right transport. Each one previously fell through to the local file layer and was handed a URL that isn't a local path, so it either errored or looked like it did nothing.
+- **Deleting on a WebDAV or FTP tab warns you first.** No remote protocol here has a Trash, so the delete is permanent — but only SFTP was getting the confirmation. The other two deleted immediately, while the menu still read "Move to Trash".
+- **WebDAV and FTP tabs survive a restart.** They were saved as bare paths instead of URLs, so a `webdav://host/docs` tab came back as a nonexistent local `/docs`. They now restore straight into a live listing. SFTP still restores as a placeholder with a Connect button — deliberately, so relaunching doesn't fire an authentication prompt for every remote tab at once.
+- **Typing a `webdav://` or `ftp://` URL into the path bar works.** The path bar has advertised all five schemes from the start; only `sftp://` was actually accepted and the rest just beeped.
+- **Quick Look works on WebDAV and FTP files.** Space opened an empty panel; the file is now downloaded to a per-server cache first, as it always has been for SFTP.
+- **Undo works on remote tabs.** ⌘Z after moving a file to or from a remote tab did nothing whatsoever — the reverse move ran through the local file layer, failed, and had its error discarded. Undo also never refreshed remote listings, so even an undo that did work left a stale view on screen.
+- **No more phantom local paths.** A remote tab was aiming three local-only services at its URL's path component as though it were a real local path: an FSEvents watcher on `/docs`, a `git status` in a directory that doesn't exist, and one `getxattr` per row hunting for file tags. Wasted work at best, wrong answers at worst.
+- **Mounting a disk image can't hang forever.** `hdiutil` was the last helper tool spawned without a watchdog, so an image on a stalled network mount could block the attach indefinitely. It and `zip` now go through the same bounded subprocess helper as everything else.
+- **⌘A respects the quick filter.** With a filter active, Select All was selecting rows you couldn't see — and disagreeing with Invert Selection, which has always worked over the visible listing.
+- **App icons stop resizing each other.** Icon lookups for `.app` bundles mutated a system-shared image in place, so a 16-pt list row could shrink an icon that a 128-pt icon-view cell was still drawing.
+- **One language, one target.** The `forkpty` C shim is gone — the pseudo-terminal that drives `sftp(1)` is now allocated and spawned entirely in Swift. Nothing changes in use, except that a missing or unusable `/usr/bin/sftp` finally reports what went wrong instead of "sftp exited with code 127".
+
+Six documented behaviours that never existed or had drifted are also corrected: the Keychain service name, the Edit Locally poll interval, the hash chunk size, an "Apply to all" button on the conflict sheet, ⌘-drag to move, and a free-text tag field in the Inspector.
+
 ## What's new in 1.7
 
 A reliability release. Several long-standing hangs turned out to share one root cause, and fixing it also fixed a class of silent failures around them.
@@ -241,7 +259,7 @@ The script:
 You can override `VERSION` and `BUILD_NUMBER` via env vars:
 
 ```bash
-VERSION=1.7 BUILD_NUMBER=42 ./scripts/package.sh
+VERSION=1.8 BUILD_NUMBER=42 ./scripts/package.sh
 ```
 
 To install:
@@ -250,7 +268,7 @@ To install:
 mv build/DoubleFinder.app /Applications/
 ```
 
-Or share `build/DoubleFinder-1.7.dmg` — mounting it gives users the familiar drag-onto-Applications experience.
+Or share `build/DoubleFinder-1.8.dmg` — mounting it gives users the familiar drag-onto-Applications experience.
 
 #### Distributing to other Macs
 

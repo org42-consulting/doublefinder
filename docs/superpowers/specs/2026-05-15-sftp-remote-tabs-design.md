@@ -1,6 +1,6 @@
 # DoubleFinder — SSH/SFTP Remote Tab Support
 
-**Status:** Shipped. Design approved 2026-05-15; implemented and released. Kept as a historical design record — **the code is the source of truth now**, and it diverged from this document in places (`PtyChannel` is callback-driven rather than `async read()`; `FileTransport` grew `trash`; the Gallery→List swap lives in `FileAreaView`, not `PaneView`; the prompt classifier gained a generic keyboard-interactive case; the remote Inspector is thinner than described; WebDAV and FTP transports arrived later and aren't covered here at all).
+**Status:** Shipped. Design approved 2026-05-15; implemented and released. Kept as a historical design record — **the code is the source of truth now**, and it diverged from this document in places (`PtyChannel` is callback-driven rather than `async read()`; **it uses `posix_openpt` + `posix_spawn` rather than `forkpty`, so the `DoubleFinderC` target this document calls for no longer exists and the package is a single all-Swift target**; `FileTransport` grew `trash`; the Gallery→List swap lives in `FileAreaView`, not `PaneView`; the prompt classifier gained a generic keyboard-interactive case; the remote Inspector is thinner than described; WebDAV and FTP transports arrived later and aren't covered here at all).
 
 ## Summary
 

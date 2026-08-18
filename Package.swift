@@ -5,14 +5,8 @@ let package = Package(
     name: "DoubleFinder",
     platforms: [.macOS(.v26)],
     targets: [
-        .target(
-            name: "DoubleFinderC",
-            path: "Sources/DoubleFinderC",
-            publicHeadersPath: "include"
-        ),
         .executableTarget(
             name: "DoubleFinder",
-            dependencies: ["DoubleFinderC"],
             path: "Sources/DoubleFinder",
             resources: [
                 .copy("Resources/DoubleFinder.icns"),

@@ -427,10 +427,7 @@ Independent of Spotlight. `TabState.quickFilter` (`@Published`) is applied as a 
 
 ```
 .
-├── Package.swift                    # SwiftPM manifest: two targets
-├── Sources/DoubleFinderC/           # C shim: forkpty(3) in one translation unit,
-│   ├── include/df_pty.h             #   because Swift is not fork-safe between
-│   └── df_pty.c                     #   the fork and the exec
+├── Package.swift                    # SwiftPM manifest: one executable target
 ├── Sources/DoubleFinder/
 │   ├── DoubleFinderApp.swift        # @main entry, menu commands, FocusedValues
 │   ├── Model.swift                  # WindowState, PaneState, TabState, FSNode, UndoableOp
@@ -472,7 +469,7 @@ Independent of Spotlight. `TabState.quickFilter` (`@Published`) is applied as a 
 │   │   ├── SFTPSession.swift        # actor; command queue; auth state machine
 │   │   ├── SFTPParser.swift         # ls -l and transfer-progress parsing
 │   │   ├── SFTPPromptClassifier.swift
-│   │   ├── PtyChannel.swift         # Swift side of the pty bridge
+│   │   ├── PtyChannel.swift         # pty via posix_openpt + posix_spawn (no fork)
 │   │   ├── RemoteEndpoint.swift     # endpoint struct + URL extensions
 │   │   ├── RemoteServerStore.swift  # bookmarks (servers.json) + Keychain bridge
 │   │   ├── RemoteSessionManager.swift

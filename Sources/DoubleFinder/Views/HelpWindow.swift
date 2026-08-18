@@ -1288,14 +1288,14 @@ extension HelpTopic {
         title: "About DoubleFinder",
         systemImage: "info.bubble",
         sections: [
-            HelpSection(body: "DoubleFinder is a native macOS file manager written in SwiftUI and AppKit. Single SwiftPM executable, no third-party runtime dependencies."),
+            HelpSection(body: "DoubleFinder is a native macOS file manager written in SwiftUI and AppKit. A single SwiftPM executable target, entirely Swift, with no third-party runtime dependencies."),
             HelpSection(heading: "Tech stack", bullets: [
                 "**SwiftUI** for layout, sheets, and high-level views.",
                 "**AppKit** for `NSTableView`, `NSBrowser`, `QLPreviewView`, `NSSharingServicePicker`, and other places SwiftUI doesn't (yet) reach.",
                 "**`NSMetadataQuery`** for Spotlight-backed search.",
                 "**`FSEventStream`** via a thin wrapper for directory watching.",
                 "**`CryptoKit`** for streaming hashes.",
-                "**`/usr/bin/sftp`** as a subprocess for the SFTP transport, driven through a pseudo-terminal.",
+                "**`/usr/bin/sftp`** as a subprocess for the SFTP transport, driven through a pseudo-terminal so OpenSSH can prompt for passwords, key passphrases, and host-key confirmation exactly as it would in a shell. The pty is allocated with `posix_openpt` and the child launched with `posix_spawn` — no `fork`, and no C.",
                 "**`/usr/bin/curl`** for the FTP / FTPS transport.",
                 "**`/usr/bin/grep`** for content search.",
                 "**`/usr/bin/git`** for status decoration.",

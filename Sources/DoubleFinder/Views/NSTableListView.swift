@@ -262,11 +262,17 @@ struct NSTableListView: NSViewRepresentable {
         //      field editor to an *editable* text field, so we have to flip
         //      the flag before calling it (and rely on `controlTextDidEndEditing`
         //      to flip it back on commit).
+        //   3. Table rows are `rowItems` indices, not `visibleNodes` indices.
+        //      With Group By active `rowItems` interleaves section headers, so
+        //      the two diverge by the number of headers above the row — and a
+        //      `visibleNodes` index then lands on the wrong row, or on a header
+        //      whose cell isn't a `NameCell` at all, silently editing nothing.
+        //      `rowIndex(of:)` is the lookup that accounts for the offset.
         if let renameID = tab.renameRequest {
             let pendingTab = tab
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak coord] in
                 pendingTab.renameRequest = nil
-                guard let row = pendingTab.visibleNodes.firstIndex(where: { $0.id == renameID }) else { return }
+                guard let row = coord?.rowIndex(of: renameID) else { return }
                 table.scrollRowToVisible(row)
                 table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
                 table.layoutSubtreeIfNeeded()
@@ -399,9 +405,26 @@ struct NSTableListView: NSViewRepresentable {
         /// columns always fit the pane — `uniformColumnAutoresizingStyle`
         /// alone misbehaves when the initial frame is smaller than the column
         /// width sum.
+        ///
+        /// No-ops unless the content width actually changed since the last fit.
+        /// This is what makes the columns user-resizable at all: a fit
+        /// *renormalizes* every column to the available width, so one that runs
+        /// while the width is unchanged scales a dragged column's extra points
+        /// straight back out across all five columns. Three separate callers can
+        /// trigger that — `layout()`, `setFrameSize`, and the
+        /// `frameDidChangeNotification` observer — and two of them fire on
+        /// height-only changes, so simply selecting a file (which reveals the
+        /// info bar and shortens the file area) used to undo the drag you just
+        /// made. Gating here rather than in the callers covers all three paths.
+        private var lastFittedWidth: CGFloat = -1
+
         func fitColumnsToWidth(table: NSTableView, scroll: NSScrollView) {
             let visibleWidth = scroll.contentView.bounds.width
             guard visibleWidth > 0 else { return }
+            // Tolerance, not equality: SwiftUI hands down sub-pixel widths, and a
+            // fraction of a point is far below anything a re-fit could express.
+            guard abs(visibleWidth - lastFittedWidth) > 0.5 else { return }
+            lastFittedWidth = visibleWidth
 
             suppressSave = true
             defer { suppressSave = false }

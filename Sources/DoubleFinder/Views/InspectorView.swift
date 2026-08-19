@@ -110,6 +110,12 @@ private struct InspectorContent: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
+            // Multi-selection is tested before remote-ness on purpose: every row
+            // in the aggregate — count, mix, size, type buckets, common parent —
+            // comes from FSNode fields that a remote listing fills in just as a
+            // local one does, so one view serves both. Don't "fix" the ordering
+            // by routing remote selections to their own branch; that duplicates
+            // four rows that already work.
             if tab.selection.count > 1 {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {

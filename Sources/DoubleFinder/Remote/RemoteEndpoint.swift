@@ -204,4 +204,18 @@ extension URL {
     func childURL(named name: String) -> URL? {
         isRemote ? remoteAppending(path: name) : appendingPathComponent(name)
     }
+
+    /// Human-readable label for a location: remote URLs read `host: /path`,
+    /// local ones are tilde-abbreviated.
+    ///
+    /// One definition so the path bar's recents menu and the Inspector's
+    /// selection aggregate can't drift into formatting the same thing two ways.
+    /// Note this is *not* `TabState.displayTitle`, which deliberately shows only
+    /// the basename because it has a tab pill's width to work with.
+    var locationLabel: String {
+        if isRemote, let endpoint = remoteEndpoint {
+            return "\(endpoint.host): \(remotePath)"
+        }
+        return (path as NSString).abbreviatingWithTildeInPath
+    }
 }

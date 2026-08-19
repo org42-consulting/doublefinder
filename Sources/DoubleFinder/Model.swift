@@ -955,12 +955,18 @@ final class TabState: ObservableObject, Identifiable {
 
     /// Navigate to the parent directory, preserving the current folder name
     /// as a pending selection so the user lands oriented inside the parent.
-    /// No-op at the filesystem root. Pinned tabs spawn a sibling tab at the
+    /// No-op at a local or remote root. Pinned tabs spawn a sibling tab at the
     /// parent URL (per the existing pinned-tab navigation rules) and the
     /// pending selection is lost — acceptable since the original tab stays
     /// put on its anchor.
+    ///
+    /// Goes through `parentDirectory` rather than `deletingLastPathComponent()`:
+    /// on a remote URL the latter leaves a trailing slash, so ⌘↑ on an
+    /// `sftp://host/a/b` tab navigated to `sftp://host/a/` — a URL that never
+    /// matches the one the listing builds for that directory, so the pending
+    /// selection was lost and the tab's own identity comparisons drifted.
     func navigateUp() {
-        let parent = url.deletingLastPathComponent()
+        guard let parent = url.parentDirectory else { return }
         guard parent.path != url.path else { return }
         pendingSelectionURL = url
         navigate(to: parent)

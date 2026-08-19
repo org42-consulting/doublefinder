@@ -948,7 +948,7 @@ struct PathBarView: View {
                     Button {
                         onNavigate(recent)
                     } label: {
-                        Text(displayName(for: recent))
+                        Text(recent.locationLabel)
                     }
                 }
                 Divider()
@@ -964,13 +964,6 @@ struct PathBarView: View {
         .fixedSize()
         .help("Recent locations")
         .accessibilityLabel("Recent locations")
-    }
-
-    private func displayName(for url: URL) -> String {
-        if url.isRemote, let endpoint = url.remoteEndpoint {
-            return "\(endpoint.host): \(url.remotePath)"
-        }
-        return (url.path as NSString).abbreviatingWithTildeInPath
     }
 
     private var suggestionsList: some View {

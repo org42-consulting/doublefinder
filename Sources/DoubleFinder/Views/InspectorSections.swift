@@ -1210,7 +1210,9 @@ struct SelectionAggregate {
         var agg = SelectionAggregate()
         var parents: [URL] = []
         for n in nodes {
-            parents.append(n.url.deletingLastPathComponent())
+            // `parentDirectory`, not `deletingLastPathComponent()`: the latter
+            // leaves a trailing slash on a remote URL.
+            if let parent = n.url.parentDirectory { parents.append(parent) }
             if n.isDirectory {
                 agg.directoryCount += 1
                 agg.totalSize += n.calculatedSize ?? n.size ?? 0
@@ -1225,17 +1227,40 @@ struct SelectionAggregate {
         return agg
     }
 
+    /// Deepest directory every URL sits under, preserving the scheme it came
+    /// from. Rebuilding through `URL(fileURLWithPath:)` unconditionally — as
+    /// this used to — threw away a remote URL's scheme, user, and host, so a
+    /// remote multi-selection rendered a local-looking path, which
+    /// `abbreviatingWithTildeInPath` would then happily tilde-collapse if the
+    /// remote path happened to start with `/Users/<your name>`.
     private static func commonAncestor(_ urls: [URL]) -> URL? {
         guard let first = urls.first else { return nil }
-        var prefix = first.standardizedFileURL.pathComponents
-        for url in urls.dropFirst() {
-            let comps = url.standardizedFileURL.pathComponents
-            var i = 0
-            while i < prefix.count && i < comps.count && prefix[i] == comps[i] { i += 1 }
-            prefix = Array(prefix.prefix(i))
-            if prefix.isEmpty { return nil }
+        if first.isRemote {
+            // Full `==` rather than `sameConnection(as:)`: the scheme is part of
+            // the identity here, so webdav:// and webdavs:// on the same box are
+            // different locations. Endpoints parsed out of URLs never carry an
+            // identity file or display name, so nothing extraneous is compared.
+            guard let endpoint = first.remoteEndpoint,
+                  urls.allSatisfy({ $0.remoteEndpoint == endpoint })
+            else { return nil }   // spanning two servers — there is no common parent
+            return URL.remote(endpoint: endpoint, path: commonPathPrefix(urls.map(\.remotePath)))
         }
-        return URL(fileURLWithPath: "/" + prefix.dropFirst().joined(separator: "/"))
+        guard urls.allSatisfy(\.isFileURL) else { return nil }
+        return URL(fileURLWithPath: commonPathPrefix(urls.map { $0.standardizedFileURL.path }))
+    }
+
+    /// Longest common leading run of path segments, as an absolute path.
+    /// Returns "/" when the paths share nothing but the root.
+    private static func commonPathPrefix(_ paths: [String]) -> String {
+        guard var prefix = paths.first?.split(separator: "/").map(String.init) else { return "/" }
+        for path in paths.dropFirst() {
+            let comps = path.split(separator: "/").map(String.init)
+            var i = 0
+            while i < prefix.count, i < comps.count, prefix[i] == comps[i] { i += 1 }
+            prefix = Array(prefix.prefix(i))
+            if prefix.isEmpty { break }
+        }
+        return "/" + prefix.joined(separator: "/")
     }
 }
 
@@ -1252,7 +1277,7 @@ struct SelectionAggregateBody: View {
                 }
                 sectionRow("Size", ByteCountFormatter.string(fromByteCount: aggregate.totalSize, countStyle: .file))
                 if let p = aggregate.commonParent {
-                    sectionRow("Where", (p.path as NSString).abbreviatingWithTildeInPath)
+                    sectionRow("Where", p.locationLabel)
                 }
             }
             if !aggregate.buckets.isEmpty {

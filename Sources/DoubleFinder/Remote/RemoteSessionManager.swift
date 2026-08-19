@@ -15,11 +15,18 @@ final class RemoteSessionManager: ObservableObject {
     }
 
     /// Key is `RemoteEndpoint` minus identityFile / displayName.
+    ///
+    /// `scheme` is part of the key even though only SFTP creates sessions
+    /// today: without it, two endpoints that differ *only* by protocol collide,
+    /// so a second session-based protocol would silently hand out the wrong
+    /// session. Endpoints reaching here always carry an explicit scheme
+    /// (`URL.sftpEndpoint` defaults it to "sftp"), so this is stable.
     private struct Key: Hashable {
+        let scheme: String
         let host: String
         let user: String
         let port: Int
-        init(_ e: RemoteEndpoint) { host = e.host; user = e.user; port = e.port }
+        init(_ e: RemoteEndpoint) { scheme = e.scheme; host = e.host; user = e.user; port = e.port }
     }
 
     // willSet fires `objectWillChange` so SwiftUI views observing this manager (e.g. the

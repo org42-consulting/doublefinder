@@ -4,12 +4,19 @@ import QuickLookThumbnailing
 @MainActor
 final class ThumbnailService {
     static let shared = ThumbnailService()
-    private let cache = NSCache<NSURL, NSImage>()
-    /// In-flight QuickLook generations keyed by URL. Lookup semantics here mirror
-    /// `cached(_:)` / `thumbnail(for:size:scale:)`, which both key on URL only
-    /// (size is not part of the cache key). Two cells asking for the same URL
-    /// share a single QLThumbnailGenerator request instead of racing.
-    private var inFlight: [URL: Task<NSImage?, Never>] = [:]
+    private let cache = NSCache<NSString, NSImage>()
+    /// In-flight QuickLook generations, keyed exactly as the cache is. Two cells
+    /// asking for the same URL *at the same size* share one
+    /// QLThumbnailGenerator request instead of racing.
+    private var inFlight: [String: Task<NSImage?, Never>] = [:]
+
+    /// Cache key. Size is part of it because it has to be: keyed on URL alone,
+    /// whichever request arrived first won for every later one — so a 32×32
+    /// list-row thumbnail generated before Gallery asked for 800×800 was handed
+    /// straight back to Gallery and upscaled into a blurry mess.
+    private static func cacheKey(_ url: URL, size: CGSize) -> String {
+        "\(url.absoluteString)|\(Int(size.width))x\(Int(size.height))"
+    }
 
     init() {
         // Cost-based eviction. Gallery thumbnails at 800x800@2x are ~5 MB each
@@ -20,17 +27,19 @@ final class ThumbnailService {
         cache.totalCostLimit = 128 * 1024 * 1024
     }
 
-    func cached(_ url: URL) -> NSImage? {
-        cache.object(forKey: url as NSURL)
+    func cached(_ url: URL, size: CGSize) -> NSImage? {
+        cache.object(forKey: Self.cacheKey(url, size: size) as NSString)
     }
 
     func thumbnail(for url: URL, size: CGSize, scale: CGFloat = 2.0) async -> NSImage? {
         guard !url.isRemote else { return nil }
-        let key = url as NSURL
+        let keyString = Self.cacheKey(url, size: size)
+        let key = keyString as NSString
         if let img = cache.object(forKey: key) { return img }
 
-        // Coalesce concurrent requests for the same URL onto a single task.
-        if let existing = inFlight[url] {
+        // Coalesce concurrent requests for the same URL at the same size onto a
+        // single task.
+        if let existing = inFlight[keyString] {
             return await existing.value
         }
 
@@ -53,9 +62,9 @@ final class ThumbnailService {
                 return NSWorkspace.shared.icon(forFile: url.path)
             }
         }
-        inFlight[url] = task
+        inFlight[keyString] = task
         let result = await task.value
-        inFlight[url] = nil
+        inFlight[keyString] = nil
         return result
     }
 

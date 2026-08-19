@@ -111,18 +111,25 @@ struct WebDAVFileTransport: FileTransport {
     func download(_ remote: URL, to localTmp: URL, progress: Progress) async throws {
         guard let httpURL = httpURL(for: remote) else { throw FileTransportError.notSupported("Bad URL") }
         let req = request(httpURL, method: "GET")
-        let (tmp, response) = try await session.download(for: req)
+        // Driven the long way round, via `WebDAVDownloader` — see the note on
+        // that class for why the async `download(for:delegate:)` can't report
+        // progress. It also lands the bytes at `localTmp` itself.
+        let response = try await WebDAVDownloader(destination: localTmp, progress: progress).run(req)
         try validate(response, for: "GET")
-        try? FileManager.default.removeItem(at: localTmp)
-        try FileManager.default.moveItem(at: tmp, to: localTmp)
     }
 
     func upload(_ local: URL, to remote: URL, progress: Progress) async throws {
         guard let httpURL = httpURL(for: remote) else { throw FileTransportError.notSupported("Bad URL") }
-        var req = request(httpURL, method: "PUT")
-        let data = try Data(contentsOf: local)
-        req.httpBody = data
-        let (_, response) = try await session.data(for: req)
+        let req = request(httpURL, method: "PUT")
+        // `upload(for:fromFile:)` streams the body off disk. The previous
+        // version read the whole file with `Data(contentsOf:)` and assigned it
+        // to `httpBody`, so a PUT held the entire file in memory — uploading a
+        // few GB spiked RSS by exactly that much.
+        let (_, response) = try await session.upload(
+            for: req,
+            fromFile: local,
+            delegate: UploadProgressDelegate(progress: progress)
+        )
         try validate(response, for: "PUT")
     }
 
@@ -171,6 +178,130 @@ struct WebDAVFileTransport: FileTransport {
             ))
         }
         return out.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+}
+
+/// Forwards a PUT's byte counters onto a `Progress` so WebDAV uploads drive the
+/// transfer-queue ring the way SFTP's do (SFTP gets there by parsing
+/// `sftp(1)`'s "Transferred:" lines). Both remote transports previously took a
+/// `Progress` and ignored it, so the ring sat at zero for the whole transfer
+/// and then snapped to done.
+///
+/// Upload-only on purpose. `didSendBodyData` is a `URLSessionTaskDelegate`
+/// method and is delivered to a per-task delegate; the download equivalent is
+/// not — see `WebDAVDownloader`.
+///
+/// `@unchecked Sendable`: URLSession calls this on its own delegate queue, and
+/// `Progress`'s counters are safe to update off the main thread — the same
+/// assumption `SFTPParser.updateProgress` and the detached work in `FileOps`
+/// already make.
+private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let progress: Progress
+
+    init(progress: Progress) {
+        self.progress = progress
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didSendBodyData bytesSent: Int64,
+        totalBytesSent: Int64,
+        totalBytesExpectedToSend: Int64
+    ) {
+        // A body of unknown length reports `NSURLSessionTransferSizeUnknown`
+        // (-1); leave the Progress indeterminate rather than inventing a total
+        // it would then overshoot.
+        guard totalBytesExpectedToSend > 0 else { return }
+        progress.totalUnitCount = totalBytesExpectedToSend
+        progress.completedUnitCount = totalBytesSent
+    }
+}
+
+/// A GET driven through a session-scoped download delegate, so it can report
+/// byte-level progress and write straight to its destination.
+///
+/// This exists because the obvious approach doesn't work: passing a delegate to
+/// the async `URLSession.download(for:delegate:)` compiles and returns the file
+/// correctly, but delivers **zero** `didWriteData` callbacks — measured against
+/// a local server, 0 ticks that way versus 39 for the same 12 MB body here.
+/// Download progress only arrives when the delegate is the *session's*
+/// delegate, which means owning a session and bridging completion back to
+/// async/await by hand.
+private final class WebDAVDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let destination: URL
+    private let progress: Progress
+    private var continuation: CheckedContinuation<URLResponse, Error>?
+    private var moveError: Error?
+
+    init(destination: URL, progress: Progress) {
+        self.destination = destination
+        self.progress = progress
+        super.init()
+    }
+
+    func run(_ request: URLRequest) async throws -> URLResponse {
+        // The session retains its delegate and the delegate is retained by the
+        // caller for the duration of this call; `finishTasksAndInvalidate`
+        // breaks the cycle on the way out.
+        let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        return try await withCheckedThrowingContinuation { cont in
+            self.continuation = cont
+            session.downloadTask(with: request).resume()
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        guard totalBytesExpectedToWrite > 0 else { return }
+        progress.totalUnitCount = totalBytesExpectedToWrite
+        progress.completedUnitCount = totalBytesWritten
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        // Only commit the body on a success status: a 404's error page would
+        // otherwise be moved into place as though it were the file. The caller
+        // still validates the response, and then finds nothing was written.
+        if let http = downloadTask.response as? HTTPURLResponse,
+           !(200..<300).contains(http.statusCode) {
+            return
+        }
+        // `location` is deleted the moment this returns, so the move has to
+        // happen here — not after the continuation resumes.
+        do {
+            try FileManager.default.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: location, to: destination)
+        } catch {
+            moveError = error
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard let cont = continuation else { return }
+        continuation = nil
+        if let error {
+            cont.resume(throwing: error)
+        } else if let moveError {
+            cont.resume(throwing: moveError)
+        } else if let response = task.response {
+            cont.resume(returning: response)
+        } else {
+            cont.resume(throwing: FileTransportError.notSupported("GET: no HTTP response"))
+        }
     }
 }
 

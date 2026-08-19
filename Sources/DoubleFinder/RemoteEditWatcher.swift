@@ -157,8 +157,16 @@ final class RemoteEditWatcher: ObservableObject {
 
     private func upload(entry: WatchEntry) {
         let transport = SFTPFileTransport(endpoint: entry.endpoint)
-        let remoteURL = URL.sftp(endpoint: entry.endpoint, path: entry.remotePath)
         let key = entry.localURL
+        guard let remoteURL = URL.sftp(endpoint: entry.endpoint, path: entry.remotePath) else {
+            watches[key]?.uploading = false
+            ToastCenter.shared.post(Toast(
+                icon: "exclamationmark.triangle.fill",
+                message: "Could not sync “\(entry.localURL.lastPathComponent)” — the server address is no longer valid.",
+                dismissAfter: 4
+            ))
+            return
+        }
         TransferQueue.shared.enqueue(
             kind: "Sync",
             summary: "Sync edits → \(entry.localURL.lastPathComponent)",

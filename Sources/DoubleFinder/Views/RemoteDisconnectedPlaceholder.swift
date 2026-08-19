@@ -50,14 +50,11 @@ struct RemoteDisconnectedPlaceholder: View {
 
     @MainActor
     private func connect() async {
-        guard let endpoint = tab.url.sftpEndpoint else { return }
         connecting = true
         defer { connecting = false }
-        do {
-            _ = try await RemoteSessionManager.shared.acquire(endpoint, in: window)
-            await tab.refresh()
-        } catch {
-            tab.connectionState = .remoteDisconnected(reason: error.localizedDescription)
-        }
+        // Goes through the tab so the reference is recorded as the tab's, and
+        // so its own error / state handling applies. Acquiring inline here left
+        // the tab holding no release obligation for a session it was using.
+        await tab.connectRemoteIfNeeded()
     }
 }

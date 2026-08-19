@@ -117,11 +117,36 @@ enum CopyMoveCoordinator {
         resolution: ConflictResolution,
         progress: Progress
     ) async throws {
+        // One child Progress per file, each worth a single unit of the batch.
+        //
+        // Transports report *bytes* into whatever Progress they're handed.
+        // Handing them the batch's own Progress — whose units are *files* —
+        // meant the two counters overwrote each other: a transport would set
+        // completedUnitCount to a byte offset, then the loop would add one to
+        // it. `Progress` folds children's fractions into the parent for us, so
+        // the parent's completedUnitCount must not be touched by hand any more.
         progress.totalUnitCount = Int64(urls.count)
+        // Cleared on the way out so a cancelled batch doesn't keep its last
+        // child alive through the handler.
+        defer { progress.cancellationHandler = nil }
         for src in urls {
             if progress.isCancelled { return }
-            try await performOne(kind: kind, src: src, dest: dest, resolution: resolution, progress: progress)
-            progress.completedUnitCount += 1
+            let child = Progress(totalUnitCount: 1)
+            progress.addChild(child, withPendingUnitCount: 1)
+            // `Progress.cancel()` does *not* reach children on its own — a child
+            // still reads `isCancelled == false` immediately after its parent is
+            // cancelled. The transports poll whichever Progress they were handed,
+            // and that poll is how an in-flight SFTP transfer receives its ^C
+            // (`interruptWatcher`), so the cancel has to be forwarded by hand or
+            // cancelling would silently stop interrupting mid-file. Installing
+            // this handler after a cancel has already landed still fires it, so
+            // it can't race the check above.
+            progress.cancellationHandler = { child.cancel() }
+            try await performOne(kind: kind, src: src, dest: dest, resolution: resolution, progress: child)
+            // Transports that move no bytes (a local rename, a same-server
+            // move) never report anything; their unit still has to be consumed
+            // or the batch would stall short of 100%.
+            child.completedUnitCount = child.totalUnitCount
         }
     }
 

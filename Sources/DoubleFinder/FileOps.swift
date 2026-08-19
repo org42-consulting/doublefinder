@@ -5,13 +5,26 @@ import AppKit
 /// recovered from the Trash (i.e. remote files). Returns true if the user clicked Delete.
 @MainActor
 enum TrashConfirm {
-    static func askDeletePermanently(_ urls: [URL]) -> Bool {
+    /// - Parameters:
+    ///   - urls: the remote URLs that will be deleted outright. Must be non-empty.
+    ///   - alsoTrashing: how many *local* items share the batch and will merely
+    ///     be moved to the Trash. Non-zero means the user is deleting a mixed
+    ///     set — reachable because marks accumulate across navigation — and the
+    ///     dialog has to be clear that only part of it is unrecoverable.
+    static func askDeletePermanently(_ urls: [URL], alsoTrashing localCount: Int = 0) -> Bool {
+        guard !urls.isEmpty else { return true }
         let alert = NSAlert()
         let count = urls.count
         alert.messageText = count == 1
             ? "Delete \u{201C}\(urls[0].lastPathComponent)\u{201D} permanently?"
             : "Delete \(count) items permanently?"
-        alert.informativeText = "Remote files have no Trash and will be deleted immediately. This cannot be undone."
+        var detail = "Remote files have no Trash and will be deleted immediately. This cannot be undone."
+        if localCount > 0 {
+            let plural = localCount == 1
+            detail += "\n\nThe other \(localCount) item\(plural ? "" : "s") in this batch "
+                + "\(plural ? "is" : "are") local and will be moved to the Trash as usual."
+        }
+        alert.informativeText = detail
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Delete")
         alert.addButton(withTitle: "Cancel")

@@ -364,6 +364,8 @@ private struct PaneInfoBar: View {
 
 private struct PaneFooter: View {
     @ObservedObject var tab: TabState
+    /// App-wide, shared with `IconView` and the View Options panel.
+    @AppStorage(SettingsKey.iconSize) private var iconSize = IconViewDefaults.size
 
     var body: some View {
         VStack(spacing: 0) {
@@ -393,12 +395,45 @@ private struct PaneFooter: View {
                     }
                 }
                 Spacer()
+                // Yields first when the pane is narrow: the free-space figure is
+                // the least important thing in the bar, and truncating it keeps
+                // the slider usable rather than squashed to a few points.
                 Text(volumeAvailable(for: tab.url))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                iconSizeSlider
             }
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
+        }
+    }
+
+    /// Icon-size slider, in the far bottom-right corner where Finder puts it.
+    /// Only rendered in Icon view — it's the one mode whose geometry it changes,
+    /// and the footer is too narrow to carry a dead control in the other three.
+    @ViewBuilder
+    private var iconSizeSlider: some View {
+        if tab.viewMode == .icon {
+            HStack(spacing: 5) {
+                Image(systemName: "square.grid.3x3")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                // `step` matches the View Options panel's slider so the two
+                // agree on which values are reachable, and so its "64×64"
+                // readout can't show a size this one can't produce.
+                Slider(value: $iconSize, in: 40...128, step: 4)
+                    .controlSize(.mini)
+                    .frame(width: 84)
+                Image(systemName: "square.grid.2x2")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+            }
+            .fixedSize()
+            .help("Icon size — \(Int(iconSize))×\(Int(iconSize))")
+            .accessibilityLabel("Icon size")
+            .accessibilityValue("\(Int(iconSize)) points")
         }
     }
 
@@ -478,7 +513,6 @@ struct TabBarView: View {
     @ObservedObject var pane: PaneState
     let side: PaneSide
     @EnvironmentObject var state: WindowState
-    @State private var settingsShown: Bool = false
 
     var body: some View {
         GlassEffectContainer(spacing: 4) {
@@ -595,7 +629,12 @@ struct TabBarView: View {
     private var settingsButton: some View {
         Button {
             state.focus = side
-            settingsShown.toggle()
+            // Toggle: a second press on the button closes the panel it opened.
+            if state.viewOptionsPrompt?.side == side {
+                state.viewOptionsPrompt = nil
+            } else {
+                state.viewOptionsPrompt = ViewOptionsPrompt(side: side)
+            }
         } label: {
             Image(systemName: "slider.horizontal.3")
                 .font(.system(size: 11, weight: .semibold))
@@ -604,11 +643,29 @@ struct TabBarView: View {
         }
         .buttonStyle(.plain)
         .glassEffect(in: Circle())
-        .help("Sort & view options")
-        .accessibilityLabel("Sort and view options")
-        .popover(isPresented: $settingsShown, arrowEdge: .top) {
-            PaneSettingsPopover(tab: pane.activeTab)
+        .help("Show View Options (⌘J)")
+        .accessibilityLabel("Show View Options")
+        // The panel is anchored here no matter which entry point opened it, so
+        // reaching it from the context menu or ⌘J also points at the button —
+        // which is where a user will look for it next time.
+        .popover(isPresented: viewOptionsShown, arrowEdge: .top) {
+            ViewOptionsPanel(tab: pane.activeTab)
         }
+    }
+
+    /// Bridges the window-level `viewOptionsPrompt` to this pane's popover.
+    /// Keyed on the side so only one pane shows a panel at a time.
+    private var viewOptionsShown: Binding<Bool> {
+        Binding(
+            get: { state.viewOptionsPrompt?.side == side },
+            set: { shown in
+                if shown {
+                    state.viewOptionsPrompt = ViewOptionsPrompt(side: side)
+                } else if state.viewOptionsPrompt?.side == side {
+                    state.viewOptionsPrompt = nil
+                }
+            }
+        )
     }
 
     @ViewBuilder

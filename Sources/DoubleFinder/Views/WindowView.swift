@@ -358,15 +358,27 @@ struct WindowView: View {
         let urls = selectedURLs(in: src)
         guard !urls.isEmpty else { return }
         // Any remote scheme, not just SFTP: no remote transport has a Trash, so
-        // `FileOps.trash` deletes outright. Checking only for SFTP meant deleting
-        // from a WebDAV or FTP tab skipped the confirmation and still reported
-        // "Move to Trash".
-        let allRemote = urls.allSatisfy(\.isRemote)
-        if allRemote, !TrashConfirm.askDeletePermanently(urls) { return }
+        // `FileOps.trash` deletes those outright.
+        //
+        // The question is "does this batch contain anything remote", not "is it
+        // *all* remote". Marks accumulate across navigation and win over the
+        // selection for toolbar ops, so a batch really can hold both — and the
+        // all-or-nothing check let that case through with no warning at all,
+        // labelled "Move to Trash" while permanently deleting the remote half.
+        let remoteURLs = urls.filter(\.isRemote)
+        let localCount = urls.count - remoteURLs.count
+        if !remoteURLs.isEmpty,
+           !TrashConfirm.askDeletePermanently(remoteURLs, alsoTrashing: localCount) { return }
+        let allRemote = localCount == 0 && !remoteURLs.isEmpty
         let label = allRemote ? "Delete" : "Trash"
-        let summary = allRemote
-            ? "Delete \(urls.count) item\(urls.count == 1 ? "" : "s") permanently"
-            : "Move \(urls.count) item\(urls.count == 1 ? "" : "s") to Trash"
+        let summary: String
+        if allRemote {
+            summary = "Delete \(urls.count) item\(urls.count == 1 ? "" : "s") permanently"
+        } else if remoteURLs.isEmpty {
+            summary = "Move \(urls.count) item\(urls.count == 1 ? "" : "s") to Trash"
+        } else {
+            summary = "Trash \(localCount), delete \(remoteURLs.count) permanently"
+        }
         let stateRef = state
         TransferQueue.shared.enqueue(
             kind: label,

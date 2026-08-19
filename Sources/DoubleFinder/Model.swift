@@ -304,6 +304,16 @@ struct BatchRenamePrompt: Identifiable {
     let onCommit: ([(URL, String)]) -> Void
 }
 
+/// Request to show the Finder-style View Options panel (⌘J).
+///
+/// Carries the pane rather than the tab: the panel is anchored to that pane's
+/// tab-strip options button, so identifying the side is what lets exactly one
+/// panel be open at a time and lets the button double as a toggle.
+struct ViewOptionsPrompt: Identifiable {
+    let id = UUID()
+    let side: PaneSide
+}
+
 /// Identifies a content-search session opened from the focused tab. The sheet
 /// shells out to `grep` against `directory` and reveals matches in the
 /// originating tab via `onReveal`.
@@ -403,6 +413,7 @@ extension Notification.Name {
     static let openInOtherPaneRequested = Notification.Name("df.openInOtherPaneRequested")
     static let toggleMarkRequested = Notification.Name("df.toggleMarkRequested")
     static let clearMarksRequested = Notification.Name("df.clearMarksRequested")
+    static let showViewOptionsRequested = Notification.Name("df.showViewOptionsRequested")
 }
 
 /// A reversible file operation. Pushed onto `WindowState.undoStack` after each
@@ -581,8 +592,23 @@ final class TabState: ObservableObject, Identifiable {
     private var debounceTask: Task<Void, Never>?
     private var gitCacheToken: NSObjectProtocol?
     private var foldersOnTopToken: NSObjectProtocol?
-    /// Mirrors `url.sftpEndpoint` so `deinit` (which is nonisolated) can read it safely.
-    nonisolated(unsafe) private var _currentSFTPEndpoint: RemoteEndpoint?
+    /// The SFTP endpoint whose `RemoteSessionManager` reference **this tab
+    /// holds** — i.e. a release obligation, not a mirror of `url`.
+    ///
+    /// The distinction is the whole point. This used to mirror
+    /// `url.sftpEndpoint`, set from `init` and from `navigate` whenever a tab
+    /// merely *arrived* at an `sftp://` URL. Nothing on those paths acquires,
+    /// so a tab opened by ⌘-double-click or "Open in New Tab" would, on close,
+    /// release a reference it never took — dropping the refcount to zero and
+    /// closing the session out from under the tab that really opened it.
+    /// (Silently, too: `SFTPSession.close()` marks itself `.closed` before the
+    /// child exits, so `handleExit` never notifies the disconnect observers.)
+    ///
+    /// Written in exactly three places, all of which have just acquired or been
+    /// handed a reference: `connectRemoteIfNeeded`, `adoptSessionRef`, and the
+    /// hand-over branch of `performNavigate`. Read by `deinit`, hence
+    /// `nonisolated(unsafe)`.
+    nonisolated(unsafe) private var _ownedSFTPEndpoint: RemoteEndpoint?
 
     /// Designated initializer.
     /// - Parameter url: the directory this tab points at.
@@ -599,7 +625,6 @@ final class TabState: ObservableObject, Identifiable {
     init(url: URL, refreshImmediately: Bool) {
         self.url = url
         self.viewMode = ViewMode.userDefault
-        self._currentSFTPEndpoint = url.sftpEndpoint
         watcher.onChange = { [weak self] in
             guard let self else { return }
             Task { @MainActor in
@@ -639,7 +664,15 @@ final class TabState: ObservableObject, Identifiable {
         if refreshImmediately {
             restartWatching()
             isInitiallyLoaded = true
-            Task { await self.refresh() }
+            // An sftp:// tab has nothing to list until a session exists, and
+            // listing now would only fail and flash an error. Whoever placed us
+            // here — `PaneState.addTab`, or a connect flow handing over its
+            // reference — drives `connectRemoteIfNeeded()` instead. Snapshot
+            // restore deliberately drives neither, leaving the tab on the
+            // reconnect placeholder.
+            if !url.isRemoteSFTP {
+                Task { await self.refresh() }
+            }
         }
         // When refreshImmediately is false, restartWatching() and refresh()
         // are deferred until `markActivated()` is invoked by PaneState the
@@ -656,6 +689,10 @@ final class TabState: ObservableObject, Identifiable {
         guard !isInitiallyLoaded else { return }
         isInitiallyLoaded = true
         restartWatching()
+        // A restored SFTP tab stays on its placeholder until the user presses
+        // Connect — the no-auth-stampede-on-launch rule. Listing it here would
+        // just fail, since no session has been established for it.
+        guard !url.isRemoteSFTP else { return }
         Task { await self.refresh() }
     }
 
@@ -666,7 +703,10 @@ final class TabState: ObservableObject, Identifiable {
         if let token = foldersOnTopToken {
             NotificationCenter.default.removeObserver(token)
         }
-        if let endpoint = _currentSFTPEndpoint {
+        // Only ever set where a reference was actually acquired, so this can no
+        // longer close a session this tab didn't open. Captures the endpoint by
+        // value — never `self` — so the object can finish deallocating.
+        if let endpoint = _ownedSFTPEndpoint {
             Task { @MainActor in RemoteSessionManager.shared.release(endpoint) }
         }
     }
@@ -998,6 +1038,22 @@ final class TabState: ObservableObject, Identifiable {
     }
 
     func navigate(to newURL: URL) {
+        performNavigate(to: newURL, adoptedSessionRef: nil)
+    }
+
+    /// Navigate to a remote URL, taking over an SFTP session reference the
+    /// caller already holds rather than acquiring a second one.
+    ///
+    /// The connect flows have to acquire a session before they can navigate at
+    /// all — resolving a `~` starting path needs `pwd` from the server — so by
+    /// the time they get here a reference exists. Handing it to the tab keeps
+    /// the invariant "one reference per tab that is sitting on that endpoint";
+    /// letting the tab acquire its own instead would strand the caller's.
+    func navigate(to newURL: URL, adoptingSessionRef endpoint: RemoteEndpoint) {
+        performNavigate(to: newURL, adoptedSessionRef: endpoint)
+    }
+
+    private func performNavigate(to newURL: URL, adoptedSessionRef: RemoteEndpoint?) {
         let resolved = newURL.resolvingSymlinksInPath()
 
         // Pinned tabs don't change directory — open the target in a new sibling tab
@@ -1006,7 +1062,12 @@ final class TabState: ObservableObject, Identifiable {
         // pass through unchanged.
         if isPinned, resolved.standardizedFileURL != url.standardizedFileURL {
             if let pane = containingPane() {
-                pane.addTab(url: resolved)
+                // The sibling tab is the one that ends up on the remote URL, so
+                // it inherits the reference.
+                pane.addTab(url: resolved, adoptingSessionRef: adoptedSessionRef)
+            } else if let adoptedSessionRef {
+                // Nowhere to hand it on to; don't leak it.
+                RemoteSessionManager.shared.release(adoptedSessionRef)
             }
             return
         }
@@ -1014,15 +1075,25 @@ final class TabState: ObservableObject, Identifiable {
         // For remote URLs skip the same-URL guard: the user may be reconnecting after a
         // disconnect, so we always want to re-enter the connection and refresh cycle.
         let sameURL = resolved.standardizedFileURL == url.standardizedFileURL
-        guard !sameURL || resolved.isRemoteSFTP else { return }
+        guard !sameURL || resolved.isRemoteSFTP else {
+            if let adoptedSessionRef { RemoteSessionManager.shared.release(adoptedSessionRef) }
+            return
+        }
 
-        // Session refcount: now that we know we're actually navigating, release the old endpoint if different.
-        let wasRemote = url.isRemoteSFTP
-        let willBeRemote = resolved.isRemoteSFTP
-        let oldEndpoint = url.sftpEndpoint
+        // Session ownership. Give back the reference we hold if we're leaving
+        // its endpoint, then take over the caller's if one was handed to us.
+        // Nothing here *acquires* — arriving at an sftp:// URL is not the same
+        // as having authenticated to it, and conflating the two is what let a
+        // tab release a session it never opened.
         let newEndpoint = resolved.sftpEndpoint
-        if let oldEndpoint, oldEndpoint != newEndpoint {
-            RemoteSessionManager.shared.release(oldEndpoint)
+        if let owned = _ownedSFTPEndpoint, owned != newEndpoint {
+            releaseOwnedSession()
+        }
+        if let adoptedSessionRef {
+            // If we somehow already hold one for this endpoint, hand the
+            // surplus back rather than keeping two and releasing one.
+            releaseOwnedSession()
+            _ownedSFTPEndpoint = adoptedSessionRef
         }
 
         history.append(url)
@@ -1032,17 +1103,73 @@ final class TabState: ObservableObject, Identifiable {
         quickFilter = ""
         RecentLocationsStore.shared.push(resolved)
         isInitiallyLoaded = true
-        Task { await self.refresh() }
 
-        _currentSFTPEndpoint = willBeRemote ? newEndpoint : nil
-
-        if willBeRemote {
-            connectionState = .remoteConnected
+        if resolved.isRemoteSFTP {
+            // Don't claim `.remoteConnected` before a session exists. Typing an
+            // sftp:// URL for a server we aren't connected to used to set that
+            // state here, skip authentication entirely, and then render an
+            // empty listing with "Not connected" instead of prompting — the
+            // path bar advertised a scheme it couldn't actually open.
+            Task { await self.connectRemoteIfNeeded() }
         } else {
             connectionState = .local
+            Task { await self.refresh() }
         }
-        _ = wasRemote
-        _ = newEndpoint
+    }
+
+    // MARK: - SFTP session ownership
+
+    /// Give back the session reference this tab holds, if any.
+    private func releaseOwnedSession() {
+        guard let owned = _ownedSFTPEndpoint else { return }
+        _ownedSFTPEndpoint = nil
+        RemoteSessionManager.shared.release(owned)
+    }
+
+    /// Take over a session reference the caller acquired, then list. Used when
+    /// a connect flow lands a *new* tab on a remote URL.
+    func adoptSessionRef(_ endpoint: RemoteEndpoint) {
+        releaseOwnedSession()
+        _ownedSFTPEndpoint = endpoint
+        connectionState = .remoteConnected
+        Task { await self.refresh() }
+    }
+
+    /// Ensure a live `sftp(1)` session backs this tab's URL — acquiring one,
+    /// which may present the password / passphrase / host-key sheets, if we
+    /// don't already hold a usable reference — then list the directory.
+    ///
+    /// Single funnel for establishing a session, so there is exactly one place
+    /// that can create a reference and exactly one field recording the release
+    /// we owe for it.
+    func connectRemoteIfNeeded() async {
+        guard let endpoint = url.sftpEndpoint else {
+            await refresh()
+            return
+        }
+        // Already holding a live reference for this endpoint — just list. A
+        // reference to a *closed* session is worthless, so that case falls
+        // through and re-acquires.
+        if _ownedSFTPEndpoint == endpoint,
+           RemoteSessionManager.shared.existingSession(for: endpoint) != nil {
+            connectionState = .remoteConnected
+            await refresh()
+            return
+        }
+        releaseOwnedSession()
+        guard let window else {
+            connectionState = .remoteDisconnected(reason: "This tab isn’t attached to a window.")
+            return
+        }
+        connectionState = .remoteReconnecting
+        do {
+            _ = try await RemoteSessionManager.shared.acquire(endpoint, in: window)
+            _ownedSFTPEndpoint = endpoint
+            connectionState = .remoteConnected
+            await refresh()
+        } catch {
+            connectionState = .remoteDisconnected(reason: error.localizedDescription)
+        }
     }
 
     func back() {
@@ -1149,6 +1276,22 @@ final class TabState: ObservableObject, Identifiable {
         defer { isLoading = false }
         do {
             let raw = try await transport.list(target)
+            // `isLoading` means "awaiting a transport listing", and the listing
+            // has now arrived. Clearing it here rather than letting the `defer`
+            // do it stops the spinner outliving the thing it indicates: the
+            // decoration pass below shells out to `git status` (up to 5s in a
+            // large repo) and reads an xattr per row, all with the rows already
+            // on screen. In a busy repo, FSEvents re-triggered a refresh often
+            // enough that the spinner never visibly stopped. The `defer` still
+            // covers the throw and stale-target exits.
+            isLoading = false
+            // The user can navigate away while a listing is in flight — easily,
+            // on a slow remote tab. Without this the stale listing lands in
+            // `nodes` and is rendered as the *new* directory's contents, so
+            // every subsequent operation targets files that aren't there.
+            // `loadDecorations` below has always had this guard; the listing
+            // itself did not.
+            guard self.url == target else { return }
             let filtered = useHiddenFilter ? raw.filter { !$0.name.hasPrefix(".") } : raw
             self.nodes = sorted(filtered)
             self.loadError = nil
@@ -1165,9 +1308,13 @@ final class TabState: ObservableObject, Identifiable {
                 await loadDecorations(for: target, includeGit: true, includeTags: true)
             }
         } catch {
+            // Same reasoning as the success path: a failure for a directory we
+            // have already left must not blank out the one we're now showing.
+            guard self.url == target else { return }
             self.nodes = []
             self.loadError = error.localizedDescription
         }
+        guard self.url == target else { return }
         if target.isRemoteSFTP {
             await subscribeToSessionDisconnectIfNeeded()
             if loadError == nil { connectionState = .remoteConnected }
@@ -1198,18 +1345,18 @@ final class TabState: ObservableObject, Identifiable {
         disconnectSubscribed.remove(endpoint)
         connectionState = .remoteReconnecting
         Task { @MainActor [weak self] in
-            RemoteSessionManager.shared.release(endpoint)
             guard let self else { return }
-            guard let window = self.window else {
-                self.connectionState = .remoteDisconnected(reason: reason)
-                return
-            }
-            do {
-                _ = try await RemoteSessionManager.shared.acquire(endpoint, in: window)
-                await self.refresh()
-                self.connectionState = .remoteConnected
-            } catch {
-                self.connectionState = .remoteDisconnected(reason: error.localizedDescription)
+            // Routed through the ownership helpers rather than acquiring inline,
+            // so the silent one-shot retry can't leave the refcount off by one.
+            self.releaseOwnedSession()
+            await self.connectRemoteIfNeeded()
+            // If the retry didn't get us back, lead with why the session dropped
+            // in the first place — that's the more diagnostic of the two, and it
+            // would otherwise be lost behind the reconnect's own error.
+            if case .remoteDisconnected(let retryReason) = self.connectionState {
+                self.connectionState = .remoteDisconnected(
+                    reason: "\(reason). Reconnecting failed: \(retryReason)"
+                )
             }
         }
     }
@@ -1334,11 +1481,25 @@ final class PaneState: ObservableObject, Identifiable {
         tabs.first { $0.id == activeTabID } ?? tabs[0]
     }
 
-    func addTab(url: URL) {
+    /// Open a new tab at `url` and make it active.
+    ///
+    /// - Parameter adoptingSessionRef: an SFTP session reference the caller has
+    ///   already acquired and wants this tab to own. When nil and `url` is an
+    ///   `sftp://` location, the tab establishes its own session instead — it
+    ///   used to inherit only the *release* half of that bargain, which is how
+    ///   closing a ⌘-double-clicked tab could kill a session still in use.
+    @discardableResult
+    func addTab(url: URL, adoptingSessionRef endpoint: RemoteEndpoint? = nil) -> TabState {
         let t = TabState(url: url)
         t.window = window
         tabs.append(t)
         activeTabID = t.id
+        if let endpoint {
+            t.adoptSessionRef(endpoint)
+        } else if url.isRemoteSFTP {
+            Task { @MainActor in await t.connectRemoteIfNeeded() }
+        }
+        return t
     }
 
     func closeTab(_ id: TabState.ID) {
@@ -1414,6 +1575,11 @@ final class WindowState: ObservableObject {
     @Published var batchRenamePrompt: BatchRenamePrompt?
     @Published var contentSearchPrompt: ContentSearchPrompt?
     @Published var commandPalette: CommandPalettePrompt?
+    /// Non-nil while the View Options panel is showing for one of the panes.
+    /// Unlike the sheet-backed prompts above this drives a popover, because the
+    /// whole point of the panel is watching the listing rearrange behind it as
+    /// you change a setting.
+    @Published var viewOptionsPrompt: ViewOptionsPrompt?
     @Published var favourites: [SidebarFavourite] = SidebarFavourite.defaults
     @Published var showInspector: Bool = false
     /// When true, only the currently-focused pane is rendered — the other one is
@@ -1868,6 +2034,10 @@ final class WindowState: ObservableObject {
         observe(.clearMarksRequested) { [weak self] _ in
             self?.focusedPane.activeTab.marked.removeAll()
         }
+        observe(.showViewOptionsRequested) { [weak self] _ in
+            guard let self else { return }
+            self.viewOptionsPrompt = ViewOptionsPrompt(side: self.focus)
+        }
         observe(.redoRequested) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in await self.performRedo() }
@@ -2138,6 +2308,16 @@ final class WindowState: ObservableObject {
 
     var focusedPane: PaneState { focus == .left ? left : right }
     var otherPane: PaneState { focus == .left ? right : left }
+
+    /// Which side currently holds `tab`, falling back to the focused side if it
+    /// isn't in either pane. Lets the context menus open the View Options panel
+    /// on the right pane without every call site having to thread a `PaneSide`
+    /// through — they all already hold the `TabState`.
+    func side(of tab: TabState) -> PaneSide {
+        if left.tabs.contains(where: { $0 === tab }) { return .left }
+        if right.tabs.contains(where: { $0 === tab }) { return .right }
+        return focus
+    }
 
     func toggleFocus() {
         focus = (focus == .left) ? .right : .left

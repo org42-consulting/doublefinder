@@ -42,6 +42,18 @@ struct RemoteEndpoint: Codable, Hashable, Sendable {
         return supportedSchemes.contains { $0.scheme == scheme }
     }
 
+    /// True when reaching this endpoint means standing up a long-lived,
+    /// separately-authenticated session — today that is only SFTP, whose
+    /// `sftp(1)` subprocess `RemoteSessionManager` acquires and refcounts.
+    /// WebDAV and FTP authenticate every request from Keychain instead, so
+    /// there is nothing to acquire, nothing to eject, and no server-side home
+    /// directory to resolve `~` against.
+    ///
+    /// One predicate rather than a scheme comparison per call site: the Connect
+    /// sheet and the sidebar's bookmark row both have to answer this question,
+    /// and the sidebar used to assume the answer was always yes.
+    var usesPersistentSession: Bool { scheme == "sftp" }
+
     // MARK: - Input validation
 
     /// Reject hosts that start with `-` (OpenSSH option injection like `-oProxyCommand=`),
@@ -137,6 +149,13 @@ extension URL {
     /// server. The port is omitted when it matches the scheme's default so the
     /// URL round-trips back to the same endpoint.
     static func remote(endpoint: RemoteEndpoint, path: String) -> URL? {
+        // Endpoints parsed out of a URL are already validated, but ones loaded
+        // from `servers.json` are not: the connections editor lets you type
+        // anything into Host and User. Validating here means a malformed
+        // bookmark yields nil at the one place URLs are built, instead of a
+        // half-formed URL reaching a transport.
+        guard RemoteEndpoint.isValidHost(endpoint.host),
+              RemoteEndpoint.isValidUser(endpoint.user) else { return nil }
         var comps = URLComponents()
         comps.scheme = endpoint.scheme
         comps.user = endpoint.user
@@ -150,13 +169,15 @@ extension URL {
     }
 
     /// Construct an sftp:// URL from an endpoint and an absolute remote path.
-    static func sftp(endpoint: RemoteEndpoint, path: String) -> URL {
+    ///
+    /// Returns nil for a host or user that can't form a valid URL. This used to
+    /// force-unwrap on the grounds that callers hold an endpoint parsed from a
+    /// URL — true for most of them, but not for the sidebar and the connections
+    /// editor, which hand over whatever is stored in `servers.json`.
+    static func sftp(endpoint: RemoteEndpoint, path: String) -> URL? {
         var sftpEndpoint = endpoint
         sftpEndpoint.scheme = "sftp"
-        // Force-unwrap is safe here: callers hold an endpoint parsed from a URL
-        // (host/user already validated), and `remote` only fails to build a URL
-        // when those are malformed.
-        return remote(endpoint: sftpEndpoint, path: path)!
+        return remote(endpoint: sftpEndpoint, path: path)
     }
 
     /// Returns a new URL with the same remote endpoint but `component` appended

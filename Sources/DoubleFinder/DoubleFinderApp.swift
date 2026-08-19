@@ -171,6 +171,10 @@ struct DoubleFinderApp: App {
             CommandGroup(after: .toolbar) {
                 Divider()
                 SinglePaneToggleButton()
+                Button("Show View Options") {
+                    NotificationCenter.default.post(name: .showViewOptionsRequested, object: nil)
+                }
+                .keyboardShortcut("j", modifiers: [.command])
             }
             CommandMenu("Workspaces") {
                 WorkspacesMenu()

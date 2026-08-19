@@ -120,20 +120,67 @@ struct FTPFileTransport: FileTransport {
     func download(_ remote: URL, to localTmp: URL, progress: Progress) async throws {
         guard let curlURL = curlURL(for: remote) else { throw FileTransportError.notSupported("Bad URL") }
         try? FileManager.default.removeItem(at: localTmp)
+
+        // curl writes its progress meter to stderr as carriage-return-separated
+        // redraws, and `ProcessRunner` only hands stderr back once the child has
+        // exited — so there is nothing to parse while the transfer is running.
+        // The file curl is writing *is* observable, though, so poll that against
+        // a size learned from a HEAD probe.
+        let expected = await remoteSize(remote)
+        if expected > 0 { progress.totalUnitCount = expected }
+        let poller = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                guard let attrs = try? FileManager.default.attributesOfItem(atPath: localTmp.path),
+                      let written = (attrs[.size] as? NSNumber)?.int64Value else { continue }
+                progress.completedUnitCount = written
+            }
+        }
+        defer { poller.cancel() }
+
         var args = configArgs
         args.append("-o")
         args.append(localTmp.path)
         args.append(curlURL.absoluteString)
         _ = try await capture("/usr/bin/curl", args)
+        if expected > 0 { progress.completedUnitCount = expected }
     }
 
     func upload(_ local: URL, to remote: URL, progress: Progress) async throws {
         guard let curlURL = curlURL(for: remote) else { throw FileTransportError.notSupported("Bad URL") }
+        // Coarse by necessity: nothing local grows during an upload, and curl's
+        // meter is unreadable until it exits (see `download`). Sizing the bar
+        // from the source file and filling it on success at least gives a
+        // determinate ring instead of one pinned at zero for the whole transfer.
+        var total: Int64 = 0
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: local.path),
+           let size = (attrs[.size] as? NSNumber)?.int64Value, size > 0 {
+            total = size
+            progress.totalUnitCount = size
+        }
         var args = configArgs
         args.append("-T")
         args.append(local.path)
         args.append(curlURL.absoluteString)
         _ = try await capture("/usr/bin/curl", args)
+        if total > 0 { progress.completedUnitCount = total }
+    }
+
+    /// Best-effort content length via curl's `--head`. Returns 0 when the server
+    /// reports none, in which case callers leave the Progress indeterminate
+    /// rather than inventing a total the transfer would then overshoot.
+    private func remoteSize(_ url: URL) async -> Int64 {
+        guard let curlURL = curlURL(for: url) else { return 0 }
+        var args = configArgs
+        args.append("--head")
+        args.append(curlURL.absoluteString)
+        guard let output = try? await capture("/usr/bin/curl", args) else { return 0 }
+        for line in output.split(separator: "\n") {
+            guard line.lowercased().hasPrefix("content-length:") else { continue }
+            let value = line.drop { $0 != ":" }.dropFirst()
+            return Int64(value.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        }
+        return 0
     }
 
     // MARK: - Helpers

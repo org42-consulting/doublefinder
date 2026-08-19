@@ -278,6 +278,27 @@ enum FileContextMenu {
         showHidden.representedObject = toggleAction
         menu.addItem(showHidden)
 
+        // View / Sort By / Group By / Show View Options — the arrangement block
+        // Finder puts on an empty-space right-click. The submenus are the same
+        // per-tab state the View Options panel edits; this is the quick path.
+        let viewItem = NSMenuItem(title: "View", action: nil, keyEquivalent: "")
+        viewItem.submenu = makeViewModeSubmenu(tab: tab)
+        menu.addItem(viewItem)
+
+        let sortItem = NSMenuItem(title: "Sort By", action: nil, keyEquivalent: "")
+        sortItem.submenu = makeSortSubmenu(tab: tab)
+        menu.addItem(sortItem)
+
+        let groupItem = NSMenuItem(title: "Group By", action: nil, keyEquivalent: "")
+        groupItem.submenu = makeGroupSubmenu(tab: tab)
+        menu.addItem(groupItem)
+
+        // No key equivalent, matching Finder — ⌘J is advertised on the View menu
+        // item, and a context menu that only exists while open doesn't need it.
+        addItem(menu, "Show View Options") {
+            state.viewOptionsPrompt = ViewOptionsPrompt(side: state.side(of: tab))
+        }
+
         menu.addItem(.separator())
 
         let pb = NSPasteboard.general
@@ -542,6 +563,53 @@ enum FileContextMenu {
             set: { tab.showHidden = $0 }
         ))
 
+        // Mirrors the AppKit `populateBackground` block above. `.inline` pickers
+        // give the checkmark-on-current-choice rendering that `makeChoiceSubmenu`
+        // produces by hand on the NSMenu side.
+        Menu("View") {
+            Picker("View", selection: Binding(get: { tab.viewMode }, set: { tab.viewMode = $0 })) {
+                Text("as Icons").tag(ViewMode.icon)
+                Text("as List").tag(ViewMode.list)
+                Text("as Columns").tag(ViewMode.column)
+                Text("as Gallery").tag(ViewMode.gallery)
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        }
+        Menu("Sort By") {
+            Picker("Sort By", selection: Binding(
+                get: { tab.sortKey },
+                set: { tab.sortKey = $0; tab.reSort() }
+            )) {
+                Text("Name").tag(SortKey.name)
+                Text("Date Modified").tag(SortKey.modified)
+                Text("Size").tag(SortKey.size)
+                Text("Kind").tag(SortKey.kind)
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            Divider()
+            Picker("Direction", selection: Binding(
+                get: { tab.sortAscending },
+                set: { tab.sortAscending = $0; tab.reSort() }
+            )) {
+                Text("Ascending").tag(true)
+                Text("Descending").tag(false)
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        }
+        Menu("Group By") {
+            Picker("Group By", selection: Binding(get: { tab.groupBy }, set: { tab.groupBy = $0 })) {
+                ForEach(GroupBy.allCases) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        }
+        Button("Show View Options") {
+            state.viewOptionsPrompt = ViewOptionsPrompt(side: state.side(of: tab))
+        }
+
         Divider()
 
         let pb = NSPasteboard.general
@@ -563,6 +631,75 @@ enum FileContextMenu {
             item.keyEquivalentModifierMask = [.command]
         }
         menu.addItem(item)
+    }
+
+    /// Builds a submenu of radio-style choices: one item per option, a checkmark
+    /// on the current one. Shared by the View / Sort By / Group By submenus so
+    /// the three can't drift in how they mark the active entry.
+    private static func makeChoiceSubmenu<T: Equatable>(
+        _ options: [(value: T, title: String)],
+        current: T,
+        apply: @escaping (T) -> Void
+    ) -> NSMenu {
+        let sub = NSMenu()
+        appendChoices(options, current: current, to: sub, apply: apply)
+        return sub
+    }
+
+    /// Appends radio-style choice items to an existing menu, so a submenu can
+    /// hold more than one group separated by a divider (Sort By does: keys, then
+    /// direction).
+    private static func appendChoices<T: Equatable>(
+        _ options: [(value: T, title: String)],
+        current: T,
+        to menu: NSMenu,
+        apply: @escaping (T) -> Void
+    ) {
+        for option in options {
+            let item = NSMenuItem(title: option.title, action: #selector(MenuAction.invoke(_:)), keyEquivalent: "")
+            let action = MenuAction { apply(option.value) }
+            item.target = action
+            item.representedObject = action
+            item.state = option.value == current ? .on : .off
+            menu.addItem(item)
+        }
+    }
+
+    private static func makeViewModeSubmenu(tab: TabState) -> NSMenu {
+        makeChoiceSubmenu(
+            [(ViewMode.icon, "as Icons"), (.list, "as List"),
+             (.column, "as Columns"), (.gallery, "as Gallery")],
+            current: tab.viewMode,
+            apply: { tab.viewMode = $0 }
+        )
+    }
+
+    private static func makeSortSubmenu(tab: TabState) -> NSMenu {
+        let sub = makeChoiceSubmenu(
+            [(SortKey.name, "Name"), (.modified, "Date Modified"),
+             (.size, "Size"), (.kind, "Kind")],
+            current: tab.sortKey,
+            // Assigns rather than going through `setSort`, which flips the
+            // direction when handed the key that's already active — sensible for
+            // a clicked column header, surprising for a checked menu item.
+            apply: { tab.sortKey = $0; tab.reSort() }
+        )
+        sub.addItem(.separator())
+        appendChoices(
+            [(true, "Ascending"), (false, "Descending")],
+            current: tab.sortAscending,
+            to: sub,
+            apply: { tab.sortAscending = $0; tab.reSort() }
+        )
+        return sub
+    }
+
+    private static func makeGroupSubmenu(tab: TabState) -> NSMenu {
+        makeChoiceSubmenu(
+            GroupBy.allCases.map { (value: $0, title: $0.displayName) },
+            current: tab.groupBy,
+            apply: { tab.groupBy = $0 }
+        )
     }
 
     private static func makeTagsSubmenu(urls: [URL], refresh: @escaping () -> Void) -> NSMenu {

@@ -105,8 +105,10 @@ struct ConnectSheet: View {
 
         // WebDAV and FTP don't open a persistent session — credentials live
         // in Keychain and the transport authenticates each request. Build the
-        // URL, save the bookmark, navigate, done.
-        if scheme == "webdav" || scheme == "webdavs" || scheme == "ftp" || scheme == "ftps" {
+        // URL, save the bookmark, navigate, done. The predicate lives on
+        // RemoteEndpoint because the sidebar's saved-bookmark row needs the
+        // same answer; it used to spell the check out inline here only.
+        if !endpoint.usesPersistentSession {
             var path = startingPath
             if path.isEmpty || path == "~" { path = "/" }
             if !path.hasPrefix("/") { path = "/" + path }
@@ -137,7 +139,15 @@ struct ConnectSheet: View {
                     resolved = home + String(resolved.dropFirst(1))
                 }
             }
-            let remoteURL = URL.sftp(endpoint: endpoint, path: resolved)
+            guard let remoteURL = URL.sftp(endpoint: endpoint, path: resolved) else {
+                RemoteSessionManager.shared.release(endpoint)
+                state.connectError = ConnectError(
+                    endpoint: endpoint,
+                    message: "Could not build a URL for this server. Check the host and user."
+                )
+                onDismiss()
+                return
+            }
 
             // Save as bookmark before navigating, so it's persisted even if we get redirected.
             if saveAsBookmark {
@@ -153,8 +163,9 @@ struct ConnectSheet: View {
                 RemoteServerStore.shared.deletePassword(for: endpoint)
             }
 
-            // Navigate the focused tab to the remote URL.
-            state.focusedPane.activeTab.navigate(to: remoteURL)
+            // Navigate the focused tab to the remote URL, handing it the
+            // session reference acquired above so the refcount stays at one.
+            state.focusedPane.activeTab.navigate(to: remoteURL, adoptingSessionRef: endpoint)
             onDismiss()
         } catch {
             // Don't persist a password that didn't work.

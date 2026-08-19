@@ -53,10 +53,19 @@ enum ArchiveBrowser {
         guard !files.isEmpty else { return }
         switch detect(url: archive) {
         case .zip:
-            // `zip -r archive entries...` appends if the archive already exists.
-            var args = ["-r", "-q", archive.path]
-            args.append(contentsOf: files.map(\.path))
-            try await run("/usr/bin/zip", args)
+            // `zip -r archive entries...` appends if the archive already exists,
+            // and stores each entry under the path it was *given* — so passing
+            // absolute paths buried every entry under `Users/you/...` inside the
+            // archive. Run from each file's own directory and pass bare names,
+            // matching what the tar branch below achieves with `-C`. Grouped by
+            // parent because a selection can span directories, even though the
+            // Add Files… panel usually returns one.
+            let byParent = Dictionary(grouping: files, by: { $0.deletingLastPathComponent() })
+            for (parent, group) in byParent {
+                var args = ["-r", "-q", archive.path]
+                args.append(contentsOf: group.map(\.lastPathComponent))
+                try await run("/usr/bin/zip", args, currentDirectory: parent)
+            }
         case .tar:
             guard archive.lastPathComponent.lowercased().hasSuffix(".tar") else {
                 throw NSError(domain: "DoubleFinder.Archive", code: 2, userInfo: [
@@ -152,8 +161,8 @@ enum ArchiveBrowser {
     // block `unzip`/`tar` on write, and leave the continuation never resumed —
     // an unbounded hang with no watchdog.
 
-    private static func run(_ launchPath: String, _ args: [String]) async throws {
-        try await ProcessRunner.runChecked(launchPath, args, timeout: 120)
+    private static func run(_ launchPath: String, _ args: [String], currentDirectory: URL? = nil) async throws {
+        try await ProcessRunner.runChecked(launchPath, args, currentDirectory: currentDirectory, timeout: 120)
     }
 
     private static func capture(_ launchPath: String, _ args: [String]) async throws -> String {

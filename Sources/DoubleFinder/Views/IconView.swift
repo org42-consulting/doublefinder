@@ -6,14 +6,22 @@ struct IconView: View {
     let side: PaneSide
     @EnvironmentObject var state: WindowState
     @ObservedObject private var cutClipboard: CutClipboard = .shared
-    /// Icon edge length in points. Slider clamps to [40, 128]; cell + grid
-    /// derive their dimensions from this so the grid adapts uniformly.
-    @AppStorage("df.iconSize") private var iconSize: Double = 64
+    /// Icon-view geometry, all editable from the View Options panel (⌘J).
+    /// Icon edge length in points; the View Options slider clamps to [40, 128]
+    /// and cell + grid derive their dimensions from it so the grid adapts
+    /// uniformly.
+    @AppStorage(SettingsKey.iconSize) private var iconSize = IconViewDefaults.size
+    @AppStorage(SettingsKey.iconGridSpacing) private var gridSpacing = IconViewDefaults.gridSpacing
+    @AppStorage(SettingsKey.iconTextSize) private var textSize = IconViewDefaults.textSize
+    @AppStorage(SettingsKey.iconLabelOnRight) private var labelOnRight = IconViewDefaults.labelOnRight
+    @AppStorage(SettingsKey.iconShowPreview) private var showIconPreview = IconViewDefaults.showPreview
 
     private var cellSize: CGFloat { CGFloat(iconSize) + 12 }
     private var columns: [GridItem] {
-        let minimum = cellSize + 28      // room for label + padding
-        return [GridItem(.adaptive(minimum: minimum), spacing: 18, alignment: .top)]
+        // A label beside the icon needs horizontal room rather than a taller
+        // row, so the adaptive minimum grows instead of the cell height.
+        let minimum = labelOnRight ? cellSize + 130 : cellSize + 28
+        return [GridItem(.adaptive(minimum: minimum), spacing: CGFloat(gridSpacing), alignment: .top)]
     }
 
     // Marquee selection state — coordinates are in the "iconGrid" coordinate space.
@@ -55,6 +63,7 @@ struct IconView: View {
                 IconViewGrid(
                     tab: tab,
                     columns: columns,
+                    rowSpacing: CGFloat(gridSpacing),
                     cellBuilder: { iconCell(for: $0) }
                 )
                 .padding(16)
@@ -73,22 +82,10 @@ struct IconView: View {
         .coordinateSpace(name: "iconGrid")
         .onPreferenceChange(IconCellFramesKey.self) { cellFrames = $0 }
         .background(Color.clear)
-        // Bottom-trailing inline size slider. AppStorage-backed so the
-        // value persists across launches and across all icon views.
-        .overlay(alignment: .bottomTrailing) {
-            HStack(spacing: 6) {
-                Image(systemName: "square.grid.3x3").font(.system(size: 9)).foregroundStyle(.secondary)
-                Slider(value: $iconSize, in: 40...128)
-                    .controlSize(.mini)
-                    .frame(width: 90)
-                Image(systemName: "square.grid.2x2").font(.system(size: 13)).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(.regularMaterial, in: Capsule())
-            .padding(.trailing, 14)
-            .padding(.bottom, 56) // clear the path bar
-        }
+        // The icon-size slider lives in the pane's status bar (`PaneFooter`),
+        // where Finder keeps it. It used to float over the bottom-right of the
+        // grid in its own capsule, which meant a control permanently covering
+        // two rows of icons.
         // .focusable() lets the view receive arrow-key events for the grid
         // navigation, but the system also draws a blue focus ring around the
         // ScrollView once it has key focus — which collides with the pane's
@@ -148,6 +145,9 @@ struct IconView: View {
         IconCell(
             node: node,
             iconEdge: CGFloat(iconSize),
+            textSize: CGFloat(textSize),
+            labelOnRight: labelOnRight,
+            showPreview: showIconPreview,
             isSelected: tab.selection.contains(node.id),
             isCut: cutClipboard.pendingMove.contains(node.url),
             isMarked: tab.marked.contains(node.url),
@@ -330,10 +330,11 @@ struct IconView: View {
 private struct IconViewGrid<Cell: View>: View {
     @ObservedObject var tab: TabState
     let columns: [GridItem]
+    let rowSpacing: CGFloat
     let cellBuilder: (FSNode) -> Cell
 
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 14, pinnedViews: [.sectionHeaders]) {
+        LazyVGrid(columns: columns, spacing: rowSpacing, pinnedViews: [.sectionHeaders]) {
             ForEach(tab.groupedNodes, id: \.0) { (label, nodes) in
                 Section {
                     ForEach(nodes) { node in
@@ -372,6 +373,9 @@ private struct IconCellFramesKey: PreferenceKey {
 private struct IconCell: View {
     let node: FSNode
     let iconEdge: CGFloat
+    let textSize: CGFloat
+    let labelOnRight: Bool
+    let showPreview: Bool
     let isSelected: Bool
     let isCut: Bool
     let isMarked: Bool
@@ -382,71 +386,112 @@ private struct IconCell: View {
     @State private var icon: NSImage?
 
     var body: some View {
-        VStack(alignment: .center, spacing: 6) {
-            // The ZStack must stay centre-aligned. Its frame is `iconEdge + 12`
-            // but the image is only `iconEdge`, so a non-centre alignment sends
-            // all 12 pt of slack to one side — `.topTrailing` used to shove the
-            // icon into the corner while the resizable highlight still filled
-            // the frame, which is why the selection box looked centred and the
-            // icon inside it didn't. The marked flag gets its corner from an
-            // overlay, so it no longer dictates the icon's position.
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.20) : Color.clear)
-                Image(nsImage: icon ?? FileIconCache.icon(for: node.url))
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: iconEdge, height: iconEdge)
-            }
-            .frame(width: iconEdge + 12, height: iconEdge + 12)
-            .overlay(alignment: .topTrailing) {
-                if isMarked {
-                    Image(systemName: "flag.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Color.orange)
-                        .shadow(color: Color.black.opacity(0.4), radius: 1, y: 0.5)
-                        .padding(2)
-                }
-            }
-            VStack(alignment: .center, spacing: 2) {
-                Text(node.name)
-                    .font(.system(size: 11))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(
-                        isSelected ? Color.accentColor : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    )
-                    .foregroundStyle(isSelected ? Color.white : Color.primary)
-                if !node.tags.isEmpty {
-                    TagDots(tags: node.tags)
-                }
-            }
+        layout
             .frame(maxWidth: .infinity)
-        }
-        .frame(maxWidth: .infinity)
-        .opacity(isCut ? 0.45 : 1.0)
-        .contentShape(Rectangle())
-        .gesture(
-            TapGesture(count: 2).onEnded { onOpen() }
-        )
-        .simultaneousGesture(
-            TapGesture(count: 1).onEnded {
-                // SwiftUI's TapGesture doesn't expose modifier flags — read
-                // them off the originating NSEvent so the parent view can
-                // distinguish plain click / ⌘-click / ⇧-click.
-                onSelect(NSApp.currentEvent?.modifierFlags ?? [])
+            .opacity(isCut ? 0.45 : 1.0)
+            .contentShape(Rectangle())
+            .gesture(
+                TapGesture(count: 2).onEnded { onOpen() }
+            )
+            .simultaneousGesture(
+                TapGesture(count: 1).onEnded {
+                    // SwiftUI's TapGesture doesn't expose modifier flags — read
+                    // them off the originating NSEvent so the parent view can
+                    // distinguish plain click / ⌘-click / ⇧-click.
+                    onSelect(NSApp.currentEvent?.modifierFlags ?? [])
+                }
+            )
+            .draggable(node.url)
+            // Keyed on the preview setting as well as the URL so toggling
+            // "Show icon preview" re-resolves already-rendered cells.
+            .task(id: "\(node.url.absoluteString)|\(showPreview)") {
+                await loadIcon()
             }
-        )
-        .draggable(node.url)
-        .task(id: node.url) {
-            // .app and other packages get their unique icon; everything else
-            // is bucketed by extension via the cache.
-            let isPackage = (try? node.url.resourceValues(forKeys: [.isPackageKey]))?.isPackage ?? false
-            icon = isPackage ? FileIconCache.iconExact(for: node.url) : FileIconCache.icon(for: node.url)
+    }
+
+    /// Bottom labels stack; right labels sit beside the icon. Both share the
+    /// same icon well and label content so the two arrangements can't drift.
+    @ViewBuilder
+    private var layout: some View {
+        if labelOnRight {
+            HStack(alignment: .center, spacing: 8) {
+                iconWell
+                label
+                Spacer(minLength: 0)
+            }
+        } else {
+            VStack(alignment: .center, spacing: 6) {
+                iconWell
+                label.frame(maxWidth: .infinity)
+            }
         }
+    }
+
+    private var iconWell: some View {
+        // The ZStack must stay centre-aligned. Its frame is `iconEdge + 12`
+        // but the image is only `iconEdge`, so a non-centre alignment sends
+        // all 12 pt of slack to one side — `.topTrailing` used to shove the
+        // icon into the corner while the resizable highlight still filled
+        // the frame, which is why the selection box looked centred and the
+        // icon inside it didn't. The marked flag gets its corner from an
+        // overlay, so it no longer dictates the icon's position.
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.20) : Color.clear)
+            Image(nsImage: icon ?? FileIconCache.icon(for: node.url))
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: iconEdge, height: iconEdge)
+        }
+        .frame(width: iconEdge + 12, height: iconEdge + 12)
+        .overlay(alignment: .topTrailing) {
+            if isMarked {
+                Image(systemName: "flag.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.orange)
+                    .shadow(color: Color.black.opacity(0.4), radius: 1, y: 0.5)
+                    .padding(2)
+            }
+        }
+    }
+
+    private var label: some View {
+        VStack(alignment: labelOnRight ? .leading : .center, spacing: 2) {
+            Text(node.name)
+                .font(.system(size: textSize))
+                .lineLimit(2)
+                .multilineTextAlignment(labelOnRight ? .leading : .center)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(
+                    isSelected ? Color.accentColor : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 4, style: .continuous)
+                )
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+            if !node.tags.isEmpty {
+                TagDots(tags: node.tags)
+            }
+        }
+    }
+
+    private func loadIcon() async {
+        // "Show icon preview" draws the file's own content thumbnail. Requested
+        // at a fixed 256 pt rather than at `iconEdge`: the thumbnail cache is
+        // keyed by size, so scaling the request with the slider would mint a new
+        // cache entry per slider position. One entry per file, scaled down for
+        // display, is both sharper and cheaper.
+        if showPreview, !node.isDirectory,
+           let thumb = await ThumbnailService.shared.thumbnail(
+                for: node.url,
+                size: CGSize(width: 256, height: 256)
+           ) {
+            icon = thumb
+            return
+        }
+        // .app and other packages get their unique icon; everything else
+        // is bucketed by extension via the cache.
+        let isPackage = (try? node.url.resourceValues(forKeys: [.isPackageKey]))?.isPackage ?? false
+        icon = isPackage ? FileIconCache.iconExact(for: node.url) : FileIconCache.icon(for: node.url)
     }
 }

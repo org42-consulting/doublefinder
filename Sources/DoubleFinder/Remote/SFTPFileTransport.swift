@@ -49,7 +49,9 @@ struct SFTPFileTransport: FileTransport {
     func remove(_ url: URL) async throws {
         let s = try session()
         // We need to know if it's a directory. List the parent and decide; cheaper would be a single `stat`.
-        let parent = url.sftpParent ?? URL.sftp(endpoint: endpoint, path: "/")
+        guard let parent = url.sftpParent ?? URL.sftp(endpoint: endpoint, path: "/") else {
+            throw FileTransportError.notSupported("Cannot resolve the parent directory of “\(url.lastPathComponent)”.")
+        }
         let siblings = try await s.list(path: parent.sftpPath)
         let isDir = siblings.first { $0.name == (url.sftpPath as NSString).lastPathComponent }?.isDirectory ?? false
         try await s.remove(path: url.sftpPath, isDirectory: isDir)

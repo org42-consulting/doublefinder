@@ -13,6 +13,26 @@ enum SettingsKey {
     static let editorCommand         = "df.editorCommand"
     static let highlightRecentChanges = "df.highlightRecentChanges"
     static let recentChangeMinutes   = "df.recentChangeMinutes"
+    // Icon-view geometry, surfaced by the View Options panel (⌘J). `iconSize`
+    // keeps its original raw string so sizes users already set survive the move
+    // out of `IconView` and into this enum.
+    static let iconSize              = "df.iconSize"
+    static let iconGridSpacing       = "df.iconGridSpacing"
+    static let iconTextSize          = "df.iconTextSize"
+    static let iconLabelOnRight      = "df.iconLabelOnRight"
+    static let iconShowPreview       = "df.iconShowPreview"
+}
+
+/// Defaults for the icon-view geometry keys. Kept next to the keys — and read by
+/// both the View Options panel and `IconView` — so the two can't disagree about
+/// what "unset" means, which would show one value in the panel and render
+/// another in the grid.
+enum IconViewDefaults {
+    static let size: Double = 64
+    static let gridSpacing: Double = 18
+    static let textSize: Double = 11
+    static let labelOnRight = false
+    static let showPreview = false
 }
 
 /// Top-level Settings window. Tabbed layout (General / Appearance / Files) so
